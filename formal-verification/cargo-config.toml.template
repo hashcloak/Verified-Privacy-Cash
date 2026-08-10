@@ -1,0 +1,26 @@
+# Copy this file to ../anchor/.cargo/config.toml (it's gitignored there deliberately --
+# this is project-specific patch config, not something that belongs in the main build).
+#
+# Patches the 17 dependencies that declare an unused `cdylib` crate-type (Solana
+# on-chain-program convention) to drop it, since charon builds every declared crate-type
+# and that specific host-target cdylib link fails on macOS. Run setup-vendor.sh first to
+# create the ../formal-verification/vendor/ paths this points at.
+# See SETUP.md for the full diagnosis.
+[patch.crates-io]
+solana-nostd-keccak = { path = "../formal-verification/vendor/solana-nostd-keccak" }
+solana-program = { path = "../formal-verification/vendor/solana-program" }
+solana-zk-sdk = { path = "../formal-verification/vendor/solana-zk-sdk" }
+spl-associated-token-account = { path = "../formal-verification/vendor/spl-associated-token-account" }
+spl-elgamal-registry = { path = "../formal-verification/vendor/spl-elgamal-registry" }
+spl-discriminator = { path = "../formal-verification/vendor/spl-discriminator" }
+spl-memo = { path = "../formal-verification/vendor/spl-memo" }
+spl-program-error = { path = "../formal-verification/vendor/spl-program-error" }
+spl-tlv-account-resolution = { path = "../formal-verification/vendor/spl-tlv-account-resolution" }
+spl-token-confidential-transfer-proof-generation = { path = "../formal-verification/vendor/spl-token-confidential-transfer-proof-generation" }
+spl-token-metadata-interface = { path = "../formal-verification/vendor/spl-token-metadata-interface" }
+spl-token = { path = "../formal-verification/vendor/spl-token" }
+spl-transfer-hook-interface = { path = "../formal-verification/vendor/spl-transfer-hook-interface" }
+spl-pod = { path = "../formal-verification/vendor/spl-pod" }
+spl-token-2022 = { path = "../formal-verification/vendor/spl-token-2022" }
+spl-token-group-interface = { path = "../formal-verification/vendor/spl-token-group-interface" }
+spl-type-length-value = { path = "../formal-verification/vendor/spl-type-length-value" }

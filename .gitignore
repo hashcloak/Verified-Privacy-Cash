@@ -1,2 +1,21 @@
+.DS_Store
+target/
+program/target/
+artifacts/circuits/powersOfTau28_hez_final_18.ptau
+artifacts/circuits/transaction2_0.zkey
+scripts/node_modules/
+anchor/.anchor
+anchor/.DS_Store
+anchor/target
+anchor/**/*.rs.bk
+anchor/node_modules
+anchor/test-ledger
+anchor/.yarn
+anchor/deploy-keypair.json
+anchor/zkcash-keypair.json
+anchor/.cargo/
+formal-verification/target-patched/
+formal-verification/vendor/
+
 # cache and other artifacts produced by Lean's Lake build tool
 .lake/

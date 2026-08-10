@@ -1,0 +1,32 @@
+name = "zkcashModel"
+defaultTargets = ["TransactShim", "CheckPublicAmountShim", "Test", "Spec"]
+
+# Aeneas Lean backend library (`import Aeneas`), pinned to the exact revision that
+# generated lean/TransactShim and lean/CheckPublicAmountShim (formal-verification/flake.lock).
+# It transitively requires Mathlib v4.31.0, which is what Test/Test.lean imports.
+[[require]]
+name = "aeneas"
+git = "https://github.com/AeneasVerif/aeneas.git"
+rev = "a827e6fba15f4b4c8fb5d0a786fd60f4ef1feeb8"
+subDir = "backends/lean"
+
+# Explicit module lists (not "Prefix.*"): the *_Template.lean files are Aeneas
+# scaffolding meant to be renamed to *External.lean, not compiled, so they are
+# deliberately excluded from every library.
+[[lean_lib]]
+name = "TransactShim"
+globs = ["TransactShim.Types", "TransactShim.TypesExternal", "TransactShim.Funs", "TransactShim.FunsExternal"]
+
+[[lean_lib]]
+name = "CheckPublicAmountShim"
+globs = ["CheckPublicAmountShim.Types", "CheckPublicAmountShim.TypesExternal", "CheckPublicAmountShim.Funs", "CheckPublicAmountShim.FunsExternal"]
+
+[[lean_lib]]
+name = "Test"
+globs = ["Test.Test"]
+
+# Hand-written specifications & proofs about the extracted model. Kept outside the
+# aeneas-regenerated subdirs so `extract.sh` never touches it.
+[[lean_lib]]
+name = "Spec"
+globs = ["Spec.CheckPublicAmount"]
