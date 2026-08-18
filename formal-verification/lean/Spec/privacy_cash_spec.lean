@@ -151,13 +151,22 @@ structure VerificationKey where
   δ: G2
   IC: Fin 8 → G1
 
--- TODO
+
+def toVector (x: PubInputs): Fin 7 → F :=
+    ![x.R, x.pubAmt, x.extDataHash, x.nullifiers 0, x.nullifiers
+  1, x.outCommitments 0, x.outCommitments 1]
+
+-- Groth16 verification
+-- e(A, B) = e(α, β) · e(vk_x, γ) · e(C, δ)
+-- where vk_x = IC[0] + Σ x_i · IC[i+1]
 def verify
-  (vk: VerificationKey)
-  (π: Proof)
-  (x: PubInputs): Prop :=
-  -- TODO add correct definition
-  Pairing.e π.A π.B = Pairing.e vk.α vk.β
+    (vk: VerificationKey)
+    (π: Proof)
+    (x: PubInputs): Prop :=
+    let pubInputsVec := toVector x
+    -- For scalar multiplication (•) \bu or \smul
+    let vkX : G1 := vk.IC 0 + ∑ i : Fin 7, (pubInputsVec i) • vk.IC i.succ
+    Pairing.e π.A π.B = Pairing.e vk.α vk.β * Pairing.e vkX vk.γ * Pairing.e π.C vk.δ
 
 -- fixed for this circuit and thus relation S
 variable (vk: Groth16.VerificationKey)
@@ -167,7 +176,14 @@ axiom soundnessRelationS: ∀ (π: Groth16.Proof) x, Groth16.verify vk π x → 
 
 end Groth16
 
--- TODO config
+-- Configurations for the privacy-cash contract
+structure config where
+  authority: Pubkey -- the authority that can change the config
+  depositFeeRate: ℕ -- in basis points, e.g. 25 = 0.25%, default = 0
+  withdrawalFeeRate: ℕ -- in basis points, default = 0.25%
+  feeMarginError: ℕ -- in basis points, default = 500 (5% tolerance)
+  -- NOTE: In solana code the max deposit limit in declared in the Merkle Tree but we have kept in here.
+  maxDepositLimit: ℕ -- maximum deposit amount in lamports
 
 --/////////////////////////////////////////
 -- (3) State
@@ -183,7 +199,7 @@ structure State where
   tree: Tree
   nullifiers: Finset F
   solBalance: ℕ
-  -- TODO add config to state
+  config: config
 
 -- TODO do we need this? Depends on whether we want to include external balances
 structure World where
@@ -271,6 +287,8 @@ def transferEffects (inputs: TxInputs) (oldWorld: World): World :=
         else
         -- For a withdrawal, increase the SOL balance of the recipient (in Solana account)
         Function.update oldWorld.balances inputs.A ((oldWorld.balances inputs.A) + extAmtAbs)
+
+
     }
 
 /-
@@ -289,8 +307,9 @@ def transactEffects (inputs: TxInputs)(oldWorld: World): World :=
       tree:= appendEffects inputs.outC1 (appendEffects inputs.outC0 oldWorld.state.tree)
       -- Add nullifiers to the state.
       nullifiers := oldWorld.state.nullifiers ∪ {inputs.k0, inputs.k1}
-      -- TODO add the fee transfer
     }
+    -- Add the fee to the fee recipient's balance
+    balances := Function.update oldWorld.balances inputs.t ((oldWorld.balances inputs.t) + inputs.f)
   }
 
 structure transactPreconditions
@@ -314,9 +333,8 @@ structure transactPreconditions
     Groth16.verify vk inputs.π pubInputs
   newNullifiers: inputs.k0 ∉ oldWorld.state.nullifiers ∧ inputs.k1 ∉ oldWorld.state.nullifiers
   distinctNullifiers: inputs.k0 ≠ inputs.k1
-  -- TODO add depositLimit to config and check this precondition
-  -- depositLimit:
-  --   inputs.extAmt > 0 → inputs.extAmt ≤ oldWorld.state.config
+  depositLimit:
+    inputs.extAmt > 0 → inputs.extAmt ≤ oldWorld.state.config.maxDepositLimit
   poolSolvency:
     (inputs.extAmt < 0 → oldWorld.state.solBalance ≥ |inputs.extAmt| + inputs.f + oldWorld.rentExemptMin) ∧
     (inputs.extAmt ≥ 0 ∧ inputs.f > 0 → oldWorld.state.solBalance ≥ inputs.f +oldWorld.rentExemptMin)
