@@ -14,6 +14,8 @@ def p: ℕ := 218882428718392752222464057452572750885483644004160343436982041865
 abbrev F := ZMod p
 abbrev Pubkey := BitVec 256 -- Public key from Solana
 abbrev Bits:= List Bool
+abbrev Byte := BitVec 8
+abbrev Bytes := List Byte
 
 -- Abstract definition of the hashes we use
 class PoseidonHashes where
@@ -23,7 +25,7 @@ class PoseidonHashes where
   H4: F → F → F → F → F
 
 class Sha where
-  sha256: Bits → BitVec 256
+  sha256: Bytes → BitVec 256
 
 -- open the namespaces defined by the class definition
 open PoseidonHashes Sha
@@ -261,10 +263,30 @@ structure TxInputs where
   s: Pubkey -- signer
   A : Pubkey -- recipient address
   t : Pubkey -- fee recipient
-  encOut0: Bits -- encrypted output 0
-  encOut1: Bits -- encrypted output 1
+  encOut0: Bytes -- encrypted output 0
+  encOut1: Bytes -- encrypted output 1
   π: Groth16.Proof -- Groth16 proof for relation S
-  mintAddr: F -- token type
+  mintAddr: Pubkey -- token type
+
+-- Borsh serialization (for the external data hash binding)
+def natToBytesLE (width n: ℕ ): Bytes :=
+  (List.range width).map (fun i => BitVec.ofNat 8 (n >>> (8 * i)))
+
+def u32LE (n: ℕ): Bytes := natToBytesLE 4 n
+def u64LE (n: ℕ): Bytes := natToBytesLE 8 n
+def i64LE (n: ℤ): Bytes := natToBytesLE 8 (n %(2^64 : ℤ)).toNat
+def PubkeyToBytes (pk: Pubkey): Bytes := natToBytesLE 32 pk.toNat
+def vecU8 (bytes: Bytes): Bytes := u32LE bytes.length ++ bytes
+
+def serealizeExternalData (inputs: TxInputs): Bytes :=
+  PubkeyToBytes inputs.A ++ i64LE inputs.extAmt ++ vecU8 inputs.encOut0 ++ vecU8 inputs.encOut1 ++ u64LE inputs.f ++ PubkeyToBytes inputs.t ++ PubkeyToBytes inputs.mintAddr
+
+def externalDataHash (inputs: TxInputs): F :=
+  let ext_data := serealizeExternalData inputs
+  let hash := sha256 ext_data
+  -- Convert the hash to F (ZMod p)
+  let hashNat := hash.toNat
+  (hashNat: F)
 
 -- The actual moving of funds
 def transferEffects (inputs: TxInputs) (oldWorld: World): World :=
@@ -317,8 +339,7 @@ structure transactPreconditions
   (inputs: TxInputs)
   (oldWorld: World): Prop where
   knownRoot: inputs.R ∈ Set.range oldWorld.state.tree.history
-  -- TODO define borsh encoding for this and then define the correct precondition
-  --externalDataBinding: --sha256 inputs.A inputs.extAmt inputs.encOut0 inputs.encOut1 inputs.f inputs.t inputs.mintAddr
+  externalDataBinding: externalDataHash inputs = inputs.extDataHash
   minimumFee:
     let feeErrorMargin := 500
     let feeRate := if inputs.extAmt > 0 then 25 else 0
