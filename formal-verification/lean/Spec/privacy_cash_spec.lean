@@ -24,8 +24,29 @@ class PoseidonHashes where
   H3: F → F → F → F
   H4: F → F → F → F → F
 
+  -- collision resistance of poseidon
+
+  -- H1 : F → F has equal-cardinality domain and codomain, so asserting it is
+  -- globally injective is consistent. H2/H3/H4 map into F from a strictly
+  -- larger finite domain (F×F, F×F×F, F×F×F×F), so global injectivity is
+  -- mathematically impossible by pigeonhole (|domain| > |F| = |codomain|):
+  h_H1: ∀ (x y: F), H1 x = H1 y → x = y
+
 class Sha where
   sha256: Bytes → BitVec 256
+
+/-
+Collision resistance / preimage resistance, relativized to a finite set of terms
+that a specific proof actually needs, rather than asserted globally (which is
+mathematically inconsistent for H2, H3, H4, and sha256 -- see notes above).
+Meant to be passed as an explicit hypothesis on the theorems that need them.
+-/
+
+def CollisionResistantOn {α β: Type*} (H: α → β) (S: Set α): Prop :=
+  Set.InjOn H S
+
+def PreimageResistantOn {α β: Type*} (H: α → β) (known: Set α): Prop :=
+  H ⁻¹' (H '' known) ⊆ known
 
 -- open the namespaces defined by the class definition
 open PoseidonHashes Sha
@@ -329,6 +350,8 @@ def transactEffects (inputs: TxInputs)(oldWorld: World): World :=
       tree:= appendEffects inputs.outC1 (appendEffects inputs.outC0 oldWorld.state.tree)
       -- Add nullifiers to the state.
       nullifiers := oldWorld.state.nullifiers ∪ {inputs.k0, inputs.k1}
+      -- The fee leaves the pool's SOL balance (paid out to the fee recipient below).
+      solBalance := worldAfterTransfers.state.solBalance - inputs.f
     }
     -- Add the fee to the fee recipient's balance
     balances := Function.update oldWorld.balances inputs.t ((oldWorld.balances inputs.t) + inputs.f)
@@ -341,9 +364,11 @@ structure transactPreconditions
   knownRoot: inputs.R ∈ Set.range oldWorld.state.tree.history
   externalDataBinding: externalDataHash inputs = inputs.extDataHash
   minimumFee:
-    let feeErrorMargin := 500
-    let feeRate := if inputs.extAmt > 0 then 25 else 0
-    inputs.f * 10000 ≥ (inputs.pubAmt.val * feeRate * (10000-feeErrorMargin))/10000
+    let feeErrorMargin := oldWorld.state.config.feeMarginError
+    let feeRate := if inputs.extAmt > 0 then oldWorld.state.config.depositFeeRate else oldWorld.state.config.withdrawalFeeRate
+    let expectedFee := (inputs.extAmt.natAbs * feeRate) / 10000
+    let minAcceptableFee := (expectedFee * (10000 - feeErrorMargin)) / 10000
+    inputs.f ≥ minAcceptableFee
   pubAmtConsistency:
     -- reference i64::MIN https://doc.rust-lang.org/std/i64/constant.MIN.html
     inputs.extAmt ≠ -9_223_372_036_854_775_808 ∧
