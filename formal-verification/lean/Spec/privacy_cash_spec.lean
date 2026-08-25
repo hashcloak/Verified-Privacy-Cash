@@ -361,7 +361,7 @@ structure transactPreconditions
   (vk: Groth16.VerificationKey)
   (inputs: TxInputs)
   (oldWorld: World): Prop where
-  knownRoot: inputs.R ∈ Set.range oldWorld.state.tree.history
+  knownRoot: inputs.R ∈ Set.range oldWorld.state.tree.history ∧ inputs.R ≠ 0
   externalDataBinding: externalDataHash inputs = inputs.extDataHash
   minimumFee:
     let feeErrorMargin := oldWorld.state.config.feeMarginError
