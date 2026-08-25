@@ -14,6 +14,8 @@ def p: ℕ := 218882428718392752222464057452572750885483644004160343436982041865
 abbrev F := ZMod p
 abbrev Pubkey := BitVec 256 -- Public key from Solana
 abbrev Bits:= List Bool
+abbrev Byte := BitVec 8
+abbrev Bytes := List Byte
 
 -- Abstract definition of the hashes we use
 class PoseidonHashes where
@@ -22,8 +24,29 @@ class PoseidonHashes where
   H3: F → F → F → F
   H4: F → F → F → F → F
 
+  -- collision resistance of poseidon
+
+  -- H1 : F → F has equal-cardinality domain and codomain, so asserting it is
+  -- globally injective is consistent. H2/H3/H4 map into F from a strictly
+  -- larger finite domain (F×F, F×F×F, F×F×F×F), so global injectivity is
+  -- mathematically impossible by pigeonhole (|domain| > |F| = |codomain|):
+  h_H1: ∀ (x y: F), H1 x = H1 y → x = y
+
 class Sha where
-  sha256: Bits → BitVec 256
+  sha256: Bytes → BitVec 256
+
+/-
+Collision resistance / preimage resistance, relativized to a finite set of terms
+that a specific proof actually needs, rather than asserted globally (which is
+mathematically inconsistent for H2, H3, H4, and sha256 -- see notes above).
+Meant to be passed as an explicit hypothesis on the theorems that need them.
+-/
+
+def CollisionResistantOn {α β: Type*} (H: α → β) (S: Set α): Prop :=
+  Set.InjOn H S
+
+def PreimageResistantOn {α β: Type*} (H: α → β) (known: Set α): Prop :=
+  H ⁻¹' (H '' known) ⊆ known
 
 -- open the namespaces defined by the class definition
 open PoseidonHashes Sha
@@ -151,13 +174,22 @@ structure VerificationKey where
   δ: G2
   IC: Fin 8 → G1
 
--- TODO
+
+def toVector (x: PubInputs): Fin 7 → F :=
+    ![x.R, x.pubAmt, x.extDataHash, x.nullifiers 0, x.nullifiers
+  1, x.outCommitments 0, x.outCommitments 1]
+
+-- Groth16 verification
+-- e(A, B) = e(α, β) · e(vk_x, γ) · e(C, δ)
+-- where vk_x = IC[0] + Σ x_i · IC[i+1]
 def verify
-  (vk: VerificationKey)
-  (π: Proof)
-  (x: PubInputs): Prop :=
-  -- TODO add correct definition
-  Pairing.e π.A π.B = Pairing.e vk.α vk.β
+    (vk: VerificationKey)
+    (π: Proof)
+    (x: PubInputs): Prop :=
+    let pubInputsVec := toVector x
+    -- For scalar multiplication (•) \bu or \smul
+    let vkX : G1 := vk.IC 0 + ∑ i : Fin 7, (pubInputsVec i) • vk.IC i.succ
+    Pairing.e π.A π.B = Pairing.e vk.α vk.β * Pairing.e vkX vk.γ * Pairing.e π.C vk.δ
 
 -- fixed for this circuit and thus relation S
 variable (vk: Groth16.VerificationKey)
@@ -167,7 +199,14 @@ axiom soundnessRelationS: ∀ (π: Groth16.Proof) x, Groth16.verify vk π x → 
 
 end Groth16
 
--- TODO config
+-- Configurations for the privacy-cash contract
+structure config where
+  authority: Pubkey -- the authority that can change the config
+  depositFeeRate: ℕ -- in basis points, e.g. 25 = 0.25%, default = 0
+  withdrawalFeeRate: ℕ -- in basis points, default = 0.25%
+  feeMarginError: ℕ -- in basis points, default = 500 (5% tolerance)
+  -- NOTE: In solana code the max deposit limit in declared in the Merkle Tree but we have kept in here.
+  maxDepositLimit: ℕ -- maximum deposit amount in lamports
 
 --/////////////////////////////////////////
 -- (3) State
@@ -183,7 +222,7 @@ structure State where
   tree: Tree
   nullifiers: Finset F
   solBalance: ℕ
-  -- TODO add config to state
+  config: config
 
 -- TODO do we need this? Depends on whether we want to include external balances
 structure World where
@@ -245,10 +284,30 @@ structure TxInputs where
   s: Pubkey -- signer
   A : Pubkey -- recipient address
   t : Pubkey -- fee recipient
-  encOut0: Bits -- encrypted output 0
-  encOut1: Bits -- encrypted output 1
+  encOut0: Bytes -- encrypted output 0
+  encOut1: Bytes -- encrypted output 1
   π: Groth16.Proof -- Groth16 proof for relation S
-  mintAddr: F -- token type
+  mintAddr: Pubkey -- token type
+
+-- Borsh serialization (for the external data hash binding)
+def natToBytesLE (width n: ℕ ): Bytes :=
+  (List.range width).map (fun i => BitVec.ofNat 8 (n >>> (8 * i)))
+
+def u32LE (n: ℕ): Bytes := natToBytesLE 4 n
+def u64LE (n: ℕ): Bytes := natToBytesLE 8 n
+def i64LE (n: ℤ): Bytes := natToBytesLE 8 (n %(2^64 : ℤ)).toNat
+def PubkeyToBytes (pk: Pubkey): Bytes := natToBytesLE 32 pk.toNat
+def vecU8 (bytes: Bytes): Bytes := u32LE bytes.length ++ bytes
+
+def serealizeExternalData (inputs: TxInputs): Bytes :=
+  PubkeyToBytes inputs.A ++ i64LE inputs.extAmt ++ vecU8 inputs.encOut0 ++ vecU8 inputs.encOut1 ++ u64LE inputs.f ++ PubkeyToBytes inputs.t ++ PubkeyToBytes inputs.mintAddr
+
+def externalDataHash (inputs: TxInputs): F :=
+  let ext_data := serealizeExternalData inputs
+  let hash := sha256 ext_data
+  -- Convert the hash to F (ZMod p)
+  let hashNat := hash.toNat
+  (hashNat: F)
 
 -- The actual moving of funds
 def transferEffects (inputs: TxInputs) (oldWorld: World): World :=
@@ -271,6 +330,8 @@ def transferEffects (inputs: TxInputs) (oldWorld: World): World :=
         else
         -- For a withdrawal, increase the SOL balance of the recipient (in Solana account)
         Function.update oldWorld.balances inputs.A ((oldWorld.balances inputs.A) + extAmtAbs)
+
+
     }
 
 /-
@@ -289,21 +350,25 @@ def transactEffects (inputs: TxInputs)(oldWorld: World): World :=
       tree:= appendEffects inputs.outC1 (appendEffects inputs.outC0 oldWorld.state.tree)
       -- Add nullifiers to the state.
       nullifiers := oldWorld.state.nullifiers ∪ {inputs.k0, inputs.k1}
-      -- TODO add the fee transfer
+      -- The fee leaves the pool's SOL balance (paid out to the fee recipient below).
+      solBalance := worldAfterTransfers.state.solBalance - inputs.f
     }
+    -- Add the fee to the fee recipient's balance
+    balances := Function.update oldWorld.balances inputs.t ((oldWorld.balances inputs.t) + inputs.f)
   }
 
 structure transactPreconditions
   (vk: Groth16.VerificationKey)
   (inputs: TxInputs)
   (oldWorld: World): Prop where
-  knownRoot: inputs.R ∈ Set.range oldWorld.state.tree.history
-  -- TODO define borsh encoding for this and then define the correct precondition
-  --externalDataBinding: --sha256 inputs.A inputs.extAmt inputs.encOut0 inputs.encOut1 inputs.f inputs.t inputs.mintAddr
+  knownRoot: inputs.R ∈ Set.range oldWorld.state.tree.history ∧ inputs.R ≠ 0
+  externalDataBinding: externalDataHash inputs = inputs.extDataHash
   minimumFee:
-    let feeErrorMargin := 500
-    let feeRate := if inputs.extAmt > 0 then 25 else 0
-    inputs.f * 10000 ≥ (inputs.pubAmt.val * feeRate * (10000-feeErrorMargin))/10000
+    let feeErrorMargin := oldWorld.state.config.feeMarginError
+    let feeRate := if inputs.extAmt > 0 then oldWorld.state.config.depositFeeRate else oldWorld.state.config.withdrawalFeeRate
+    let expectedFee := (inputs.extAmt.natAbs * feeRate) / 10000
+    let minAcceptableFee := (expectedFee * (10000 - feeErrorMargin)) / 10000
+    inputs.f ≥ minAcceptableFee
   pubAmtConsistency:
     -- reference i64::MIN https://doc.rust-lang.org/std/i64/constant.MIN.html
     inputs.extAmt ≠ -9_223_372_036_854_775_808 ∧
@@ -314,9 +379,8 @@ structure transactPreconditions
     Groth16.verify vk inputs.π pubInputs
   newNullifiers: inputs.k0 ∉ oldWorld.state.nullifiers ∧ inputs.k1 ∉ oldWorld.state.nullifiers
   distinctNullifiers: inputs.k0 ≠ inputs.k1
-  -- TODO add depositLimit to config and check this precondition
-  -- depositLimit:
-  --   inputs.extAmt > 0 → inputs.extAmt ≤ oldWorld.state.config
+  depositLimit:
+    inputs.extAmt > 0 → inputs.extAmt ≤ oldWorld.state.config.maxDepositLimit
   poolSolvency:
     (inputs.extAmt < 0 → oldWorld.state.solBalance ≥ |inputs.extAmt| + inputs.f + oldWorld.rentExemptMin) ∧
     (inputs.extAmt ≥ 0 ∧ inputs.f > 0 → oldWorld.state.solBalance ≥ inputs.f +oldWorld.rentExemptMin)

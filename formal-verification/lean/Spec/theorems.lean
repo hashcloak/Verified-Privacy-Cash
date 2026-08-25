@@ -1,0 +1,8 @@
+-- no double spending
+-- no replay attacks
+-- value cannot be inflated once it is added to the tree
+-- Only coins deposited can be withdrawn
+-- proof binding: same proof cannot be used for different inputs
+-- only the owner of the coin can spend it(the one who knows the secret key and blinding factor)
+-- Any unspent note can always be spent
+-- notes cannot be forged once they are added to the tree
