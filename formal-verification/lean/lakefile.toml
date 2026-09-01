@@ -1,5 +1,5 @@
 name = "zkcashModel"
-defaultTargets = ["TransactShim", "CheckPublicAmountShim", "Test", "Spec"]
+defaultTargets = ["TransactShim", "CheckPublicAmountShim", "VerifyProofShim", "Test", "Spec"]
 
 # Aeneas Lean backend library (`import Aeneas`), pinned to the exact revision that
 # generated lean/TransactShim and lean/CheckPublicAmountShim (formal-verification/flake.lock).
@@ -20,6 +20,10 @@ globs = ["TransactShim.Types", "TransactShim.TypesExternal", "TransactShim.Funs"
 [[lean_lib]]
 name = "CheckPublicAmountShim"
 globs = ["CheckPublicAmountShim.Types", "CheckPublicAmountShim.TypesExternal", "CheckPublicAmountShim.Funs", "CheckPublicAmountShim.FunsExternal"]
+
+[[lean_lib]]
+name = "VerifyProofShim"
+globs = ["VerifyProofShim.Types", "VerifyProofShim.TypesExternal", "VerifyProofShim.Funs", "VerifyProofShim.FunsExternal"]
 
 [[lean_lib]]
 name = "Test"

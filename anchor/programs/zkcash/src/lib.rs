@@ -15,6 +15,7 @@ declare_id!("9fhQBbumKEFuXtMBDw8AaQyAjCorLGJQiS3skWZdQyQD");
 pub mod merkle_tree;
 pub mod utils;
 pub mod fr_shim;
+pub mod curve_shim;
 pub mod groth16;
 pub mod errors;
 
@@ -526,34 +527,36 @@ pub mod zkcash {
 // --- formal-verification model: transact wrapper ---
 // Transcription of `transact` (above, lines 215-522) with:
 //   - Context<Transact>/AccountLoader replaced by plain references (Anchor's
-//     account resolution is a Tier-2 trusted precondition, not something this
-//     model derives or proves)
+//     account resolution is a trusted precondition, not something this model
+//     derives or proves)
 //   - Fr operations replaced by the FrShim shim (fr_shim.rs)
-//   - verify_proof replaced by a placeholder (`fv_verify_proof_entry`, below).
-//     Its Groth16 pairing arithmetic can't be translated (Charon/Aeneas can't
-//     handle ark-ff's Fr, same issue as FrShim above), so that implementation
-//     is not extracted -- but the *function itself* is one of the most
-//     important pieces of the Lean model, not something to leave unconstrained.
-//     `transact`'s correctness depends entirely on what a `true` result from
-//     verify_proof is assumed to guarantee, so this placeholder must be given
-//     a real axiom capturing the Groth16 verification equation over
-//     VERIFYING_KEY and Groth16's soundness properties. That axiom is not yet
-//     written -- needs an independently-sourced spec, not one derived from
-//     this code -- see MODEL_REPORT.md.
+//   - verify_proof replaced by `utils::fv_verify_proof_full_entry`, a real
+//     transcription of it (and of the Groth16Verifier methods it drives)
+//     against curve_shim.rs. The group operations themselves stay assumptions
+//     -- on-chain they are Solana syscalls, so nothing in this pipeline could
+//     derive them -- but the marshalling around them is real extracted code.
+//     Crucially, calling it with transact's OWN proof_root / proof_public_amount
+//     / proof_ext_data_hash / output_commitments is what lets the model state
+//     that the values the proof was checked against are the same ones the
+//     balance updates and Merkle appends below then use.
+//     The assumptions in VerifyProofShim/FunsExternal.lean are still bare
+//     signatures with no content -- see MODEL_REPORT.md.
 //   - CPI transfers / Rent::get() / try_borrow_mut_lamports replaced by plain
-//     u64 balance arithmetic (Solana runtime mechanics are Tier 2, trusted)
+//     u64 balance arithmetic (Solana runtime mechanics are trusted, not derived)
 //   - event emission dropped (not state-transition-relevant)
 // NOT part of the program's real logic. Must be kept in lockstep with `transact`
 // by hand if `transact` changes. See ../../../formal-verification/MODEL_REPORT.md.
-pub fn fv_verify_proof_entry(_placeholder: u8) -> bool { unimplemented!() }
-
 pub fn fv_transact_entry(
     tree_account: &mut MerkleTreeAccount,
     global_config: &GlobalConfig,
     proof_root: [u8; 32],
     proof_ext_data_hash: [u8; 32],
     proof_public_amount: [u8; 32],
+    input_nullifiers: [[u8; 32]; 2],
     output_commitments: [[u8; 32]; 2],
+    proof_a: [u8; 64],
+    proof_b: [u8; 128],
+    proof_c: [u8; 64],
     ext_amount: i64,
     fee: u64,
     recipient: Pubkey,
@@ -601,7 +604,26 @@ pub fn fv_transact_entry(
         global_config.fee_error_margin,
     )?;
 
-    require!(fv_verify_proof_entry(0), ErrorCode::InvalidProof);
+    // Mirrors the real `require!(verify_proof(proof.clone(), VERIFYING_KEY), ...)`.
+    // The proof fields and the verifying key are the same ones the real call uses.
+    require!(
+        utils::fv_verify_proof_full_entry(
+            proof_root,
+            proof_public_amount,
+            proof_ext_data_hash,
+            input_nullifiers,
+            output_commitments,
+            proof_a,
+            proof_b,
+            proof_c,
+            curve_shim::FV_VK_ALPHA_G1,
+            curve_shim::FV_VK_BETA_G2,
+            curve_shim::FV_VK_GAMME_G2,
+            curve_shim::FV_VK_DELTA_G2,
+            curve_shim::FV_VK_IC,
+        ),
+        ErrorCode::InvalidProof
+    );
 
     if ext_amount > 0 {
         let deposit_amount = ext_amount as u64;

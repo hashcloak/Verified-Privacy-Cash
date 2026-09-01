@@ -1,4 +1,5 @@
 use crate::Proof;
+use crate::curve_shim; // extraction-only, see fv_verify_proof_full_entry below
 use crate::groth16::{Groth16Verifier, Groth16Verifyingkey};
 use crate::ErrorCode;
 use ark_bn254;
@@ -301,6 +302,182 @@ pub fn verify_proof(proof: Proof, verifying_key: Groth16Verifyingkey) -> bool {
     };
 
     verifier.verify().unwrap_or(false)
+}
+
+// --- Lean model: verify_proof entry point ---
+// EXTRACTION-ONLY. Not part of the program's real logic; never called at runtime.
+//
+// A transcription of `verify_proof` (above) TOGETHER WITH the parts of
+// `Groth16Verifier` it drives -- `new`, `verify` -> `verify_common::<true>` ->
+// `prepare_inputs::<true>` -- against `curve_shim`'s types instead of arkworks'.
+// One function rather than four because `--start-from` needs a single root and the
+// verifier's methods are generic over `NR_INPUTS`; here it is fixed at 7.
+//
+// What this buys: the ORDER of the seven public inputs, the endianness flips, the
+// proof_a negation, the accumulation loop over vk_ic, the byte layout of the pairing
+// input, and the final `pairing_res[31] != 1` test all become real, mechanically
+// extracted control flow in Lean. What it does NOT buy: any guarantee about the
+// group operations themselves -- those stay assumptions (see curve_shim.rs).
+//
+// `fv_transact_entry` in lib.rs calls this, so the TransactShim model contains all
+// of it; VerifyProofShim is the same code extracted on its own.
+//
+// Byte-copies are written as explicit index loops rather than `concat()`/
+// `copy_from_slice`, so the model stays on fixed-size arrays and out of `Vec`.
+pub fn fv_change_endianness_64(bytes: &[u8; 64]) -> [u8; 64] {
+    // `change_endianness` (above) reverses each 32-byte chunk, keeping chunk order.
+    let mut out = [0u8; 64];
+    let mut c = 0usize;
+    while c < 2 {
+        let mut i = 0usize;
+        while i < 32 {
+            out[c * 32 + i] = bytes[c * 32 + (31 - i)];
+            i += 1;
+        }
+        c += 1;
+    }
+    out
+}
+
+pub fn fv_verify_proof_full_entry(
+    proof_root: [u8; 32],
+    proof_public_amount: [u8; 32],
+    proof_ext_data_hash: [u8; 32],
+    proof_input_nullifiers: [[u8; 32]; 2],
+    proof_output_commitments: [[u8; 32]; 2],
+    proof_a_raw: [u8; 64],
+    proof_b: [u8; 128],
+    proof_c: [u8; 64],
+    vk_alpha_g1: [u8; 64],
+    vk_beta_g2: [u8; 128],
+    vk_gamme_g2: [u8; 128],
+    vk_delta_g2: [u8; 128],
+    vk_ic: [[u8; 64]; 8],
+) -> bool {
+    // -- verify_proof: the seven public inputs, in exactly this order --
+    let mut public_inputs_vec: [[u8; 32]; 7] = [[0u8; 32]; 7];
+    public_inputs_vec[0] = proof_root;
+    public_inputs_vec[1] = proof_public_amount;
+    public_inputs_vec[2] = proof_ext_data_hash;
+    public_inputs_vec[3] = proof_input_nullifiers[0];
+    public_inputs_vec[4] = proof_input_nullifiers[1];
+    public_inputs_vec[5] = proof_output_commitments[0];
+    public_inputs_vec[6] = proof_output_commitments[1];
+
+    // -- deserialize proof_a, negate it, serialize it back --
+    let a_be = fv_change_endianness_64(&proof_a_raw);
+    let g1_point = match curve_shim::G1Shim::deserialize_uncompressed(&a_be) {
+        Some(point) => point,
+        None => return false,
+    };
+    let proof_a_neg = g1_point.negate().to_bytes();
+    let proof_a = fv_change_endianness_64(&proof_a_neg);
+
+    // -- Groth16Verifier::new: the only check that survives fixed-size arrays --
+    if public_inputs_vec.len() + 1 != vk_ic.len() {
+        return false;
+    }
+
+    // -- prepare_inputs::<true>: prepared = vk_ic[0] + sum_i [input_i] * vk_ic[i+1] --
+    //
+    // The real code `return`s from inside this loop on each failure. Aeneas rejects
+    // that ("Early returns inside of loops are not supported yet"), so failure is
+    // carried out of the loop in `ok` and turned into the same `return false` just
+    // after it. `ok` is also a loop condition, so the loop stops on the same
+    // iteration the original would have returned on -- no further shim calls happen.
+    let mut prepared_public_inputs: [u8; 64] = vk_ic[0];
+    let mut ok = true;
+    let mut idx = 0usize;
+    while idx < 7 && ok {
+        // CHECK = true, so each public input must be below the field modulus.
+        if !curve_shim::fr_lt_modulus_be(&public_inputs_vec[idx]) {
+            ok = false;
+        } else {
+            let mut mul_input = [0u8; 96];
+            let mut j = 0usize;
+            while j < 64 {
+                mul_input[j] = vk_ic[idx + 1][j];
+                j += 1;
+            }
+            let mut k = 0usize;
+            while k < 32 {
+                mul_input[64 + k] = public_inputs_vec[idx][k];
+                k += 1;
+            }
+
+            match curve_shim::alt_bn128_multiplication_shim(&mul_input) {
+                None => {
+                    ok = false;
+                }
+                Some(mul_res) => {
+                    // NB: the real code concatenates mul_res FIRST, then the accumulator.
+                    let mut add_input = [0u8; 128];
+                    let mut m = 0usize;
+                    while m < 64 {
+                        add_input[m] = mul_res[m];
+                        m += 1;
+                    }
+                    let mut n = 0usize;
+                    while n < 64 {
+                        add_input[64 + n] = prepared_public_inputs[n];
+                        n += 1;
+                    }
+                    match curve_shim::alt_bn128_addition_shim(&add_input) {
+                        None => {
+                            ok = false;
+                        }
+                        Some(sum) => {
+                            prepared_public_inputs = sum;
+                        }
+                    }
+                }
+            }
+        }
+
+        idx += 1;
+    }
+    if !ok {
+        return false;
+    }
+
+    // -- verify_common: the pairing input, in exactly this order --
+    //    proof_a ‖ proof_b ‖ prepared ‖ vk_gamma_g2 ‖ proof_c ‖ vk_delta_g2
+    //            ‖ vk_alpha_g1 ‖ vk_beta_g2   = 4 pairs = 768 bytes
+    let mut pairing_input = [0u8; 768];
+    let mut off = 0usize;
+    let mut p = 0usize;
+    while p < 64 { pairing_input[off + p] = proof_a[p]; p += 1; }
+    off += 64;
+    let mut q = 0usize;
+    while q < 128 { pairing_input[off + q] = proof_b[q]; q += 1; }
+    off += 128;
+    let mut r = 0usize;
+    while r < 64 { pairing_input[off + r] = prepared_public_inputs[r]; r += 1; }
+    off += 64;
+    let mut s = 0usize;
+    while s < 128 { pairing_input[off + s] = vk_gamme_g2[s]; s += 1; }
+    off += 128;
+    let mut t = 0usize;
+    while t < 64 { pairing_input[off + t] = proof_c[t]; t += 1; }
+    off += 64;
+    let mut u = 0usize;
+    while u < 128 { pairing_input[off + u] = vk_delta_g2[u]; u += 1; }
+    off += 128;
+    let mut v = 0usize;
+    while v < 64 { pairing_input[off + v] = vk_alpha_g1[v]; v += 1; }
+    off += 64;
+    let mut w = 0usize;
+    while w < 128 { pairing_input[off + w] = vk_beta_g2[w]; w += 1; }
+
+    let pairing_res = match curve_shim::alt_bn128_pairing_shim(&pairing_input) {
+        Some(res) => res,
+        None => return false,
+    };
+
+    if pairing_res[31] != 1 {
+        return false;
+    }
+    true
 }
 
 /**

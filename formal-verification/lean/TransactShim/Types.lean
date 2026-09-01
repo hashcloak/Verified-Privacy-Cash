@@ -214,7 +214,7 @@ structure light_hasher.Hasher (Self : Type) where
 def light_hasher.poseidon.Poseidon := Unit
 
 /-- [zkcash::utils::calculate_complete_ext_data_hash::CompleteExtData]
-    Source: 'programs/zkcash/src/utils.rs', lines 322:4-330:5 -/
+    Source: 'programs/zkcash/src/utils.rs', lines 500:4-508:5 -/
 structure utils.calculate_complete_ext_data_hash.CompleteExtData where
   recipient : solana_pubkey.Pubkey
   ext_amount : Std.I64
@@ -225,7 +225,7 @@ structure utils.calculate_complete_ext_data_hash.CompleteExtData where
   mint_address : solana_pubkey.Pubkey
 
 /-- [zkcash::ErrorCode]
-    Source: 'programs/zkcash/src/lib.rs', lines 1045:0-1086:1
+    Source: 'programs/zkcash/src/lib.rs', lines 1068:0-1109:1
     Visibility: public -/
 @[discriminant u32]
 inductive ErrorCode where
@@ -251,7 +251,7 @@ inductive ErrorCode where
 | InvalidTokenAccountMintAddress : ErrorCode
 
 /-- [zkcash::MerkleTreeAccount]
-    Source: 'programs/zkcash/src/lib.rs', lines 1029:0-1042:1
+    Source: 'programs/zkcash/src/lib.rs', lines 1052:0-1065:1
     Visibility: public -/
 structure MerkleTreeAccount where
   authority : solana_pubkey.Pubkey
@@ -267,7 +267,7 @@ structure MerkleTreeAccount where
   _padding : Array Std.U8 5#usize
 
 /-- [zkcash::GlobalConfig]
-    Source: 'programs/zkcash/src/lib.rs', lines 1013:0-1019:1
+    Source: 'programs/zkcash/src/lib.rs', lines 1036:0-1042:1
     Visibility: public -/
 structure GlobalConfig where
   authority : solana_pubkey.Pubkey
@@ -277,7 +277,7 @@ structure GlobalConfig where
   bump : Std.U8
 
 /-- [zkcash::fv_transact_entry::closure]
-    Source: 'programs/zkcash/src/lib.rs', lines 619:21-619:52 -/
+    Source: 'programs/zkcash/src/lib.rs', lines 642:21-642:52 -/
 @[reducible]
 def fv_transact_entry.closure := Unit
 

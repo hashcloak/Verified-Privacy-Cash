@@ -239,6 +239,71 @@ axiom solana_pubkey.Pubkey.Insts.BorshSerBorshSerialize.serialize
 @[rust_fun "solana_sha256_hasher::hash"]
 axiom solana_sha256_hasher.hash : Slice Std.U8 → Result solana_hash.Hash
 
+/-- [zkcash::curve_shim::FV_VK_ALPHA_G1]
+    Source: 'programs/zkcash/src/curve_shim.rs', lines 56:0-56:77
+    Visibility: public -/
+axiom curve_shim.FV_VK_ALPHA_G1 : Result (Array Std.U8 64#usize)
+
+/-- [zkcash::curve_shim::FV_VK_BETA_G2]
+    Source: 'programs/zkcash/src/curve_shim.rs', lines 57:0-57:76
+    Visibility: public -/
+axiom curve_shim.FV_VK_BETA_G2 : Result (Array Std.U8 128#usize)
+
+/-- [zkcash::curve_shim::FV_VK_GAMME_G2]
+    Source: 'programs/zkcash/src/curve_shim.rs', lines 58:0-58:78
+    Visibility: public -/
+axiom curve_shim.FV_VK_GAMME_G2 : Result (Array Std.U8 128#usize)
+
+/-- [zkcash::curve_shim::FV_VK_DELTA_G2]
+    Source: 'programs/zkcash/src/curve_shim.rs', lines 59:0-59:78
+    Visibility: public -/
+axiom curve_shim.FV_VK_DELTA_G2 : Result (Array Std.U8 128#usize)
+
+/-- [zkcash::curve_shim::FV_VK_IC]
+    Source: 'programs/zkcash/src/curve_shim.rs', lines 60:0-69:2
+    Visibility: public -/
+axiom curve_shim.FV_VK_IC : Result (Array (Array Std.U8 64#usize) 8#usize)
+
+/-- [zkcash::curve_shim::{zkcash::curve_shim::G1Shim}::deserialize_uncompressed]:
+    Source: 'programs/zkcash/src/curve_shim.rs', lines 84:4-86:5
+    Visibility: public -/
+axiom curve_shim.G1Shim.deserialize_uncompressed
+  : Array Std.U8 64#usize → Result (Option curve_shim.G1Shim)
+
+/-- [zkcash::curve_shim::{zkcash::curve_shim::G1Shim}::negate]:
+    Source: 'programs/zkcash/src/curve_shim.rs', lines 89:4-91:5
+    Visibility: public -/
+axiom curve_shim.G1Shim.negate : curve_shim.G1Shim → Result curve_shim.G1Shim
+
+/-- [zkcash::curve_shim::{zkcash::curve_shim::G1Shim}::to_bytes]:
+    Source: 'programs/zkcash/src/curve_shim.rs', lines 97:4-99:5
+    Visibility: public -/
+axiom curve_shim.G1Shim.to_bytes
+  : curve_shim.G1Shim → Result (Array Std.U8 64#usize)
+
+/-- [zkcash::curve_shim::fr_lt_modulus_be]:
+    Source: 'programs/zkcash/src/curve_shim.rs', lines 109:0-111:1
+    Visibility: public -/
+axiom curve_shim.fr_lt_modulus_be : Array Std.U8 32#usize → Result Bool
+
+/-- [zkcash::curve_shim::alt_bn128_multiplication_shim]:
+    Source: 'programs/zkcash/src/curve_shim.rs', lines 115:0-117:1
+    Visibility: public -/
+axiom curve_shim.alt_bn128_multiplication_shim
+  : Array Std.U8 96#usize → Result (Option (Array Std.U8 64#usize))
+
+/-- [zkcash::curve_shim::alt_bn128_addition_shim]:
+    Source: 'programs/zkcash/src/curve_shim.rs', lines 121:0-123:1
+    Visibility: public -/
+axiom curve_shim.alt_bn128_addition_shim
+  : Array Std.U8 128#usize → Result (Option (Array Std.U8 64#usize))
+
+/-- [zkcash::curve_shim::alt_bn128_pairing_shim]:
+    Source: 'programs/zkcash/src/curve_shim.rs', lines 129:0-131:1
+    Visibility: public -/
+axiom curve_shim.alt_bn128_pairing_shim
+  : Array Std.U8 768#usize → Result (Option (Array Std.U8 32#usize))
+
 /-- [zkcash::fr_shim::{impl core::cmp::PartialEq<zkcash::fr_shim::FrShim> for zkcash::fr_shim::FrShim}::eq]:
     Source: 'programs/zkcash/src/fr_shim.rs', lines 18:22-18:31
     Visibility: public -/
@@ -285,9 +350,4 @@ axiom fr_shim.FrShim.Insts.CoreOpsArithNegFrShim.neg
     Visibility: public -/
 axiom fr_shim.FrShim.Insts.CoreCmpPartialOrdFrShim.partial_cmp
   : fr_shim.FrShim → fr_shim.FrShim → Result (Option Ordering)
-
-/-- [zkcash::fv_verify_proof_entry]:
-    Source: 'programs/zkcash/src/lib.rs', lines 548:0-548:75
-    Visibility: public -/
-axiom fv_verify_proof_entry : Std.U8 → Result Bool
 

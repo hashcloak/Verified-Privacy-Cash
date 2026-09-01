@@ -142,7 +142,7 @@ impl_def fr_shim.FrShim.Insts.CoreCmpPartialOrdFrShim : core.cmp.PartialOrd
 }
 
 /-- [zkcash::utils::calculate_complete_ext_data_hash::{impl borsh::ser::BorshSerialize for zkcash::utils::calculate_complete_ext_data_hash::CompleteExtData}::serialize]:
-    Source: 'programs/zkcash/src/utils.rs', lines 321:13-321:28
+    Source: 'programs/zkcash/src/utils.rs', lines 499:13-499:28
     Visibility: public -/
 def
   utils.calculate_complete_ext_data_hash.CompleteExtData.Insts.BorshSerBorshSerialize.serialize
@@ -183,7 +183,7 @@ def
         match cf3 with
         | core.ops.control_flow.ControlFlow.Continue _ =>
           let (r4, writer5) ←
-            U64.Insts.BorshSerBorshSerialize.serialize stdioWriteInst
+            U64.Insts.BorshSerBorshSerialize.serialize stdioWriteInst 
               self.fee writer4
           let cf4 ← core.result.Result.Insts.CoreOpsTry.branch r4
           match cf4 with
@@ -238,7 +238,7 @@ def
     ok (r1, writer1)
 
 /-- [zkcash::utils::calculate_complete_ext_data_hash]:
-    Source: 'programs/zkcash/src/utils.rs', lines 312:0-347:1
+    Source: 'programs/zkcash/src/utils.rs', lines 490:0-525:1
     Visibility: public -/
 def utils.calculate_complete_ext_data_hash
   (recipient : solana_pubkey.Pubkey) (ext_amount : Std.I64)
@@ -277,8 +277,644 @@ def utils.calculate_complete_ext_data_hash
       (Array Std.U8 32#usize)
       anchor_lang.error.Error.Insts.CoreConvertFromError residual
 
+/-- [zkcash::utils::fv_change_endianness_64]: loop body 1:
+    Source: 'programs/zkcash/src/utils.rs', lines 334:8-337:9
+    Visibility: public -/
+@[rust_loop_body]
+def utils.fv_change_endianness_64_loop0_loop0.body
+  (bytes : Array Std.U8 64#usize) (c : Std.Usize) (out : Array Std.U8 64#usize)
+  (i : Std.Usize) :
+  Result (ControlFlow ((Array Std.U8 64#usize) × Std.Usize) (Array Std.U8
+    64#usize))
+  := do
+  if i < 32#usize
+  then
+    let i1 ← c * 32#usize
+    let i2 ← 31#usize - i
+    let i3 ← i1 + i2
+    let i4 ← Array.index_usize bytes i3
+    let i5 ← i1 + i
+    let a ← Array.update out i5 i4
+    let i6 ← i + 1#usize
+    ok (cont (a, i6))
+  else ok (done out)
+
+/-- [zkcash::utils::fv_change_endianness_64]: loop 1:
+    Source: 'programs/zkcash/src/utils.rs', lines 334:8-337:9
+    Visibility: public -/
+@[rust_loop]
+def utils.fv_change_endianness_64_loop0_loop0
+  (bytes : Array Std.U8 64#usize) (out : Array Std.U8 64#usize) (c : Std.Usize)
+  (i : Std.Usize) :
+  Result (Array Std.U8 64#usize)
+  := do
+  loop
+    (fun (out1, i1) => utils.fv_change_endianness_64_loop0_loop0.body bytes c
+      out1 i1)
+    (out, i)
+
+/-- [zkcash::utils::fv_change_endianness_64]: loop body 0:
+    Source: 'programs/zkcash/src/utils.rs', lines 332:4-339:5
+    Visibility: public -/
+@[rust_loop_body]
+def utils.fv_change_endianness_64_loop0.body
+  (bytes : Array Std.U8 64#usize) (out : Array Std.U8 64#usize) (c : Std.Usize)
+  :
+  Result (ControlFlow ((Array Std.U8 64#usize) × Std.Usize) (Array Std.U8
+    64#usize))
+  := do
+  if c < 2#usize
+  then
+    let out1 ← utils.fv_change_endianness_64_loop0_loop0 bytes out c 0#usize
+    let c1 ← c + 1#usize
+    ok (cont (out1, c1))
+  else ok (done out)
+
+/-- [zkcash::utils::fv_change_endianness_64]: loop 0:
+    Source: 'programs/zkcash/src/utils.rs', lines 332:4-339:5
+    Visibility: public -/
+@[rust_loop]
+def utils.fv_change_endianness_64_loop0
+  (bytes : Array Std.U8 64#usize) (out : Array Std.U8 64#usize) (c : Std.Usize)
+  :
+  Result (Array Std.U8 64#usize)
+  := do
+  loop
+    (fun (out1, c1) => utils.fv_change_endianness_64_loop0.body bytes out1 c1)
+    (out, c)
+
+/-- [zkcash::utils::fv_change_endianness_64]:
+    Source: 'programs/zkcash/src/utils.rs', lines 328:0-341:1
+    Visibility: public -/
+def utils.fv_change_endianness_64
+  (bytes : Array Std.U8 64#usize) : Result (Array Std.U8 64#usize) := do
+  let out := Array.repeat 64#usize 0#u8
+  utils.fv_change_endianness_64_loop0 bytes out 0#usize
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]: loop body 1:
+    Source: 'programs/zkcash/src/utils.rs', lines 399:12-402:13
+    Visibility: public -/
+@[rust_loop_body]
+def utils.fv_verify_proof_full_entry_loop0_loop0.body
+  (vk_ic : Array (Array Std.U8 64#usize) 8#usize) (idx : Std.Usize)
+  (mul_input : Array Std.U8 96#usize) (j : Std.Usize) :
+  Result (ControlFlow ((Array Std.U8 96#usize) × Std.Usize) (Array Std.U8
+    96#usize))
+  := do
+  if j < 64#usize
+  then
+    let i ← idx + 1#usize
+    let a ← Array.index_usize vk_ic i
+    let i1 ← Array.index_usize a j
+    let a1 ← Array.update mul_input j i1
+    let j1 ← j + 1#usize
+    ok (cont (a1, j1))
+  else ok (done mul_input)
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]: loop 1:
+    Source: 'programs/zkcash/src/utils.rs', lines 399:12-402:13
+    Visibility: public -/
+@[rust_loop]
+def utils.fv_verify_proof_full_entry_loop0_loop0
+  (vk_ic : Array (Array Std.U8 64#usize) 8#usize) (idx : Std.Usize)
+  (mul_input : Array Std.U8 96#usize) (j : Std.Usize) :
+  Result (Array Std.U8 96#usize)
+  := do
+  loop
+    (fun (mul_input1, j1) => utils.fv_verify_proof_full_entry_loop0_loop0.body
+      vk_ic idx mul_input1 j1)
+    (mul_input, j)
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]: loop body 2:
+    Source: 'programs/zkcash/src/utils.rs', lines 404:12-407:13
+    Visibility: public -/
+@[rust_loop_body]
+def utils.fv_verify_proof_full_entry_loop0_loop1.body
+  (public_inputs_vec : Array (Array Std.U8 32#usize) 7#usize) (idx : Std.Usize)
+  (mul_input : Array Std.U8 96#usize) (k : Std.Usize) :
+  Result (ControlFlow ((Array Std.U8 96#usize) × Std.Usize) (Array Std.U8
+    96#usize))
+  := do
+  if k < 32#usize
+  then
+    let a ← Array.index_usize public_inputs_vec idx
+    let i ← Array.index_usize a k
+    let i1 ← 64#usize + k
+    let a1 ← Array.update mul_input i1 i
+    let k1 ← k + 1#usize
+    ok (cont (a1, k1))
+  else ok (done mul_input)
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]: loop 2:
+    Source: 'programs/zkcash/src/utils.rs', lines 404:12-407:13
+    Visibility: public -/
+@[rust_loop]
+def utils.fv_verify_proof_full_entry_loop0_loop1
+  (public_inputs_vec : Array (Array Std.U8 32#usize) 7#usize) (idx : Std.Usize)
+  (mul_input : Array Std.U8 96#usize) (k : Std.Usize) :
+  Result (Array Std.U8 96#usize)
+  := do
+  loop
+    (fun (mul_input1, k1) => utils.fv_verify_proof_full_entry_loop0_loop1.body
+      public_inputs_vec idx mul_input1 k1)
+    (mul_input, k)
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]: loop body 3:
+    Source: 'programs/zkcash/src/utils.rs', lines 417:20-420:21
+    Visibility: public -/
+@[rust_loop_body]
+def utils.fv_verify_proof_full_entry_loop0_loop2.body
+  (mul_res : Array Std.U8 64#usize) (add_input : Array Std.U8 128#usize)
+  (m : Std.Usize) :
+  Result (ControlFlow ((Array Std.U8 128#usize) × Std.Usize) (Array Std.U8
+    128#usize))
+  := do
+  if m < 64#usize
+  then
+    let i ← Array.index_usize mul_res m
+    let a ← Array.update add_input m i
+    let m1 ← m + 1#usize
+    ok (cont (a, m1))
+  else ok (done add_input)
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]: loop 3:
+    Source: 'programs/zkcash/src/utils.rs', lines 417:20-420:21
+    Visibility: public -/
+@[rust_loop]
+def utils.fv_verify_proof_full_entry_loop0_loop2
+  (mul_res : Array Std.U8 64#usize) (add_input : Array Std.U8 128#usize)
+  (m : Std.Usize) :
+  Result (Array Std.U8 128#usize)
+  := do
+  loop
+    (fun (add_input1, m1) => utils.fv_verify_proof_full_entry_loop0_loop2.body
+      mul_res add_input1 m1)
+    (add_input, m)
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]: loop body 4:
+    Source: 'programs/zkcash/src/utils.rs', lines 422:20-425:21
+    Visibility: public -/
+@[rust_loop_body]
+def utils.fv_verify_proof_full_entry_loop0_loop3.body
+  (prepared_public_inputs : Array Std.U8 64#usize)
+  (add_input : Array Std.U8 128#usize) (n : Std.Usize) :
+  Result (ControlFlow ((Array Std.U8 128#usize) × Std.Usize) (Array Std.U8
+    128#usize))
+  := do
+  if n < 64#usize
+  then
+    let i ← Array.index_usize prepared_public_inputs n
+    let i1 ← 64#usize + n
+    let a ← Array.update add_input i1 i
+    let n1 ← n + 1#usize
+    ok (cont (a, n1))
+  else ok (done add_input)
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]: loop 4:
+    Source: 'programs/zkcash/src/utils.rs', lines 422:20-425:21
+    Visibility: public -/
+@[rust_loop]
+def utils.fv_verify_proof_full_entry_loop0_loop3
+  (prepared_public_inputs : Array Std.U8 64#usize)
+  (add_input : Array Std.U8 128#usize) (n : Std.Usize) :
+  Result (Array Std.U8 128#usize)
+  := do
+  loop
+    (fun (add_input1, n1) => utils.fv_verify_proof_full_entry_loop0_loop3.body
+      prepared_public_inputs add_input1 n1)
+    (add_input, n)
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]: loop body 0:
+    Source: 'programs/zkcash/src/utils.rs', lines 392:4-439:5
+    Visibility: public -/
+@[rust_loop_body]
+def utils.fv_verify_proof_full_entry_loop0.body
+  (vk_ic : Array (Array Std.U8 64#usize) 8#usize)
+  (public_inputs_vec : Array (Array Std.U8 32#usize) 7#usize)
+  (prepared_public_inputs : Array Std.U8 64#usize) (ok1 : Bool)
+  (idx : Std.Usize) :
+  Result (ControlFlow ((Array Std.U8 64#usize) × Bool × Std.Usize) ((Array
+    Std.U8 64#usize) × Bool))
+  := do
+  if idx < 7#usize
+  then
+    if ok1
+    then
+      let a ← Array.index_usize public_inputs_vec idx
+      let b ← curve_shim.fr_lt_modulus_be a
+      if b
+      then
+        let mul_input := Array.repeat 96#usize 0#u8
+        let mul_input1 ←
+          utils.fv_verify_proof_full_entry_loop0_loop0 vk_ic idx mul_input
+            0#usize
+        let mul_input2 ←
+          utils.fv_verify_proof_full_entry_loop0_loop1 public_inputs_vec idx
+            mul_input1 0#usize
+        let o ← curve_shim.alt_bn128_multiplication_shim mul_input2
+        match o with
+        | none =>
+          let idx1 ← idx + 1#usize
+          ok (cont (prepared_public_inputs, false, idx1))
+        | some mul_res =>
+          let add_input := Array.repeat 128#usize 0#u8
+          let add_input1 ←
+            utils.fv_verify_proof_full_entry_loop0_loop2 mul_res add_input
+              0#usize
+          let add_input2 ←
+            utils.fv_verify_proof_full_entry_loop0_loop3 prepared_public_inputs
+              add_input1 0#usize
+          let o1 ← curve_shim.alt_bn128_addition_shim add_input2
+          let (prepared_public_inputs1, ok2) ←
+            match o1 with
+            | none => ok (prepared_public_inputs, false)
+            | some sum => ok (sum, true)
+          let idx1 ← idx + 1#usize
+          ok (cont (prepared_public_inputs1, ok2, idx1))
+      else
+        let idx1 ← idx + 1#usize
+        ok (cont (prepared_public_inputs, false, idx1))
+    else ok (done (prepared_public_inputs, false))
+  else ok (done (prepared_public_inputs, ok1))
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]: loop 0:
+    Source: 'programs/zkcash/src/utils.rs', lines 392:4-439:5
+    Visibility: public -/
+@[rust_loop]
+def utils.fv_verify_proof_full_entry_loop0
+  (vk_ic : Array (Array Std.U8 64#usize) 8#usize)
+  (public_inputs_vec : Array (Array Std.U8 32#usize) 7#usize)
+  (prepared_public_inputs : Array Std.U8 64#usize) (ok1 : Bool)
+  (idx : Std.Usize) :
+  Result ((Array Std.U8 64#usize) × Bool)
+  := do
+  loop
+    (fun (prepared_public_inputs1, ok2, idx1) =>
+      utils.fv_verify_proof_full_entry_loop0.body vk_ic public_inputs_vec
+      prepared_public_inputs1 ok2 idx1)
+    (prepared_public_inputs, ok1, idx)
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]: loop body 5:
+    Source: 'programs/zkcash/src/utils.rs', lines 450:4-450:65
+    Visibility: public -/
+@[rust_loop_body]
+def utils.fv_verify_proof_full_entry_loop1.body
+  (proof_a : Array Std.U8 64#usize) (pairing_input : Array Std.U8 768#usize)
+  (p : Std.Usize) :
+  Result (ControlFlow ((Array Std.U8 768#usize) × Std.Usize) (Array Std.U8
+    768#usize))
+  := do
+  if p < 64#usize
+  then
+    let i ← Array.index_usize proof_a p
+    let i1 ← 0#usize + p
+    let a ← Array.update pairing_input i1 i
+    let p1 ← p + 1#usize
+    ok (cont (a, p1))
+  else ok (done pairing_input)
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]: loop 5:
+    Source: 'programs/zkcash/src/utils.rs', lines 450:4-450:65
+    Visibility: public -/
+@[rust_loop]
+def utils.fv_verify_proof_full_entry_loop1
+  (proof_a : Array Std.U8 64#usize) (pairing_input : Array Std.U8 768#usize)
+  (p : Std.Usize) :
+  Result (Array Std.U8 768#usize)
+  := do
+  loop
+    (fun (pairing_input1, p1) => utils.fv_verify_proof_full_entry_loop1.body
+      proof_a pairing_input1 p1)
+    (pairing_input, p)
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]: loop body 6:
+    Source: 'programs/zkcash/src/utils.rs', lines 453:4-453:66
+    Visibility: public -/
+@[rust_loop_body]
+def utils.fv_verify_proof_full_entry_loop2.body
+  (proof_b : Array Std.U8 128#usize) (off : Std.Usize)
+  (pairing_input : Array Std.U8 768#usize) (q : Std.Usize) :
+  Result (ControlFlow ((Array Std.U8 768#usize) × Std.Usize) (Array Std.U8
+    768#usize))
+  := do
+  if q < 128#usize
+  then
+    let i ← Array.index_usize proof_b q
+    let i1 ← off + q
+    let a ← Array.update pairing_input i1 i
+    let q1 ← q + 1#usize
+    ok (cont (a, q1))
+  else ok (done pairing_input)
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]: loop 6:
+    Source: 'programs/zkcash/src/utils.rs', lines 453:4-453:66
+    Visibility: public -/
+@[rust_loop]
+def utils.fv_verify_proof_full_entry_loop2
+  (proof_b : Array Std.U8 128#usize) (pairing_input : Array Std.U8 768#usize)
+  (off : Std.Usize) (q : Std.Usize) :
+  Result (Array Std.U8 768#usize)
+  := do
+  loop
+    (fun (pairing_input1, q1) => utils.fv_verify_proof_full_entry_loop2.body
+      proof_b off pairing_input1 q1)
+    (pairing_input, q)
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]: loop body 7:
+    Source: 'programs/zkcash/src/utils.rs', lines 456:4-456:80
+    Visibility: public -/
+@[rust_loop_body]
+def utils.fv_verify_proof_full_entry_loop3.body
+  (prepared_public_inputs : Array Std.U8 64#usize) (off : Std.Usize)
+  (pairing_input : Array Std.U8 768#usize) (r : Std.Usize) :
+  Result (ControlFlow ((Array Std.U8 768#usize) × Std.Usize) (Array Std.U8
+    768#usize))
+  := do
+  if r < 64#usize
+  then
+    let i ← Array.index_usize prepared_public_inputs r
+    let i1 ← off + r
+    let a ← Array.update pairing_input i1 i
+    let r1 ← r + 1#usize
+    ok (cont (a, r1))
+  else ok (done pairing_input)
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]: loop 7:
+    Source: 'programs/zkcash/src/utils.rs', lines 456:4-456:80
+    Visibility: public -/
+@[rust_loop]
+def utils.fv_verify_proof_full_entry_loop3
+  (prepared_public_inputs : Array Std.U8 64#usize)
+  (pairing_input : Array Std.U8 768#usize) (off : Std.Usize) (r : Std.Usize) :
+  Result (Array Std.U8 768#usize)
+  := do
+  loop
+    (fun (pairing_input1, r1) => utils.fv_verify_proof_full_entry_loop3.body
+      prepared_public_inputs off pairing_input1 r1)
+    (pairing_input, r)
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]: loop body 8:
+    Source: 'programs/zkcash/src/utils.rs', lines 459:4-459:70
+    Visibility: public -/
+@[rust_loop_body]
+def utils.fv_verify_proof_full_entry_loop4.body
+  (vk_gamme_g2 : Array Std.U8 128#usize) (off : Std.Usize)
+  (pairing_input : Array Std.U8 768#usize) (s : Std.Usize) :
+  Result (ControlFlow ((Array Std.U8 768#usize) × Std.Usize) (Array Std.U8
+    768#usize))
+  := do
+  if s < 128#usize
+  then
+    let i ← Array.index_usize vk_gamme_g2 s
+    let i1 ← off + s
+    let a ← Array.update pairing_input i1 i
+    let s1 ← s + 1#usize
+    ok (cont (a, s1))
+  else ok (done pairing_input)
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]: loop 8:
+    Source: 'programs/zkcash/src/utils.rs', lines 459:4-459:70
+    Visibility: public -/
+@[rust_loop]
+def utils.fv_verify_proof_full_entry_loop4
+  (vk_gamme_g2 : Array Std.U8 128#usize)
+  (pairing_input : Array Std.U8 768#usize) (off : Std.Usize) (s : Std.Usize) :
+  Result (Array Std.U8 768#usize)
+  := do
+  loop
+    (fun (pairing_input1, s1) => utils.fv_verify_proof_full_entry_loop4.body
+      vk_gamme_g2 off pairing_input1 s1)
+    (pairing_input, s)
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]: loop body 9:
+    Source: 'programs/zkcash/src/utils.rs', lines 462:4-462:65
+    Visibility: public -/
+@[rust_loop_body]
+def utils.fv_verify_proof_full_entry_loop5.body
+  (proof_c : Array Std.U8 64#usize) (off : Std.Usize)
+  (pairing_input : Array Std.U8 768#usize) (t : Std.Usize) :
+  Result (ControlFlow ((Array Std.U8 768#usize) × Std.Usize) (Array Std.U8
+    768#usize))
+  := do
+  if t < 64#usize
+  then
+    let i ← Array.index_usize proof_c t
+    let i1 ← off + t
+    let a ← Array.update pairing_input i1 i
+    let t1 ← t + 1#usize
+    ok (cont (a, t1))
+  else ok (done pairing_input)
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]: loop 9:
+    Source: 'programs/zkcash/src/utils.rs', lines 462:4-462:65
+    Visibility: public -/
+@[rust_loop]
+def utils.fv_verify_proof_full_entry_loop5
+  (proof_c : Array Std.U8 64#usize) (pairing_input : Array Std.U8 768#usize)
+  (off : Std.Usize) (t : Std.Usize) :
+  Result (Array Std.U8 768#usize)
+  := do
+  loop
+    (fun (pairing_input1, t1) => utils.fv_verify_proof_full_entry_loop5.body
+      proof_c off pairing_input1 t1)
+    (pairing_input, t)
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]: loop body 10:
+    Source: 'programs/zkcash/src/utils.rs', lines 465:4-465:70
+    Visibility: public -/
+@[rust_loop_body]
+def utils.fv_verify_proof_full_entry_loop6.body
+  (vk_delta_g2 : Array Std.U8 128#usize) (off : Std.Usize)
+  (pairing_input : Array Std.U8 768#usize) (u : Std.Usize) :
+  Result (ControlFlow ((Array Std.U8 768#usize) × Std.Usize) (Array Std.U8
+    768#usize))
+  := do
+  if u < 128#usize
+  then
+    let i ← Array.index_usize vk_delta_g2 u
+    let i1 ← off + u
+    let a ← Array.update pairing_input i1 i
+    let u1 ← u + 1#usize
+    ok (cont (a, u1))
+  else ok (done pairing_input)
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]: loop 10:
+    Source: 'programs/zkcash/src/utils.rs', lines 465:4-465:70
+    Visibility: public -/
+@[rust_loop]
+def utils.fv_verify_proof_full_entry_loop6
+  (vk_delta_g2 : Array Std.U8 128#usize)
+  (pairing_input : Array Std.U8 768#usize) (off : Std.Usize) (u : Std.Usize) :
+  Result (Array Std.U8 768#usize)
+  := do
+  loop
+    (fun (pairing_input1, u1) => utils.fv_verify_proof_full_entry_loop6.body
+      vk_delta_g2 off pairing_input1 u1)
+    (pairing_input, u)
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]: loop body 11:
+    Source: 'programs/zkcash/src/utils.rs', lines 468:4-468:69
+    Visibility: public -/
+@[rust_loop_body]
+def utils.fv_verify_proof_full_entry_loop7.body
+  (vk_alpha_g1 : Array Std.U8 64#usize) (off : Std.Usize)
+  (pairing_input : Array Std.U8 768#usize) (v : Std.Usize) :
+  Result (ControlFlow ((Array Std.U8 768#usize) × Std.Usize) (Array Std.U8
+    768#usize))
+  := do
+  if v < 64#usize
+  then
+    let i ← Array.index_usize vk_alpha_g1 v
+    let i1 ← off + v
+    let a ← Array.update pairing_input i1 i
+    let v1 ← v + 1#usize
+    ok (cont (a, v1))
+  else ok (done pairing_input)
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]: loop 11:
+    Source: 'programs/zkcash/src/utils.rs', lines 468:4-468:69
+    Visibility: public -/
+@[rust_loop]
+def utils.fv_verify_proof_full_entry_loop7
+  (vk_alpha_g1 : Array Std.U8 64#usize)
+  (pairing_input : Array Std.U8 768#usize) (off : Std.Usize) (v : Std.Usize) :
+  Result (Array Std.U8 768#usize)
+  := do
+  loop
+    (fun (pairing_input1, v1) => utils.fv_verify_proof_full_entry_loop7.body
+      vk_alpha_g1 off pairing_input1 v1)
+    (pairing_input, v)
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]: loop body 12:
+    Source: 'programs/zkcash/src/utils.rs', lines 471:4-471:69
+    Visibility: public -/
+@[rust_loop_body]
+def utils.fv_verify_proof_full_entry_loop8.body
+  (vk_beta_g2 : Array Std.U8 128#usize) (off : Std.Usize)
+  (pairing_input : Array Std.U8 768#usize) (w : Std.Usize) :
+  Result (ControlFlow ((Array Std.U8 768#usize) × Std.Usize) (Array Std.U8
+    768#usize))
+  := do
+  if w < 128#usize
+  then
+    let i ← Array.index_usize vk_beta_g2 w
+    let i1 ← off + w
+    let a ← Array.update pairing_input i1 i
+    let w1 ← w + 1#usize
+    ok (cont (a, w1))
+  else ok (done pairing_input)
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]: loop 12:
+    Source: 'programs/zkcash/src/utils.rs', lines 471:4-471:69
+    Visibility: public -/
+@[rust_loop]
+def utils.fv_verify_proof_full_entry_loop8
+  (vk_beta_g2 : Array Std.U8 128#usize)
+  (pairing_input : Array Std.U8 768#usize) (off : Std.Usize) (w : Std.Usize) :
+  Result (Array Std.U8 768#usize)
+  := do
+  loop
+    (fun (pairing_input1, w1) => utils.fv_verify_proof_full_entry_loop8.body
+      vk_beta_g2 off pairing_input1 w1)
+    (pairing_input, w)
+
+/-- [zkcash::utils::fv_verify_proof_full_entry]:
+    Source: 'programs/zkcash/src/utils.rs', lines 343:0-482:1
+    Visibility: public -/
+def utils.fv_verify_proof_full_entry
+  (proof_root : Array Std.U8 32#usize)
+  (proof_public_amount : Array Std.U8 32#usize)
+  (proof_ext_data_hash : Array Std.U8 32#usize)
+  (proof_input_nullifiers : Array (Array Std.U8 32#usize) 2#usize)
+  (proof_output_commitments : Array (Array Std.U8 32#usize) 2#usize)
+  (proof_a_raw : Array Std.U8 64#usize) (proof_b : Array Std.U8 128#usize)
+  (proof_c : Array Std.U8 64#usize) (vk_alpha_g1 : Array Std.U8 64#usize)
+  (vk_beta_g2 : Array Std.U8 128#usize) (vk_gamme_g2 : Array Std.U8 128#usize)
+  (vk_delta_g2 : Array Std.U8 128#usize)
+  (vk_ic : Array (Array Std.U8 64#usize) 8#usize) :
+  Result Bool
+  := do
+  let a := Array.repeat 32#usize 0#u8
+  let public_inputs_vec := Array.repeat 7#usize a
+  let public_inputs_vec1 ← Array.update public_inputs_vec 0#usize proof_root
+  let public_inputs_vec2 ←
+    Array.update public_inputs_vec1 1#usize proof_public_amount
+  let public_inputs_vec3 ←
+    Array.update public_inputs_vec2 2#usize proof_ext_data_hash
+  let a1 ← Array.index_usize proof_input_nullifiers 0#usize
+  let public_inputs_vec4 ← Array.update public_inputs_vec3 3#usize a1
+  let a2 ← Array.index_usize proof_input_nullifiers 1#usize
+  let public_inputs_vec5 ← Array.update public_inputs_vec4 4#usize a2
+  let a3 ← Array.index_usize proof_output_commitments 0#usize
+  let public_inputs_vec6 ← Array.update public_inputs_vec5 5#usize a3
+  let a4 ← Array.index_usize proof_output_commitments 1#usize
+  let (_, index_mut_back) ← Array.index_mut_usize public_inputs_vec6 6#usize
+  let a_be ← utils.fv_change_endianness_64 proof_a_raw
+  let o ← curve_shim.G1Shim.deserialize_uncompressed a_be
+  match o with
+  | none => ok false
+  | some point =>
+    let gs ← curve_shim.G1Shim.negate point
+    let proof_a_neg ← curve_shim.G1Shim.to_bytes gs
+    let proof_a ← utils.fv_change_endianness_64 proof_a_neg
+    let public_inputs_vec7 := index_mut_back a4
+    let s ← lift (Array.to_slice public_inputs_vec7)
+    let i := Slice.len s
+    let i1 ← i + 1#usize
+    let s1 ← lift (Array.to_slice vk_ic)
+    let i2 := Slice.len s1
+    if i1 != i2
+    then ok false
+    else
+      let prepared_public_inputs ← Array.index_usize vk_ic 0#usize
+      let (prepared_public_inputs1, ok1) ←
+        utils.fv_verify_proof_full_entry_loop0 vk_ic public_inputs_vec7
+          prepared_public_inputs true 0#usize
+      if ok1
+      then
+        let pairing_input := Array.repeat 768#usize 0#u8
+        let pairing_input1 ←
+          utils.fv_verify_proof_full_entry_loop1 proof_a pairing_input 0#usize
+        let off ← 0#usize + 64#usize
+        let pairing_input2 ←
+          utils.fv_verify_proof_full_entry_loop2 proof_b pairing_input1 off
+            0#usize
+        let off1 ← off + 128#usize
+        let pairing_input3 ←
+          utils.fv_verify_proof_full_entry_loop3 prepared_public_inputs1
+            pairing_input2 off1 0#usize
+        let off2 ← off1 + 64#usize
+        let pairing_input4 ←
+          utils.fv_verify_proof_full_entry_loop4 vk_gamme_g2 pairing_input3
+            off2 0#usize
+        let off3 ← off2 + 128#usize
+        let pairing_input5 ←
+          utils.fv_verify_proof_full_entry_loop5 proof_c pairing_input4 off3
+            0#usize
+        let off4 ← off3 + 64#usize
+        let pairing_input6 ←
+          utils.fv_verify_proof_full_entry_loop6 vk_delta_g2 pairing_input5
+            off4 0#usize
+        let off5 ← off4 + 128#usize
+        let pairing_input7 ←
+          utils.fv_verify_proof_full_entry_loop7 vk_alpha_g1 pairing_input6
+            off5 0#usize
+        let off6 ← off5 + 64#usize
+        let pairing_input8 ←
+          utils.fv_verify_proof_full_entry_loop8 vk_beta_g2 pairing_input7 off6
+            0#usize
+        let o1 ← curve_shim.alt_bn128_pairing_shim pairing_input8
+        match o1 with
+        | none => ok false
+        | some res =>
+          let i3 ← Array.index_usize res 31#usize
+          if i3 != 1#u8
+          then ok false
+          else ok true
+      else ok false
+
 /-- [zkcash::{zkcash::ErrorCode}::name]:
-    Source: 'programs/zkcash/src/lib.rs', lines 1044:0-1044:13
+    Source: 'programs/zkcash/src/lib.rs', lines 1067:0-1067:13
     Visibility: public -/
 def ErrorCode.name (self : ErrorCode) : Result String := do
   match self with
@@ -344,7 +980,7 @@ def ErrorCode.name (self : ErrorCode) : Result String := do
       "InvalidTokenAccountMintAddress")
 
 /-- [zkcash::{impl core::fmt::Display for zkcash::ErrorCode}::fmt]:
-    Source: 'programs/zkcash/src/lib.rs', lines 1044:0-1044:13
+    Source: 'programs/zkcash/src/lib.rs', lines 1067:0-1067:13
     Visibility: public -/
 def ErrorCode.Insts.CoreFmtDisplay.fmt
   (self : ErrorCode) (fmt : core.fmt.Formatter) :
@@ -442,14 +1078,14 @@ def ErrorCode.Insts.CoreFmtDisplay.fmt
     core.fmt.Formatter.write_fmt fmt a
 
 /-- Trait implementation: [zkcash::{impl core::fmt::Display for zkcash::ErrorCode}]
-    Source: 'programs/zkcash/src/lib.rs', lines 1044:0-1044:13 -/
+    Source: 'programs/zkcash/src/lib.rs', lines 1067:0-1067:13 -/
 @[reducible]
 def ErrorCode.Insts.CoreFmtDisplay : core.fmt.Display ErrorCode := {
   fmt := ErrorCode.Insts.CoreFmtDisplay.fmt
 }
 
 /-- [zkcash::{impl core::convert::From<zkcash::ErrorCode> for u32}::from]:
-    Source: 'programs/zkcash/src/lib.rs', lines 1044:0-1044:13
+    Source: 'programs/zkcash/src/lib.rs', lines 1067:0-1067:13
     Visibility: public -/
 def U32.Insts.CoreConvertFromErrorCode.from
   (e : ErrorCode) : Result Std.U32 := do
@@ -459,7 +1095,7 @@ def U32.Insts.CoreConvertFromErrorCode.from
   i + i1
 
 /-- Trait implementation: [zkcash::{impl core::convert::From<zkcash::ErrorCode> for u32}]
-    Source: 'programs/zkcash/src/lib.rs', lines 1044:0-1044:13 -/
+    Source: 'programs/zkcash/src/lib.rs', lines 1067:0-1067:13 -/
 @[reducible]
 def U32.Insts.CoreConvertFromErrorCode : core.convert.From Std.U32 ErrorCode
   := {
@@ -467,7 +1103,7 @@ def U32.Insts.CoreConvertFromErrorCode : core.convert.From Std.U32 ErrorCode
 }
 
 /-- [zkcash::{impl core::convert::From<zkcash::ErrorCode> for anchor_lang::error::Error}::from]:
-    Source: 'programs/zkcash/src/lib.rs', lines 1044:0-1044:13
+    Source: 'programs/zkcash/src/lib.rs', lines 1067:0-1067:13
     Visibility: public -/
 def anchor_lang.error.Error.Insts.CoreConvertFromErrorCode.from
   (error_code : ErrorCode) : Result anchor_lang.error.Error := do
@@ -487,7 +1123,7 @@ def anchor_lang.error.Error.Insts.CoreConvertFromErrorCode.from
     }
 
 /-- Trait implementation: [zkcash::{impl core::convert::From<zkcash::ErrorCode> for anchor_lang::error::Error}]
-    Source: 'programs/zkcash/src/lib.rs', lines 1044:0-1044:13 -/
+    Source: 'programs/zkcash/src/lib.rs', lines 1067:0-1067:13 -/
 @[reducible]
 def anchor_lang.error.Error.Insts.CoreConvertFromErrorCode : core.convert.From
   anchor_lang.error.Error ErrorCode := {
@@ -495,7 +1131,7 @@ def anchor_lang.error.Error.Insts.CoreConvertFromErrorCode : core.convert.From
 }
 
 /-- [zkcash::utils::validate_fee]:
-    Source: 'programs/zkcash/src/utils.rs', lines 184:0-248:1
+    Source: 'programs/zkcash/src/utils.rs', lines 185:0-249:1
     Visibility: public -/
 def utils.validate_fee
   (ext_amount : Std.I64) (provided_fee : Std.U64) (deposit_fee_rate : Std.U16)
@@ -561,7 +1197,7 @@ def utils.validate_fee
                             {
                               filename :=
                                 (toStr "programs/zkcash/src/utils.rs"),
-                              line := 212#u32
+                              line := 213#u32
                             })),
                         compared_values := none
                       }
@@ -600,7 +1236,7 @@ def utils.validate_fee
                       (anchor_lang.error.ErrorOrigin.Source
                       {
                         filename := (toStr "programs/zkcash/src/utils.rs"),
-                        line := 212#u32
+                        line := 213#u32
                       })),
                   compared_values := none
                 }
@@ -680,7 +1316,7 @@ def utils.validate_fee
                                 {
                                   filename :=
                                     (toStr "programs/zkcash/src/utils.rs"),
-                                  line := 240#u32
+                                  line := 241#u32
                                 })),
                             compared_values := none
                           }
@@ -720,7 +1356,7 @@ def utils.validate_fee
                           (anchor_lang.error.ErrorOrigin.Source
                           {
                             filename := (toStr "programs/zkcash/src/utils.rs"),
-                            line := 240#u32
+                            line := 241#u32
                           })),
                       compared_values := none
                     }
@@ -739,7 +1375,7 @@ def utils.validate_fee
     else ok (core.result.Result.Ok ())
 
 /-- [zkcash::utils::fv_check_public_amount_entry]:
-    Source: 'programs/zkcash/src/utils.rs', lines 134:0-164:1
+    Source: 'programs/zkcash/src/utils.rs', lines 135:0-165:1
     Visibility: public -/
 def utils.fv_check_public_amount_entry
   (ext_amount : Std.I64) (fee : Std.U64)
@@ -1060,7 +1696,7 @@ def merkle_tree.MerkleTree.append
     ok (core.result.Result.Err e, tree_account)
 
 /-- [zkcash::fv_transact_entry::{impl core::ops::function::FnOnce<(core::num::error::TryFromIntError,), zkcash::ErrorCode> for zkcash::fv_transact_entry::closure}::call_once]:
-    Source: 'programs/zkcash/src/lib.rs', lines 619:21-619:52 -/
+    Source: 'programs/zkcash/src/lib.rs', lines 642:21-642:52 -/
 def
   fv_transact_entry.closure.Insts.CoreOpsFunctionFnOnceTupleTryFromIntErrorErrorCode.call_once
   (c : fv_transact_entry.closure)
@@ -1070,7 +1706,7 @@ def
   ok ErrorCode.InvalidExtAmount
 
 /-- Trait implementation: [zkcash::fv_transact_entry::{impl core::ops::function::FnOnce<(core::num::error::TryFromIntError,), zkcash::ErrorCode> for zkcash::fv_transact_entry::closure}]
-    Source: 'programs/zkcash/src/lib.rs', lines 619:21-619:52 -/
+    Source: 'programs/zkcash/src/lib.rs', lines 642:21-642:52 -/
 @[reducible]
 def
   fv_transact_entry.closure.Insts.CoreOpsFunctionFnOnceTupleTryFromIntErrorErrorCode
@@ -1081,16 +1717,19 @@ def
 }
 
 /-- [zkcash::fv_transact_entry]:
-    Source: 'programs/zkcash/src/lib.rs', lines 550:0-653:1
+    Source: 'programs/zkcash/src/lib.rs', lines 550:0-676:1
     Visibility: public -/
 def fv_transact_entry
   (tree_account : MerkleTreeAccount) (global_config : GlobalConfig)
   (proof_root : Array Std.U8 32#usize)
   (proof_ext_data_hash : Array Std.U8 32#usize)
   (proof_public_amount : Array Std.U8 32#usize)
+  (input_nullifiers : Array (Array Std.U8 32#usize) 2#usize)
   (output_commitments : Array (Array Std.U8 32#usize) 2#usize)
-  (ext_amount : Std.I64) (fee : Std.U64) (recipient : solana_pubkey.Pubkey)
-  (fee_recipient : solana_pubkey.Pubkey) (mint_address : solana_pubkey.Pubkey)
+  (proof_a : Array Std.U8 64#usize) (proof_b : Array Std.U8 128#usize)
+  (proof_c : Array Std.U8 64#usize) (ext_amount : Std.I64) (fee : Std.U64)
+  (recipient : solana_pubkey.Pubkey) (fee_recipient : solana_pubkey.Pubkey)
+  (mint_address : solana_pubkey.Pubkey)
   (encrypted_output1 : alloc.vec.Vec Std.U8)
   (encrypted_output2 : alloc.vec.Vec Std.U8) (rent_exempt_minimum : Std.U64)
   (tree_token_lamports : Std.U64) (signer_lamports : Std.U64)
@@ -1124,7 +1763,15 @@ def fv_transact_entry
           let cf1 ← core.result.Result.Insts.CoreOpsTry.branch r1
           match cf1 with
           | core.ops.control_flow.ControlFlow.Continue _ =>
-            let b3 ← fv_verify_proof_entry 0#u8
+            let a ← curve_shim.FV_VK_ALPHA_G1
+            let a1 ← curve_shim.FV_VK_BETA_G2
+            let a2 ← curve_shim.FV_VK_GAMME_G2
+            let a3 ← curve_shim.FV_VK_DELTA_G2
+            let a4 ← curve_shim.FV_VK_IC
+            let b3 ←
+              utils.fv_verify_proof_full_entry proof_root proof_public_amount
+                proof_ext_data_hash input_nullifiers output_commitments proof_a
+                proof_b proof_c a a1 a2 a3 a4
             if b3
             then
               if ext_amount > 0#i64
@@ -1181,26 +1828,26 @@ def fv_transact_entry
                                 match cf6 with
                                 | core.ops.control_flow.ControlFlow.Continue
                                   val5 =>
-                                  let a ←
+                                  let a5 ←
                                     Array.index_usize output_commitments
                                       0#usize
                                   let (r7, tree_account1) ←
                                     merkle_tree.MerkleTree.append
                                       light_hasher.poseidon.Poseidon.Insts.Light_hasherHasher
-                                      a tree_account
+                                      a5 tree_account
                                   let cf7 ←
                                     core.result.Result.Insts.CoreOpsTry.branch
                                       r7
                                   match cf7 with
                                   | core.ops.control_flow.ControlFlow.Continue
                                     _ =>
-                                    let a1 ←
+                                    let a6 ←
                                       Array.index_usize output_commitments
                                         1#usize
                                     let (r8, tree_account2) ←
                                       merkle_tree.MerkleTree.append
                                         light_hasher.poseidon.Poseidon.Insts.Light_hasherHasher
-                                        a1 tree_account1
+                                        a6 tree_account1
                                     let cf8 ←
                                       core.result.Result.Insts.CoreOpsTry.branch
                                         r8
@@ -1270,7 +1917,7 @@ def fv_transact_entry
                                           filename :=
                                             (toStr
                                               "programs/zkcash/src/lib.rs"),
-                                          line := 639#u32
+                                          line := 662#u32
                                         })),
                                     compared_values := none
                                   }
@@ -1304,22 +1951,22 @@ def fv_transact_entry
                             match cf5 with
                             | core.ops.control_flow.ControlFlow.Continue val4
                               =>
-                              let a ←
+                              let a5 ←
                                 Array.index_usize output_commitments 0#usize
                               let (r6, tree_account1) ←
                                 merkle_tree.MerkleTree.append
                                   light_hasher.poseidon.Poseidon.Insts.Light_hasherHasher
-                                  a tree_account
+                                  a5 tree_account
                               let cf6 ←
                                 core.result.Result.Insts.CoreOpsTry.branch r6
                               match cf6 with
                               | core.ops.control_flow.ControlFlow.Continue _ =>
-                                let a1 ←
+                                let a6 ←
                                   Array.index_usize output_commitments 1#usize
                                 let (r7, tree_account2) ←
                                   merkle_tree.MerkleTree.append
                                     light_hasher.poseidon.Poseidon.Insts.Light_hasherHasher
-                                    a1 tree_account1
+                                    a6 tree_account1
                                 let cf7 ←
                                   core.result.Result.Insts.CoreOpsTry.branch r7
                                 match cf7 with
@@ -1361,21 +2008,21 @@ def fv_transact_entry
                             ok (r5, tree_account, val2, val1,
                               recipient_lamports, fee_recipient_lamports)
                       else
-                        let a ← Array.index_usize output_commitments 0#usize
+                        let a5 ← Array.index_usize output_commitments 0#usize
                         let (r4, tree_account1) ←
                           merkle_tree.MerkleTree.append
                             light_hasher.poseidon.Poseidon.Insts.Light_hasherHasher
-                            a tree_account
+                            a5 tree_account
                         let cf4 ←
                           core.result.Result.Insts.CoreOpsTry.branch r4
                         match cf4 with
                         | core.ops.control_flow.ControlFlow.Continue _ =>
-                          let a1 ←
+                          let a6 ←
                             Array.index_usize output_commitments 1#usize
                           let (r5, tree_account2) ←
                             merkle_tree.MerkleTree.append
                               light_hasher.poseidon.Poseidon.Insts.Light_hasherHasher
-                              a1 tree_account1
+                              a6 tree_account1
                           let cf5 ←
                             core.result.Result.Insts.CoreOpsTry.branch r5
                           match cf5 with
@@ -1433,7 +2080,7 @@ def fv_transact_entry
                             (anchor_lang.error.ErrorOrigin.Source
                             {
                               filename := (toStr "programs/zkcash/src/lib.rs"),
-                              line := 608#u32
+                              line := 631#u32
                             })),
                         compared_values := none
                       }
@@ -1541,13 +2188,13 @@ def fv_transact_entry
                                           |
                                             core.ops.control_flow.ControlFlow.Continue
                                             val9 =>
-                                            let a ←
+                                            let a5 ←
                                               Array.index_usize
                                                 output_commitments 0#usize
                                             let (r12, tree_account1) ←
                                               merkle_tree.MerkleTree.append
                                                 light_hasher.poseidon.Poseidon.Insts.Light_hasherHasher
-                                                a tree_account
+                                                a5 tree_account
                                             let cf11 ←
                                               core.result.Result.Insts.CoreOpsTry.branch
                                                 r12
@@ -1555,13 +2202,13 @@ def fv_transact_entry
                                             |
                                               core.ops.control_flow.ControlFlow.Continue
                                               _ =>
-                                              let a1 ←
+                                              let a6 ←
                                                 Array.index_usize
                                                   output_commitments 1#usize
                                               let (r13, tree_account2) ←
                                                 merkle_tree.MerkleTree.append
                                                   light_hasher.poseidon.Poseidon.Insts.Light_hasherHasher
-                                                  a1 tree_account1
+                                                  a6 tree_account1
                                               let cf12 ←
                                                 core.result.Result.Insts.CoreOpsTry.branch
                                                   r13
@@ -1639,7 +2286,7 @@ def fv_transact_entry
                                                     filename :=
                                                       (toStr
                                                         "programs/zkcash/src/lib.rs"),
-                                                    line := 639#u32
+                                                    line := 662#u32
                                                   })),
                                               compared_values := none
                                             }
@@ -1681,13 +2328,13 @@ def fv_transact_entry
                                       |
                                         core.ops.control_flow.ControlFlow.Continue
                                         val8 =>
-                                        let a ←
+                                        let a5 ←
                                           Array.index_usize output_commitments
                                             0#usize
                                         let (r11, tree_account1) ←
                                           merkle_tree.MerkleTree.append
                                             light_hasher.poseidon.Poseidon.Insts.Light_hasherHasher
-                                            a tree_account
+                                            a5 tree_account
                                         let cf10 ←
                                           core.result.Result.Insts.CoreOpsTry.branch
                                             r11
@@ -1695,13 +2342,13 @@ def fv_transact_entry
                                         |
                                           core.ops.control_flow.ControlFlow.Continue
                                           _ =>
-                                          let a1 ←
+                                          let a6 ←
                                             Array.index_usize
                                               output_commitments 1#usize
                                           let (r12, tree_account2) ←
                                             merkle_tree.MerkleTree.append
                                               light_hasher.poseidon.Poseidon.Insts.Light_hasherHasher
-                                              a1 tree_account1
+                                              a6 tree_account1
                                           let cf11 ←
                                             core.result.Result.Insts.CoreOpsTry.branch
                                               r12
@@ -1752,26 +2399,26 @@ def fv_transact_entry
                                         signer_lamports, val6,
                                         fee_recipient_lamports)
                                 else
-                                  let a ←
+                                  let a5 ←
                                     Array.index_usize output_commitments
                                       0#usize
                                   let (r9, tree_account1) ←
                                     merkle_tree.MerkleTree.append
                                       light_hasher.poseidon.Poseidon.Insts.Light_hasherHasher
-                                      a tree_account
+                                      a5 tree_account
                                   let cf8 ←
                                     core.result.Result.Insts.CoreOpsTry.branch
                                       r9
                                   match cf8 with
                                   | core.ops.control_flow.ControlFlow.Continue
                                     _ =>
-                                    let a1 ←
+                                    let a6 ←
                                       Array.index_usize output_commitments
                                         1#usize
                                     let (r10, tree_account2) ←
                                       merkle_tree.MerkleTree.append
                                         light_hasher.poseidon.Poseidon.Insts.Light_hasherHasher
-                                        a1 tree_account1
+                                        a6 tree_account1
                                     let cf9 ←
                                       core.result.Result.Insts.CoreOpsTry.branch
                                         r10
@@ -1843,7 +2490,7 @@ def fv_transact_entry
                                       {
                                         filename :=
                                           (toStr "programs/zkcash/src/lib.rs"),
-                                        line := 627#u32
+                                        line := 650#u32
                                       })),
                                   compared_values := none
                                 }
@@ -1917,22 +2564,22 @@ def fv_transact_entry
                             match cf4 with
                             | core.ops.control_flow.ControlFlow.Continue val3
                               =>
-                              let a ←
+                              let a5 ←
                                 Array.index_usize output_commitments 0#usize
                               let (r5, tree_account1) ←
                                 merkle_tree.MerkleTree.append
                                   light_hasher.poseidon.Poseidon.Insts.Light_hasherHasher
-                                  a tree_account
+                                  a5 tree_account
                               let cf5 ←
                                 core.result.Result.Insts.CoreOpsTry.branch r5
                               match cf5 with
                               | core.ops.control_flow.ControlFlow.Continue _ =>
-                                let a1 ←
+                                let a6 ←
                                   Array.index_usize output_commitments 1#usize
                                 let (r6, tree_account2) ←
                                   merkle_tree.MerkleTree.append
                                     light_hasher.poseidon.Poseidon.Insts.Light_hasherHasher
-                                    a1 tree_account1
+                                    a6 tree_account1
                                 let cf6 ←
                                   core.result.Result.Insts.CoreOpsTry.branch r6
                                 match cf6 with
@@ -1998,7 +2645,7 @@ def fv_transact_entry
                                     {
                                       filename :=
                                         (toStr "programs/zkcash/src/lib.rs"),
-                                      line := 639#u32
+                                      line := 662#u32
                                     })),
                                 compared_values := none
                               }
@@ -2030,22 +2677,22 @@ def fv_transact_entry
                           core.result.Result.Insts.CoreOpsTry.branch r3
                         match cf3 with
                         | core.ops.control_flow.ControlFlow.Continue val2 =>
-                          let a ←
+                          let a5 ←
                             Array.index_usize output_commitments 0#usize
                           let (r4, tree_account1) ←
                             merkle_tree.MerkleTree.append
                               light_hasher.poseidon.Poseidon.Insts.Light_hasherHasher
-                              a tree_account
+                              a5 tree_account
                           let cf4 ←
                             core.result.Result.Insts.CoreOpsTry.branch r4
                           match cf4 with
                           | core.ops.control_flow.ControlFlow.Continue _ =>
-                            let a1 ←
+                            let a6 ←
                               Array.index_usize output_commitments 1#usize
                             let (r5, tree_account2) ←
                               merkle_tree.MerkleTree.append
                                 light_hasher.poseidon.Poseidon.Insts.Light_hasherHasher
-                                a1 tree_account1
+                                a6 tree_account1
                             let cf5 ←
                               core.result.Result.Insts.CoreOpsTry.branch r5
                             match cf5 with
@@ -2086,19 +2733,19 @@ def fv_transact_entry
                           signer_lamports, recipient_lamports,
                           fee_recipient_lamports)
                   else
-                    let a ← Array.index_usize output_commitments 0#usize
+                    let a5 ← Array.index_usize output_commitments 0#usize
                     let (r2, tree_account1) ←
                       merkle_tree.MerkleTree.append
                         light_hasher.poseidon.Poseidon.Insts.Light_hasherHasher
-                        a tree_account
+                        a5 tree_account
                     let cf2 ← core.result.Result.Insts.CoreOpsTry.branch r2
                     match cf2 with
                     | core.ops.control_flow.ControlFlow.Continue _ =>
-                      let a1 ← Array.index_usize output_commitments 1#usize
+                      let a6 ← Array.index_usize output_commitments 1#usize
                       let (r3, tree_account2) ←
                         merkle_tree.MerkleTree.append
                           light_hasher.poseidon.Poseidon.Insts.Light_hasherHasher
-                          a1 tree_account1
+                          a6 tree_account1
                       let cf3 ← core.result.Result.Insts.CoreOpsTry.branch r3
                       match cf3 with
                       | core.ops.control_flow.ControlFlow.Continue _ =>
@@ -2140,7 +2787,7 @@ def fv_transact_entry
                         (anchor_lang.error.ErrorOrigin.Source
                         {
                           filename := (toStr "programs/zkcash/src/lib.rs"),
-                          line := 604#u32
+                          line := 610#u32
                         })),
                     compared_values := none
                   }
@@ -2171,7 +2818,7 @@ def fv_transact_entry
                     (anchor_lang.error.ErrorOrigin.Source
                     {
                       filename := (toStr "programs/zkcash/src/lib.rs"),
-                      line := 591#u32
+                      line := 595#u32
                     })),
                 compared_values := none
               }
@@ -2196,7 +2843,7 @@ def fv_transact_entry
                   (anchor_lang.error.ErrorOrigin.Source
                   {
                     filename := (toStr "programs/zkcash/src/lib.rs"),
-                    line := 585#u32
+                    line := 589#u32
                   })),
               compared_values := none
             }
@@ -2227,7 +2874,7 @@ def fv_transact_entry
               (anchor_lang.error.ErrorOrigin.Source
               {
                 filename := (toStr "programs/zkcash/src/lib.rs"),
-                line := 570#u32
+                line := 574#u32
               })),
           compared_values := none
         }

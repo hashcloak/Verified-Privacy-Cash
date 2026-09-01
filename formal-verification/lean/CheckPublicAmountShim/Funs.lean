@@ -39,7 +39,7 @@ impl_def fr_shim.FrShim.Insts.CoreCmpPartialOrdFrShim : core.cmp.PartialOrd
 }
 
 /-- [zkcash::utils::fv_check_public_amount_entry]:
-    Source: 'programs/zkcash/src/utils.rs', lines 134:0-164:1
+    Source: 'programs/zkcash/src/utils.rs', lines 135:0-165:1
     Visibility: public -/
 def utils.fv_check_public_amount_entry
   (ext_amount : Std.I64) (fee : Std.U64)

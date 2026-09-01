@@ -34,6 +34,11 @@ axiom solana_pubkey.Pubkey : Type
 @[rust_type "solana_hash::Hash"]
 axiom solana_hash.Hash : Type
 
+/-- [zkcash::curve_shim::G1Shim]
+    Source: 'programs/zkcash/src/curve_shim.rs', lines 74:0-74:32
+    Visibility: public -/
+axiom curve_shim.G1Shim : Type
+
 /-- [zkcash::fr_shim::FrShim]
     Source: 'programs/zkcash/src/fr_shim.rs', lines 19:0-19:32
     Visibility: public -/
