@@ -29,8 +29,8 @@ globs = ["VerifyProofShim.Types", "VerifyProofShim.TypesExternal", "VerifyProofS
 name = "Test"
 globs = ["Test.Test"]
 
-# Hand-written specifications & proofs about the extracted model. Kept outside the
-# aeneas-regenerated subdirs so `extract.sh` never touches it.
+# Hand-written specification of the protocol, and proofs about the extracted model.
+# Kept outside the aeneas-regenerated subdirs so `extract.sh` never touches it.
 [[lean_lib]]
 name = "Spec"
-globs = ["Spec.CheckPublicAmount"]
+globs = ["Spec.privacy_cash_spec", "Spec.theorems"]
