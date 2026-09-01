@@ -79,15 +79,17 @@ Then produce the model:
 ```bash
 ./extract.sh
 ```
-This regenerates `lean/TransactShim/` and `lean/CheckPublicAmountShim/` — the Lean model of
-`transact` (SOL-only for now). Tested to reproduce `MODEL_REPORT.md`'s exact results from a
-completely clean `vendor`/`lean`/`.llbc` state. `extract.sh`'s own comments explain the one
+This regenerates `lean/TransactShim/`, `lean/VerifyProofShim/` and
+`lean/CheckPublicAmountShim/` — the Lean model of `transact` (SOL-only for now) — and builds it.
+Tested to reproduce `MODEL_REPORT.md`'s results from a completely clean
+`vendor`/`lean`/`.llbc` state. `extract.sh`'s own comments explain the one
 non-obvious step (why it needs `charon`'s own build output, not a plain `cargo build`) — read those
 before changing it.
 
-**Trusted base** (what's asserted, not derived — see `MODEL_REPORT.md`'s "The technique" for
-detail): `Fr` field arithmetic, Groth16 proof verification, and Anchor's `AccountLoader`/CPI
-mechanics. Everything else in the model is real, mechanically-extracted control flow.
+**Trusted base** (what's asserted, not derived): BN254 scalar-field arithmetic, the BN254 group
+operations Groth16 verification is built from, Poseidon and SHA-256 hashing, and Anchor's
+`AccountLoader`/CPI mechanics. Everything else in the model is real, mechanically-extracted
+control flow. `MODEL_REPORT.md`'s "The trusted base" itemises all of it.
 
 ### Why the extra setup is needed
 
@@ -147,13 +149,14 @@ before any of it goes near production.
 
 | File | What was added | Why |
 |---|---|---|
-| `anchor/programs/zkcash/src/fr_shim.rs` (new) | `FrShim`, a `[u8; 32]`-wrapping stand-in for `ark-bn254::Fr`, no real implementation | Real `Fr` crashes Aeneas; its own module lets it be marked `--opaque` reliably |
-| `anchor/programs/zkcash/src/utils.rs` | `fv_check_public_amount_entry`, a transcription of `check_public_amount` against `FrShim` | Lets Aeneas extract its real control flow |
-| `anchor/programs/zkcash/src/lib.rs` | `fv_verify_proof_entry` (placeholder) and `fv_transact_entry` (transcription of `transact` against plain `&mut` params) | Lets Aeneas extract `transact`'s real control flow end to end |
+| `anchor/programs/zkcash/src/fr_shim.rs` (new) | `FrShim`, a `[u8; 32]`-wrapping stand-in for `ark-bn254::Fr`, no real implementation | Real `Fr` crashes Charon; its own module lets it be marked `--opaque` reliably |
+| `anchor/programs/zkcash/src/curve_shim.rs` (new) | `G1Shim`, the `alt_bn128_*` wrappers, `fr_lt_modulus_be`, and the verifying key as plain arrays | Same, for the arkworks/`num-bigint` types `verify_proof` uses |
+| `anchor/programs/zkcash/src/utils.rs` | `fv_check_public_amount_entry`, plus `fv_verify_proof_full_entry` and `fv_change_endianness_64` — transcriptions of `check_public_amount` and of `verify_proof` + the `Groth16Verifier` methods it drives, against the shims | Lets Aeneas extract their real control flow |
+| `anchor/programs/zkcash/src/lib.rs` | `fv_transact_entry`, a transcription of `transact` against plain `&mut` params | Lets Aeneas extract `transact`'s real control flow end to end |
 | `anchor/.cargo/config.toml` (gitignored, from the template above) | `[patch.crates-io]` entries for the 17 vendored/patched dependencies | Wires problem #1's fix in |
 
 `formal-verification/` holds the toolchain and generated Lean output
-(`lean/TransactShim/`, `lean/CheckPublicAmountShim/`).
+(`lean/TransactShim/`, `lean/VerifyProofShim/`, `lean/CheckPublicAmountShim/`).
 
 ### Two smaller reference notes
 
@@ -171,5 +174,6 @@ before any of it goes near production.
 This is work in progress. Reproducing the extraction cleanly shows the pipeline is stable; it does
 not show that this is the right model to prove theorems against. The extraction flow and the
 trusted base both still need a critical review rather than a confirming one — `MODEL_REPORT.md`'s
-"What's open" lists the specific gaps, the largest being that `fv_verify_proof_entry` is a
-placeholder that almost every guarantee `transact` provides depends on."
+"What is open" lists the specific gaps, the largest being that the assumptions in
+`TransactShim/` and `VerifyProofShim/`'s `*External.lean` files are still bare signatures with
+no content.
