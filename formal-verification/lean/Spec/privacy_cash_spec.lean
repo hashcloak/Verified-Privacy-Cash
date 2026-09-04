@@ -402,3 +402,161 @@ def transact
 --/////////////////////////////////////////
 -- (5) Invariants
 --/////////////////////////////////////////
+
+-- 1. Set of nullifiers can only grow:
+-- Given:
+  -- vk for the circuit
+  -- an old_world
+  -- txInputs
+  -- a new_world
+-- When: transact succeeds, producing a new_world
+-- Then: world.nullifiers subset new_world.nullifier
+theorem nullifier_set_monotonicity
+  (vk: Groth16.VerificationKey)
+  (oldWorld newWorld: World)
+  (inputs: TxInputs)
+  (h: transact vk inputs oldWorld newWorld)
+  : oldWorld.state.nullifiers ⊆ newWorld.state.nullifiers := by
+  -- `transact` gives us that `newWorld` is exactly `transactEffects inputs oldWorld`.
+  obtain ⟨_, heffects⟩ := h
+  -- `transactEffects` sets the new nullifier set to `oldWorld.state.nullifiers ∪ {k0, k1}`,
+  -- (transferEffects, which runs first, never touches `nullifiers`), so the old set is
+  -- trivially a subset of the union.
+  simp only [← heffects, transactEffects]
+  exact Finset.subset_union_left
+
+-- 2. No double spend across transactions
+-- Given:
+  -- vk for the circuit
+  -- a world where nullifier n1 in world.nullifiers
+  -- txInputs where one of the input nullifiers is n1
+  -- a new_world
+-- When: transact
+-- Then: FAIL. This is not possible
+theorem no_double_spend_across_txs
+  (vk: Groth16.VerificationKey)
+  (oldWorld newWorld: World)
+  (inputs: TxInputs)
+  (n1: F)
+  (h1: n1 ∈ oldWorld.state.nullifiers)
+  (h2: n1 = inputs.k0 ∨ n1 = inputs.k1)
+  (h3: transact vk inputs oldWorld newWorld)
+  : False := by
+  obtain ⟨hpre, _⟩ := h3
+  obtain ⟨hk0New, hk1New⟩ := hpre.newNullifiers
+  -- `newNullifiers` requires both input nullifiers to be absent from `oldWorld`'s
+  -- nullifier set; `n1` being both already-present and equal to one of them contradicts that.
+  rcases h2 with rfl | rfl
+  · exact hk0New h1
+  · exact hk1New h1
+
+-- 3. No double spent within transaction
+-- Given:
+  -- vk for the circuit
+  -- an old_world
+  -- txInputs with nullifiers n1, n2 where n1 == n2
+  -- a new_world
+-- When: transact
+-- Then: FAIL. This is not possible
+theorem no_double_spend_within_transaction
+  (vk: Groth16.VerificationKey)
+  (oldWorld newWorld: World)
+  (inputs: TxInputs)
+  (n1 n2: F)
+  (h1: n1 = n2)
+  (h2: (inputs.k0 = n1 ∧ inputs.k1 = n2) ∨ (inputs.k0 = n2 ∧ inputs.k1 = n1))
+  (h3: transact vk inputs oldWorld newWorld)
+  : False := by
+  obtain ⟨hpre, _⟩ := h3
+  -- `distinctNullifiers` requires k0 ≠ k1; but under either assignment of {n1, n2}
+  -- to {k0, k1}, h1 (n1 = n2) forces k0 = k1.
+  apply hpre.distinctNullifiers
+  rcases h2 with ⟨hk0, hk1⟩ | ⟨hk0, hk1⟩
+  · rw [hk0, hk1, h1]
+  · rw [hk0, hk1, h1]
+
+-- 4. SOL balance correctness. The SOL balance equals deposits minus withdrawals and fees paid
+-- Given:
+  -- vk for the circuit
+  -- an old_world
+  -- a new_world
+-- When: transact
+-- Then: new_world.state.solBalance = old_world.state.solBalance + inputs.extAmt - inputs.f
+theorem sol_balance_correctness
+  (vk: Groth16.VerificationKey)
+  (oldWorld newWorld : World)
+  (inputs: TxInputs)
+  (h1: transact vk inputs oldWorld newWorld)
+  : newWorld.state.solBalance = oldWorld.state.solBalance + inputs.extAmt - inputs.f
+  := by
+  obtain ⟨hpre, heff⟩ := h1
+  have hsolvNeg := hpre.poolSolvency.1
+  have hsolvNonneg := hpre.poolSolvency.2
+  subst heff
+  simp only [transactEffects, transferEffects]
+  split_ifs with hz hpos <;> (try dsimp only)
+  · -- transfer (extAmt = 0): only the fee leaves the pool, and it never underflows
+    have hfle : inputs.f ≤ oldWorld.state.solBalance := by
+      rcases Nat.eq_zero_or_pos inputs.f with hf0 | hfpos
+      · omega
+      · have := hsolvNonneg ⟨by omega, hfpos⟩
+        omega
+    omega
+  · -- deposit (extAmt > 0): the deposit lands first, then the fee is taken out
+    have hfle : inputs.f ≤ oldWorld.state.solBalance + inputs.extAmt.natAbs := by
+      rcases Nat.eq_zero_or_pos inputs.f with hf0 | hfpos
+      · omega
+      · have := hsolvNonneg ⟨by omega, hfpos⟩
+        omega
+    omega
+  · -- withdrawal (extAmt < 0): `poolSolvency` guarantees enough balance for both the
+    -- withdrawal and the fee, so neither ℕ subtraction underflows
+    have hextNeg : inputs.extAmt < 0 := by omega
+    have hsolv := hsolvNeg hextNeg
+    have habs : |inputs.extAmt| = (inputs.extAmt.natAbs : ℤ) := Int.abs_eq_natAbs inputs.extAmt
+    omega
+
+-- 5. Only deposited coins can be withdrawn: transact will fail for a coin that was not added to the tree
+-- Given
+  -- vk for the circuit
+  -- an old_world
+  -- inputs where
+    -- (theorem 1 transact_fails_when_coin_not_added) the openings are valid, but used root is not in history (100 historic roots)
+    -- (theorem 2 TODO) OR used openings are not valid; used root is in history but doesn't equal the root the opening adds up to
+  -- a new_world
+theorem transact_fails_when_coin_not_added
+  (vk: Groth16.VerificationKey)
+  (oldWorld newWorld: World)
+  (differentRoot: F)
+  (inputs: TxInputs)
+  (h1: differentRoot ∉ Set.range oldWorld.state.tree.history)
+  (h2: inputs.R = differentRoot)
+  (h3: transact vk inputs oldWorld newWorld)
+  : False := by
+  obtain ⟨hpre, _⟩ := h3
+  -- `knownRoot` requires `inputs.R` to be a historic root; `h2` identifies it with
+  -- `differentRoot`, which `h1` says isn't one.
+  exact h1 (h2 ▸ hpre.knownRoot.1)
+
+-- TODO theorem transact_fails_when_coin_not_added2
+
+-- 6. A note can only be withdrawn via transact with knowledge of k and r
+-- Because we assume a Groth16 proof can only be created with that knowledge.
+-- This seems to be exactly the axiom of soundness, but consider the scenario where withdrawing doesn't even check the proof.
+-- Given:
+  -- vk for circuit
+  -- an old_world
+  -- inputs where the proof is invalid
+  -- a new_world
+-- When: transact
+-- Then: fail.
+
+-- 7. Root consistency. Transact cannot add a root to history that is not a valid root.
+-- Every root added is really a valid root in history OR default value
+
+
+-- 8. Note value consistency. A deposited note's value cannot change
+
+-- 9. Proof binding. The same proof cannot be used for different txInputs
+
+-- 10. Any unspent notes can always be spent
