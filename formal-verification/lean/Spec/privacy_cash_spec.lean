@@ -402,8 +402,24 @@ def transact
 --/////////////////////////////////////////
 -- (5) Invariants
 --/////////////////////////////////////////
+-- Properties that hold for all reachable states.
 
--- 1. Set of nullifiers can only grow:
+-- A claim about a pair of worlds; can we go from w1 to w2?
+--   This lets us reason about "in any number of steps"
+inductive ReachableWorld (vk: Groth16.VerificationKey): World → World → Prop where
+  -- No transactions; true for any world
+ | noStep(w1: World): ReachableWorld vk w1 w1
+ -- Given a reachable pair w1, w2 and
+ -- a proof that transact succeeds from w2 to w3,
+ -- Then obtain proof that w3 is reachable from w1
+ | extend{w1 w2 w3: World}(txInputs: TxInputs):
+      ReachableWorld vk w1 w2 →
+      transact vk txInputs w2 w3 →
+       ReachableWorld vk w1 w3
+
+-- 1. Set of nullifiers can only grow.
+
+-- Proof for a single step executing transact.
 -- Given:
   -- vk for the circuit
   -- an old_world
@@ -411,7 +427,7 @@ def transact
   -- a new_world
 -- When: transact succeeds, producing a new_world
 -- Then: world.nullifiers subset new_world.nullifier
-theorem nullifier_set_monotonicity
+lemma nullifier_set_monotonicity_step
   (vk: Groth16.VerificationKey)
   (oldWorld newWorld: World)
   (inputs: TxInputs)
@@ -424,6 +440,22 @@ theorem nullifier_set_monotonicity
   -- trivially a subset of the union.
   simp only [← heffects, transactEffects]
   exact Finset.subset_union_left
+
+-- General proof by induction for Reachable Worlds
+theorem nullifier_set_monotonicity
+  (vk: Groth16.VerificationKey)
+  (w1 w2: World)
+  (h: ReachableWorld vk w1 w2)
+  : w1.state.nullifiers ⊆ w2.state.nullifiers := by induction h with
+  -- For same world, it holds trivially
+  | noStep => exact Finset.Subset.refl _
+  -- For the induction step, we use the property that transact only grows the set of nullifiers
+  -- ih = induction hypothesis
+  | extend inputs _h transact_proof ih =>
+    -- `ih : w1.state.nullifiers ⊆ w2.state.nullifiers` (from the reachability so far), and
+    -- the single `transact` step from w2 to w3 only ever grows the nullifier set
+    -- (nullifier_set_monotonicity_step). Chain the two subset relations.
+    exact ih.trans (nullifier_set_monotonicity_step vk _ _ inputs transact_proof)
 
 -- 2. No double spend across transactions
 -- Given:
