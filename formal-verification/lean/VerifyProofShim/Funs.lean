@@ -20,7 +20,7 @@ noncomputable section
 namespace zkcash
 
 /-- [zkcash::utils::fv_change_endianness_64]: loop body 1:
-    Source: 'programs/zkcash/src/utils.rs', lines 334:8-337:9
+    Source: 'programs/zkcash/src/utils.rs', lines 333:8-336:9
     Visibility: public -/
 @[rust_loop_body]
 def utils.fv_change_endianness_64_loop0_loop0.body
@@ -42,7 +42,7 @@ def utils.fv_change_endianness_64_loop0_loop0.body
   else ok (done out)
 
 /-- [zkcash::utils::fv_change_endianness_64]: loop 1:
-    Source: 'programs/zkcash/src/utils.rs', lines 334:8-337:9
+    Source: 'programs/zkcash/src/utils.rs', lines 333:8-336:9
     Visibility: public -/
 @[rust_loop]
 def utils.fv_change_endianness_64_loop0_loop0
@@ -56,7 +56,7 @@ def utils.fv_change_endianness_64_loop0_loop0
     (out, i)
 
 /-- [zkcash::utils::fv_change_endianness_64]: loop body 0:
-    Source: 'programs/zkcash/src/utils.rs', lines 332:4-339:5
+    Source: 'programs/zkcash/src/utils.rs', lines 331:4-338:5
     Visibility: public -/
 @[rust_loop_body]
 def utils.fv_change_endianness_64_loop0.body
@@ -73,7 +73,7 @@ def utils.fv_change_endianness_64_loop0.body
   else ok (done out)
 
 /-- [zkcash::utils::fv_change_endianness_64]: loop 0:
-    Source: 'programs/zkcash/src/utils.rs', lines 332:4-339:5
+    Source: 'programs/zkcash/src/utils.rs', lines 331:4-338:5
     Visibility: public -/
 @[rust_loop]
 def utils.fv_change_endianness_64_loop0
@@ -86,7 +86,7 @@ def utils.fv_change_endianness_64_loop0
     (out, c)
 
 /-- [zkcash::utils::fv_change_endianness_64]:
-    Source: 'programs/zkcash/src/utils.rs', lines 328:0-341:1
+    Source: 'programs/zkcash/src/utils.rs', lines 327:0-340:1
     Visibility: public -/
 def utils.fv_change_endianness_64
   (bytes : Array Std.U8 64#usize) : Result (Array Std.U8 64#usize) := do
@@ -94,7 +94,7 @@ def utils.fv_change_endianness_64
   utils.fv_change_endianness_64_loop0 bytes out 0#usize
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]: loop body 1:
-    Source: 'programs/zkcash/src/utils.rs', lines 399:12-402:13
+    Source: 'programs/zkcash/src/utils.rs', lines 398:12-401:13
     Visibility: public -/
 @[rust_loop_body]
 def utils.fv_verify_proof_full_entry_loop0_loop0.body
@@ -114,7 +114,7 @@ def utils.fv_verify_proof_full_entry_loop0_loop0.body
   else ok (done mul_input)
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]: loop 1:
-    Source: 'programs/zkcash/src/utils.rs', lines 399:12-402:13
+    Source: 'programs/zkcash/src/utils.rs', lines 398:12-401:13
     Visibility: public -/
 @[rust_loop]
 def utils.fv_verify_proof_full_entry_loop0_loop0
@@ -128,7 +128,7 @@ def utils.fv_verify_proof_full_entry_loop0_loop0
     (mul_input, j)
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]: loop body 2:
-    Source: 'programs/zkcash/src/utils.rs', lines 404:12-407:13
+    Source: 'programs/zkcash/src/utils.rs', lines 403:12-406:13
     Visibility: public -/
 @[rust_loop_body]
 def utils.fv_verify_proof_full_entry_loop0_loop1.body
@@ -148,7 +148,7 @@ def utils.fv_verify_proof_full_entry_loop0_loop1.body
   else ok (done mul_input)
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]: loop 2:
-    Source: 'programs/zkcash/src/utils.rs', lines 404:12-407:13
+    Source: 'programs/zkcash/src/utils.rs', lines 403:12-406:13
     Visibility: public -/
 @[rust_loop]
 def utils.fv_verify_proof_full_entry_loop0_loop1
@@ -162,7 +162,7 @@ def utils.fv_verify_proof_full_entry_loop0_loop1
     (mul_input, k)
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]: loop body 3:
-    Source: 'programs/zkcash/src/utils.rs', lines 417:20-420:21
+    Source: 'programs/zkcash/src/utils.rs', lines 416:20-419:21
     Visibility: public -/
 @[rust_loop_body]
 def utils.fv_verify_proof_full_entry_loop0_loop2.body
@@ -180,7 +180,7 @@ def utils.fv_verify_proof_full_entry_loop0_loop2.body
   else ok (done add_input)
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]: loop 3:
-    Source: 'programs/zkcash/src/utils.rs', lines 417:20-420:21
+    Source: 'programs/zkcash/src/utils.rs', lines 416:20-419:21
     Visibility: public -/
 @[rust_loop]
 def utils.fv_verify_proof_full_entry_loop0_loop2
@@ -194,7 +194,7 @@ def utils.fv_verify_proof_full_entry_loop0_loop2
     (add_input, m)
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]: loop body 4:
-    Source: 'programs/zkcash/src/utils.rs', lines 422:20-425:21
+    Source: 'programs/zkcash/src/utils.rs', lines 421:20-424:21
     Visibility: public -/
 @[rust_loop_body]
 def utils.fv_verify_proof_full_entry_loop0_loop3.body
@@ -213,7 +213,7 @@ def utils.fv_verify_proof_full_entry_loop0_loop3.body
   else ok (done add_input)
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]: loop 4:
-    Source: 'programs/zkcash/src/utils.rs', lines 422:20-425:21
+    Source: 'programs/zkcash/src/utils.rs', lines 421:20-424:21
     Visibility: public -/
 @[rust_loop]
 def utils.fv_verify_proof_full_entry_loop0_loop3
@@ -227,7 +227,7 @@ def utils.fv_verify_proof_full_entry_loop0_loop3
     (add_input, n)
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]: loop body 0:
-    Source: 'programs/zkcash/src/utils.rs', lines 392:4-439:5
+    Source: 'programs/zkcash/src/utils.rs', lines 391:4-438:5
     Visibility: public -/
 @[rust_loop_body]
 def utils.fv_verify_proof_full_entry_loop0.body
@@ -280,7 +280,7 @@ def utils.fv_verify_proof_full_entry_loop0.body
   else ok (done (prepared_public_inputs, ok1))
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]: loop 0:
-    Source: 'programs/zkcash/src/utils.rs', lines 392:4-439:5
+    Source: 'programs/zkcash/src/utils.rs', lines 391:4-438:5
     Visibility: public -/
 @[rust_loop]
 def utils.fv_verify_proof_full_entry_loop0
@@ -297,7 +297,7 @@ def utils.fv_verify_proof_full_entry_loop0
     (prepared_public_inputs, ok1, idx)
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]: loop body 5:
-    Source: 'programs/zkcash/src/utils.rs', lines 450:4-450:65
+    Source: 'programs/zkcash/src/utils.rs', lines 449:4-449:65
     Visibility: public -/
 @[rust_loop_body]
 def utils.fv_verify_proof_full_entry_loop1.body
@@ -316,7 +316,7 @@ def utils.fv_verify_proof_full_entry_loop1.body
   else ok (done pairing_input)
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]: loop 5:
-    Source: 'programs/zkcash/src/utils.rs', lines 450:4-450:65
+    Source: 'programs/zkcash/src/utils.rs', lines 449:4-449:65
     Visibility: public -/
 @[rust_loop]
 def utils.fv_verify_proof_full_entry_loop1
@@ -330,7 +330,7 @@ def utils.fv_verify_proof_full_entry_loop1
     (pairing_input, p)
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]: loop body 6:
-    Source: 'programs/zkcash/src/utils.rs', lines 453:4-453:66
+    Source: 'programs/zkcash/src/utils.rs', lines 452:4-452:66
     Visibility: public -/
 @[rust_loop_body]
 def utils.fv_verify_proof_full_entry_loop2.body
@@ -349,7 +349,7 @@ def utils.fv_verify_proof_full_entry_loop2.body
   else ok (done pairing_input)
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]: loop 6:
-    Source: 'programs/zkcash/src/utils.rs', lines 453:4-453:66
+    Source: 'programs/zkcash/src/utils.rs', lines 452:4-452:66
     Visibility: public -/
 @[rust_loop]
 def utils.fv_verify_proof_full_entry_loop2
@@ -363,7 +363,7 @@ def utils.fv_verify_proof_full_entry_loop2
     (pairing_input, q)
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]: loop body 7:
-    Source: 'programs/zkcash/src/utils.rs', lines 456:4-456:80
+    Source: 'programs/zkcash/src/utils.rs', lines 455:4-455:80
     Visibility: public -/
 @[rust_loop_body]
 def utils.fv_verify_proof_full_entry_loop3.body
@@ -382,7 +382,7 @@ def utils.fv_verify_proof_full_entry_loop3.body
   else ok (done pairing_input)
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]: loop 7:
-    Source: 'programs/zkcash/src/utils.rs', lines 456:4-456:80
+    Source: 'programs/zkcash/src/utils.rs', lines 455:4-455:80
     Visibility: public -/
 @[rust_loop]
 def utils.fv_verify_proof_full_entry_loop3
@@ -396,7 +396,7 @@ def utils.fv_verify_proof_full_entry_loop3
     (pairing_input, r)
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]: loop body 8:
-    Source: 'programs/zkcash/src/utils.rs', lines 459:4-459:70
+    Source: 'programs/zkcash/src/utils.rs', lines 458:4-458:70
     Visibility: public -/
 @[rust_loop_body]
 def utils.fv_verify_proof_full_entry_loop4.body
@@ -415,7 +415,7 @@ def utils.fv_verify_proof_full_entry_loop4.body
   else ok (done pairing_input)
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]: loop 8:
-    Source: 'programs/zkcash/src/utils.rs', lines 459:4-459:70
+    Source: 'programs/zkcash/src/utils.rs', lines 458:4-458:70
     Visibility: public -/
 @[rust_loop]
 def utils.fv_verify_proof_full_entry_loop4
@@ -429,7 +429,7 @@ def utils.fv_verify_proof_full_entry_loop4
     (pairing_input, s)
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]: loop body 9:
-    Source: 'programs/zkcash/src/utils.rs', lines 462:4-462:65
+    Source: 'programs/zkcash/src/utils.rs', lines 461:4-461:65
     Visibility: public -/
 @[rust_loop_body]
 def utils.fv_verify_proof_full_entry_loop5.body
@@ -448,7 +448,7 @@ def utils.fv_verify_proof_full_entry_loop5.body
   else ok (done pairing_input)
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]: loop 9:
-    Source: 'programs/zkcash/src/utils.rs', lines 462:4-462:65
+    Source: 'programs/zkcash/src/utils.rs', lines 461:4-461:65
     Visibility: public -/
 @[rust_loop]
 def utils.fv_verify_proof_full_entry_loop5
@@ -462,7 +462,7 @@ def utils.fv_verify_proof_full_entry_loop5
     (pairing_input, t)
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]: loop body 10:
-    Source: 'programs/zkcash/src/utils.rs', lines 465:4-465:70
+    Source: 'programs/zkcash/src/utils.rs', lines 464:4-464:70
     Visibility: public -/
 @[rust_loop_body]
 def utils.fv_verify_proof_full_entry_loop6.body
@@ -481,7 +481,7 @@ def utils.fv_verify_proof_full_entry_loop6.body
   else ok (done pairing_input)
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]: loop 10:
-    Source: 'programs/zkcash/src/utils.rs', lines 465:4-465:70
+    Source: 'programs/zkcash/src/utils.rs', lines 464:4-464:70
     Visibility: public -/
 @[rust_loop]
 def utils.fv_verify_proof_full_entry_loop6
@@ -495,7 +495,7 @@ def utils.fv_verify_proof_full_entry_loop6
     (pairing_input, u)
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]: loop body 11:
-    Source: 'programs/zkcash/src/utils.rs', lines 468:4-468:69
+    Source: 'programs/zkcash/src/utils.rs', lines 467:4-467:69
     Visibility: public -/
 @[rust_loop_body]
 def utils.fv_verify_proof_full_entry_loop7.body
@@ -514,7 +514,7 @@ def utils.fv_verify_proof_full_entry_loop7.body
   else ok (done pairing_input)
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]: loop 11:
-    Source: 'programs/zkcash/src/utils.rs', lines 468:4-468:69
+    Source: 'programs/zkcash/src/utils.rs', lines 467:4-467:69
     Visibility: public -/
 @[rust_loop]
 def utils.fv_verify_proof_full_entry_loop7
@@ -528,7 +528,7 @@ def utils.fv_verify_proof_full_entry_loop7
     (pairing_input, v)
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]: loop body 12:
-    Source: 'programs/zkcash/src/utils.rs', lines 471:4-471:69
+    Source: 'programs/zkcash/src/utils.rs', lines 470:4-470:69
     Visibility: public -/
 @[rust_loop_body]
 def utils.fv_verify_proof_full_entry_loop8.body
@@ -547,7 +547,7 @@ def utils.fv_verify_proof_full_entry_loop8.body
   else ok (done pairing_input)
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]: loop 12:
-    Source: 'programs/zkcash/src/utils.rs', lines 471:4-471:69
+    Source: 'programs/zkcash/src/utils.rs', lines 470:4-470:69
     Visibility: public -/
 @[rust_loop]
 def utils.fv_verify_proof_full_entry_loop8
@@ -561,7 +561,7 @@ def utils.fv_verify_proof_full_entry_loop8
     (pairing_input, w)
 
 /-- [zkcash::utils::fv_verify_proof_full_entry]:
-    Source: 'programs/zkcash/src/utils.rs', lines 343:0-482:1
+    Source: 'programs/zkcash/src/utils.rs', lines 342:0-481:1
     Visibility: public -/
 def utils.fv_verify_proof_full_entry
   (proof_root : Array Std.U8 32#usize)

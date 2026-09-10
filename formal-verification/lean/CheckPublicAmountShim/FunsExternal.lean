@@ -2,6 +2,7 @@
 -- FrShim operations defined via ZMod bn254_r (see TypesExternal.lean).
 import Aeneas
 import CheckPublicAmountShim.Types
+import Common.FrShim
 open Aeneas Aeneas.Std Result ControlFlow Error
 set_option linter.dupNamespace false
 set_option linter.hashCommand false
@@ -25,39 +26,3 @@ def core.num.I64.checked_neg (x : Std.I64) : Result (Option Std.I64) :=
   else do
     let y ← IScalar.neg x
     ok (some y)
-
-/-- FrShim `==` : PartialEq via decidable equality in the field. -/
-def fr_shim.FrShim.Insts.CoreCmpPartialEqFrShim.eq
-  (a b : fr_shim.FrShim) : Result Bool :=
-  ok (decide (a = b))
-
-/-- FrShim::from_u64 : embed a `u64` into 𝔽ᵣ (values < 2⁶⁴ « r, so injective here). -/
-def fr_shim.FrShim.from_u64 (x : Std.U64) : Result fr_shim.FrShim :=
-  ok (x.val : ZMod bn254_r)
-
-/-- FrShim::from_be_bytes_mod_order : decode the 32 bytes BIG-ENDIAN into a Nat,
-    then reduce mod r. (Most-significant byte first → `acc*256 + byte`.) -/
-def fr_shim.FrShim.from_be_bytes_mod_order
-  (bytes : Array Std.U8 32#usize) : Result fr_shim.FrShim :=
-  ok (((bytes.val.foldl (fun acc byte => acc * 256 + byte.val) 0 : ℕ)) : ZMod bn254_r)
-
-/-- FrShim `+` : field addition. -/
-def fr_shim.FrShim.Insts.CoreOpsArithAddFrShimFrShim.add
-  (a b : fr_shim.FrShim) : Result fr_shim.FrShim :=
-  ok (a + b)
-
-/-- FrShim `-` : field subtraction. -/
-def fr_shim.FrShim.Insts.CoreOpsArithSubFrShimFrShim.sub
-  (a b : fr_shim.FrShim) : Result fr_shim.FrShim :=
-  ok (a - b)
-
-/-- FrShim unary `-` : field negation (`-a = r - a`). -/
-def fr_shim.FrShim.Insts.CoreOpsArithNegFrShim.neg
-  (a : fr_shim.FrShim) : Result fr_shim.FrShim :=
-  ok (-a)
-
-/-- FrShim partial_cmp : compare the CANONICAL representatives (0..r−1), matching
-    ark-ff's ordering on `Fr`. This is what the deposit guard `amount ≤ fee` uses. -/
-def fr_shim.FrShim.Insts.CoreCmpPartialOrdFrShim.partial_cmp
-  (a b : fr_shim.FrShim) : Result (Option Ordering) :=
-  ok (some (compare (ZMod.val a) (ZMod.val b)))
