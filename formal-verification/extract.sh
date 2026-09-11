@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Reproduces the Lean model from the zkcash source and builds it.
-# ONE charon run, ONE aeneas run, ONE Lean library (lean/Zkcash).
+# ONE charon run, ONE aeneas run, ONE Lean library (lean/code_model/generated).
 #
 # Modes:
 #   ./extract.sh                regenerate the model and lake build it
@@ -18,8 +18,8 @@
 # Whole-contract theorems have to span instructions, so the union has to be one library.
 # Naming every entry point as a root of a single run emits each function exactly once.
 #
-# SAFETY. This script writes only zkcash_model.llbc and lean/Zkcash/. It never touches
-# lean/Common, lean/Spec or lean/Test. A failed run therefore cannot damage the
+# SAFETY. This script writes only zkcash_model.llbc and lean/code_model/generated/. It never touches
+# lean/code_model/hand_written or lean/Spec. A failed run therefore cannot damage the
 # hand-written trusted base, and the *External.lean files are stashed and restored
 # even if aeneas dies part-way (see the trap below).
 #
@@ -33,7 +33,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-SUBDIR=Zkcash
+SUBDIR=code_model/generated
+LIB=code_model   # the lean_lib name in lean/lakefile.toml
 LLBC=zkcash_model.llbc
 
 # AENEAS_STRICT=1 passes -abort-on-error to aeneas. Without it aeneas reports an error on a
@@ -46,8 +47,8 @@ AENEAS_STRICT="${AENEAS_STRICT:-1}"
 
 # Guard: never let SUBDIR name a directory that holds existing work.
 case "$SUBDIR" in
-  ""|TransactShim|VerifyProofShim|CheckPublicAmountShim|Common|Spec|Test)
-    echo "ERROR: SUBDIR='$SUBDIR' would overwrite existing work. Refusing." >&2; exit 2;;
+  ""|Spec|code_model|code_model/hand_written)
+    echo "ERROR: SUBDIR='$SUBDIR' would overwrite hand-written work. Refusing." >&2; exit 2;;
 esac
 
 MODE="regen"
@@ -192,7 +193,9 @@ restore_externals () {
     elif [ -f "lean/$SUBDIR/${f}_Template.lean" ]; then
       cp "lean/$SUBDIR/${f}_Template.lean" "lean/$SUBDIR/$f.lean"
       echo "NOTE: bootstrapped lean/$SUBDIR/$f.lean from the generated template. It re-declares" >&2
-      echo "      what lean/Common/ already provides -- wire it to Common/ before relying on it." >&2
+      echo "      the hand-written trusted base. lean/code_model/generated/*External.lean are" >&2
+      echo "      meant to be two-line forwarders into lean/code_model/hand_written/ -- if you" >&2
+      echo "      are seeing this, one was lost and needs restoring, not filling in." >&2
     fi
   done
   rm -rf "$BAK"
@@ -217,16 +220,12 @@ sed -zi -E 's/(core\.cmp\.PartialOrd\.le\.default[[:space:]]+fr_shim\.FrShim\.In
 # --- lakefile ----------------------------------------------------------------------
 # Deliberately NOT edited here. A generation script that rewrites your build config is
 # exactly what makes a broken run hard to diagnose, so this only tells you what to add.
-if ! grep -q "name = \"$SUBDIR\"" lean/lakefile.toml; then
+if ! grep -q "name = \"$LIB\"" lean/lakefile.toml; then
   cat <<EOF
 
-NEXT STEP: lean/$SUBDIR is generated but not built yet. Add to lean/lakefile.toml:
-
-[[lean_lib]]
-name = "$SUBDIR"
-globs = ["$SUBDIR.Types", "$SUBDIR.TypesExternal", "$SUBDIR.Funs", "$SUBDIR.FunsExternal"]
-
-and add "$SUBDIR" to defaultTargets on line 2. Then re-run this script, or just: lake build
+NEXT STEP: lean/$SUBDIR is generated but there is no lean_lib named "$LIB" in
+lean/lakefile.toml, so nothing builds it. Add one whose globs cover
+code_model.generated.* and code_model.hand_written.*, and add "$LIB" to defaultTargets.
 
 EOF
 fi

@@ -539,7 +539,7 @@ pub mod zkcash {
 //     / proof_ext_data_hash / output_commitments is what lets the model state
 //     that the values the proof was checked against are the same ones the
 //     balance updates and Merkle appends below then use.
-//     The curve assumptions live in lean/Common/Curve.lean, stated as axioms with
+//     The curve assumptions live in lean/code_model/hand_written/Curve.lean, as axioms with
 //     content rather than bare signatures -- see MODEL_REPORT.md.
 //   - CPI transfers / Rent::get() / try_borrow_mut_lamports replaced by plain
 //     u64 balance arithmetic (Solana runtime mechanics are trusted, not derived)

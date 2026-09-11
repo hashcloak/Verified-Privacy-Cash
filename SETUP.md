@@ -79,7 +79,7 @@ Then produce the model:
 ```bash
 ./extract.sh
 ```
-This regenerates `lean/Zkcash/` — the Lean model of `transact` (SOL-only for now), extracted
+This regenerates `lean/code_model/generated/` — the Lean model of `transact` (SOL-only for now), extracted
 in a single charon/aeneas run with every entry point as a root — and builds it.
 Tested to reproduce `MODEL_REPORT.md`'s results from a completely clean
 `vendor`/`lean`/`.llbc` state. `extract.sh`'s own comments explain the one
@@ -156,7 +156,7 @@ before any of it goes near production.
 | `anchor/.cargo/config.toml` (gitignored, from the template above) | `[patch.crates-io]` entries for the 17 vendored/patched dependencies | Wires problem #1's fix in |
 
 `formal-verification/` holds the toolchain and generated Lean output
-(`lean/Zkcash/`), plus the hand-owned shared trusted base in `lean/Common/`.
+(`lean/code_model/generated/`), plus the hand-written trusted base in `lean/code_model/hand_written/`.
 
 ### Two smaller reference notes
 

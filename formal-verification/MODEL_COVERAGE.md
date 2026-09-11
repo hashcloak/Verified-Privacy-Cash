@@ -20,18 +20,25 @@ significantly more.
       and removes the need to hand-write six more `fv_*` twins.
       *Est. 1-2 days for the pattern + transact, then ~0.5 day per instruction.*
 
-- [x] **Shared trusted base (`Common/`).** DONE. `bn254_r`, `fr_shim.FrShim` and the
+- [x] **Shared trusted base (now `code_model/hand_written/`).** DONE. `bn254_r`, `fr_shim.FrShim` and the
       whole BN254 curve surface (`G1Shim` + 6 ops + `fr_lt_modulus_be`) now live in
-      `lean/Common/{Bn254,FrShim,Curve}.lean` instead of once per model. The FrShim
+      `lean/code_model/hand_written/{Bn254,FrShim,Curve}.lean` instead of once per model. The FrShim
       bodies were byte-identical across models; `curve_shim.G1Shim` was worse -- a
       separate `axiom : Type` per model, so genuinely different types that no proof
-      could transfer between. `lake build` passes; `Test/CommonBase.lean` guards it.
-      `Common/` is hand-owned and `extract.sh` never touches it.
+      could transfer between. `lake build` passes.
+
+      NOTE: a regression guard (`Test/CommonBase.lean`) asserted that Common/ stays the single
+      declaration site, and that `from_le_bytes_mod_order` differs from `from_be_bytes_mod_order`.
+      The whole `lean/Test/` library was removed on 2026-09-11, so nothing now mechanically stops
+      the duplication coming back. Restore with:
+          git checkout 99803bd -- formal-verification/lean/Test/
+      and re-add the `Test` lean_lib plus its defaultTarget to lakefile.toml.
+      `code_model/hand_written/` is hand-owned and `extract.sh` never touches it.
 
 - [x] **Single-root extraction.** DONE. `charon rustc --start-from` IS repeatable -- verified
       by running it, not by reading help text. `extract.sh` now makes ONE charon
       run with all three entry points as roots, ONE aeneas run, and ONE Lean library,
-      `lean/Zkcash`, so no function is emitted twice.
+      `lean/code_model/generated`, so no function is emitted twice.
 
       Why it was needed: `fv_transact_entry` calls `fv_verify_proof_full_entry` and
       `fv_check_public_amount_entry`, so transact's closure already contained both smaller
@@ -41,15 +48,15 @@ significantly more.
           environment already contains
           'zkcash.utils.fv_verify_proof_full_entry_loop0_loop3.body.eq_1'
 
-      `Common/` could not fix that half: it is hand-owned and cannot deduplicate generated
+      `code_model/hand_written/` could not fix that half: it is hand-owned and cannot deduplicate generated
       code. Whole-contract theorems have to span instructions, so the union had to be one
       library.
 
-      Follow-through, all done: the hand-filled trusted base was ported to `lean/Zkcash`
-      (16 axioms / 17 definitions, wired to `Common/`, identical to the old TransactShim
+      Follow-through, all done: the hand-filled trusted base was ported to the single model
+      (16 axioms / 17 definitions, wired to the hand-written base, identical to the old TransactShim
       one because the generated surface is identical); the three per-entry-point libraries
-      TransactShim / VerifyProofShim / CheckPublicAmountShim were deleted; `Test/CommonBase.lean`
-      repointed at `Zkcash.Funs`; `lake build` passes with 0 errors.
+      TransactShim / VerifyProofShim / CheckPublicAmountShim were deleted;
+      `lake build` passes with 0 errors.
 
       STILL OPEN: `extract.sh` regenerates the three deleted libraries and is now
       inconsistent with the lakefile. Either retire it in favour of `extract.sh`
@@ -104,7 +111,7 @@ Recommended order (not size order):
 
 ## 2. Trusted base: 22 -> 6
 
-Current: 22 DERIVED / 22 TRUSTED in `lean/Zkcash/FunsExternal.lean`.
+Current: 22 DERIVED / 22 TRUSTED in `lean/code_model/hand_written/TrustedFuns.lean`.
 Target: only the assumptions that genuinely cannot be discharged.
 
 ### DIAGNOSTIC — 5 axioms -> 0

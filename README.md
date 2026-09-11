@@ -12,7 +12,8 @@ Everything related to the model lives in [`formal-verification/`](formal-verific
 
 - `extract.sh` — the end-to-end pipeline: Rust → Charon (`.llbc`) → Aeneas → Lean.
 - `zkcash_model.llbc` — the extracted LLBC.
-- `lean/Zkcash/` — the generated Lean model; `lean/Common/` — its shared trusted base.
+- `lean/code_model/generated/` — the Lean model, written by Aeneas.
+- `lean/code_model/hand_written/` — the trusted base, written by hand.
 - `lean/Spec/` — hand-written proofs stated against that model.
 - `MODEL_REPORT.md` — what extracted, the technique, and what is still open.
 

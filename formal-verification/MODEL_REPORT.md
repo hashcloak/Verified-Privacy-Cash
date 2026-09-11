@@ -8,12 +8,12 @@ covers the environment; `extract.sh` is the exact procedure and regenerates ever
 
 One Lean library under `lean/`, plus the hand-owned trusted base it depends on. It translates
 without errors and contains no `sorry`, `admit`, or `fail panic`, and `lake build` typechecks it
-together with `Common/` and `Spec/`.
+together with the hand-written trusted base and `Spec/`.
 
 | Library | Rust entry points | Contents |
 |---|---|---|
-| `Zkcash/` | `zkcash::fv_transact_entry` (`lib.rs`), `zkcash::utils::fv_verify_proof_full_entry`, `zkcash::utils::fv_check_public_amount_entry` | the `transact` instruction end to end: root check, ext-data-hash check, `check_public_amount`, `validate_fee`, proof verification (`verify_proof` and the `Groth16Verifier` methods it drives), both balance-update branches, the fee transfer, and both `MerkleTree::append` calls, in the order the real source has them |
-| `Common/` | — | hand-written, never generated: the BN254 scalar field `ZMod bn254_r` with its operations, and the curve surface including `G1Shim` |
+| `code_model/generated/` | `zkcash::fv_transact_entry` (`lib.rs`), `zkcash::utils::fv_verify_proof_full_entry`, `zkcash::utils::fv_check_public_amount_entry` | the `transact` instruction end to end: root check, ext-data-hash check, `check_public_amount`, `validate_fee`, proof verification (`verify_proof` and the `Groth16Verifier` methods it drives), both balance-update branches, the fee transfer, and both `MerkleTree::append` calls, in the order the real source has them |
+| `code_model/hand_written/` | — | hand-written, never generated: the BN254 scalar field `ZMod bn254_r` with its operations, and the curve surface including `G1Shim` |
 
 All three entry points are roots of a **single** charon/aeneas run. Extracting them separately,
 as this model did originally, emitted the shared functions into more than one library; since
@@ -48,7 +48,7 @@ Of that surface, 22 entries are now **DERIVED** — real Lean definitions, nothi
 22 remain **TRUSTED**. `FrShim` is `ZMod bn254_r` with all eight operations defined, borsh
 serialization and the `Vec<u8>` writer it targets are reproduced in full, as are the Rust
 core/std plumbing and the public-input canonicity check `fr_lt_modulus_be`. The BN254 material
-lives in `lean/Common/` and is declared exactly once; previously each library carried its own
+lives in `lean/code_model/hand_written/` and is declared exactly once; previously each library carried its own
 `axiom curve_shim.G1Shim : Type`, which made them *different types* that no proof could transfer
 between.
 

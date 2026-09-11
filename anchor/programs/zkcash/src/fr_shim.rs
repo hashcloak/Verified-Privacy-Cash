@@ -13,7 +13,8 @@
 // declarations (in FunsExternal_Template.lean) instead of inlining the
 // `unimplemented!()` bodies as `fail panic`, so they can be given real definitions
 // stating what these operations actually compute. Done for the check_public_amount
-// model: Common/Bn254.lean defines FrShim as `ZMod bn254_r`, and Common/FrShim.lean
+// model: code_model/hand_written/Bn254.lean defines FrShim as `ZMod bn254_r`, and
+// code_model/hand_written/FrShim.lean
 // gives its operations real definitions. NOT part of the program's real logic.
 #[derive(Clone, Copy, PartialEq)]
 pub struct FrShim(pub [u8; 32]);
