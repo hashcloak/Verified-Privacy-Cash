@@ -11,8 +11,8 @@ Lean 4 model of it, extracted from the real Rust source via
 Everything related to the model lives in [`formal-verification/`](formal-verification/):
 
 - `extract.sh` — the end-to-end pipeline: Rust → Charon (`.llbc`) → Aeneas → Lean.
-- `transact_shim.llbc`, `check_public_amount_shim.llbc` — the extracted LLBC.
-- `lean/TransactShim/`, `lean/CheckPublicAmountShim/` — the generated Lean model.
+- `zkcash_model.llbc` — the extracted LLBC.
+- `lean/Zkcash/` — the generated Lean model; `lean/Common/` — its shared trusted base.
 - `lean/Spec/` — hand-written proofs stated against that model.
 - `MODEL_REPORT.md` — what extracted, the technique, and what is still open.
 

@@ -6,14 +6,19 @@ covers the environment; `extract.sh` is the exact procedure and regenerates ever
 
 ## What is extracted
 
-Three Lean libraries under `lean/`. All three translate without errors and contain no `sorry`,
-`admit`, or `fail panic`, and `lake build` typechecks them together with `Spec/`.
+One Lean library under `lean/`, plus the hand-owned trusted base it depends on. It translates
+without errors and contains no `sorry`, `admit`, or `fail panic`, and `lake build` typechecks it
+together with `Common/` and `Spec/`.
 
-| Library | Rust entry point | Contents |
+| Library | Rust entry points | Contents |
 |---|---|---|
-| `TransactShim/` | `zkcash::fv_transact_entry` (`lib.rs`) | the `transact` instruction end to end: root check, ext-data-hash check, `check_public_amount`, `validate_fee`, proof verification, both balance-update branches, the fee transfer, and both `MerkleTree::append` calls, in the order the real source has them |
-| `VerifyProofShim/` | `zkcash::utils::fv_verify_proof_full_entry` | `verify_proof` together with the `Groth16Verifier` methods it drives. Already contained in `TransactShim`; kept as a separate, much smaller target because the curve assumptions are far easier to develop against it |
-| `CheckPublicAmountShim/` | `zkcash::utils::fv_check_public_amount_entry` | `check_public_amount` alone, the smallest target — and the only one whose trusted base has real semantics rather than bare signatures |
+| `Zkcash/` | `zkcash::fv_transact_entry` (`lib.rs`), `zkcash::utils::fv_verify_proof_full_entry`, `zkcash::utils::fv_check_public_amount_entry` | the `transact` instruction end to end: root check, ext-data-hash check, `check_public_amount`, `validate_fee`, proof verification (`verify_proof` and the `Groth16Verifier` methods it drives), both balance-update branches, the fee transfer, and both `MerkleTree::append` calls, in the order the real source has them |
+| `Common/` | — | hand-written, never generated: the BN254 scalar field `ZMod bn254_r` with its operations, and the curve surface including `G1Shim` |
+
+All three entry points are roots of a **single** charon/aeneas run. Extracting them separately,
+as this model did originally, emitted the shared functions into more than one library; since
+`fv_transact_entry` calls the other two, importing any two of those libraries then failed with a
+duplicate-declaration error, which made whole-contract theorems impossible to state.
 
 The `fv_*` entry points are transcriptions of the real functions against a narrowed interface
 (shim types instead of arkworks, plain `&mut` instead of Anchor's `AccountLoader`, `u64`
@@ -24,8 +29,9 @@ and what each one replaces.
 ## The trusted base
 
 Everything reachable from an entry point is mechanically extracted. Everything at the boundary
-arrives in Lean as an assumption, in the hand-owned `*External.lean` files. `TransactShim` has 49
-of them (44 functions, 5 types):
+arrives in Lean as an assumption, in the hand-owned `*External.lean` files. The generated
+surface is 49 items (44 functions, 5 types), roughly half of which now carry real definitions
+instead of assumptions. The surface breaks down as:
 
 | Assumed | Count | Where |
 |---|---|---|
@@ -38,13 +44,20 @@ of them (44 functions, 5 types):
 | Rust core/std plumbing | 8 | `TryFrom`, `checked_neg`, `Option::ok_or`, `Result::map_err`, `Display`/`ToString`, `io::Write` |
 | Opaque types | 5 | `FrShim`, `G1Shim`, `Pubkey`, `Hash`, `std::io::Error` |
 
-`VerifyProofShim` has 8 (the `curve_shim` subset). `CheckPublicAmountShim` has **none left**:
-`FrShim` is defined as `ZMod bn254_r`, the BN254 scalar field, and its seven operations plus
-`i64::checked_neg` are given real definitions in `CheckPublicAmountShim/FunsExternal.lean`.
+Of that surface, 22 entries are now **DERIVED** — real Lean definitions, nothing assumed — and
+22 remain **TRUSTED**. `FrShim` is `ZMod bn254_r` with all eight operations defined, borsh
+serialization and the `Vec<u8>` writer it targets are reproduced in full, as are the Rust
+core/std plumbing and the public-input canonicity check `fr_lt_modulus_be`. The BN254 material
+lives in `lean/Common/` and is declared exactly once; previously each library carried its own
+`axiom curve_shim.G1Shim : Type`, which made them *different types* that no proof could transfer
+between.
 
-`TransactShim/` and `VerifyProofShim/`'s `*External.lean` files are still the bare generated
-templates — signatures with no content. Filling them is the main outstanding work, and
-`extract.sh` deliberately never overwrites a hand-filled one.
+The 22 still assumed are 6 CRYPTO (Poseidon and SHA-256), 11 CURVE (the group operations and the
+verifying key) and 5 DIAGNOSTIC (`Display`/`Debug`/`to_string` and anchor's error conversions,
+reachable only on error paths that abort before any state is written). `MODEL_COVERAGE.md` tracks
+reducing these to 6: the three hash functions, which must stay abstract because collision
+resistance is false of any concrete function, and the three `alt_bn128_*` syscalls, which are
+facts about the validator. `extract.sh` never overwrites a hand-filled `*External.lean`.
 
 ## Why the shims are needed
 
@@ -88,11 +101,11 @@ work this model exists to support.
   model's `ZMod bn254_r`/byte arrays are separate universes; bridging them — starting from
   `check_public_amount`, whose trusted base already has real semantics — is the first step
   towards any of `theorems.lean`.
-- **The `TransactShim`/`VerifyProofShim` assumptions have no content.** Until they do, the model
-  states *that* an assumption exists, not what it computes. The consequential ones are the curve
-  operations: on-chain those three `alt_bn128_*` calls are Solana syscalls executed by the
-  validator, so nothing in this pipeline can derive them, and almost every guarantee `transact`
-  provides is downstream of the proof check.
+- **The curve assumptions are still bare signatures.** They state *that* an assumption exists,
+  not what it computes. On-chain those three `alt_bn128_*` calls are Solana syscalls executed by
+  the validator, so nothing in this pipeline can derive them, and almost every guarantee
+  `transact` provides is downstream of the proof check. Giving them content means stating them
+  against the abstract group rather than reimplementing them — see `MODEL_COVERAGE.md`.
 - **The abstraction itself needs review.** Reproducing the extraction cleanly shows the pipeline
   is stable, not that this is the right model to prove theorems against. Those are separate
   questions and only the first is settled.

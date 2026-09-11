@@ -26,29 +26,35 @@ significantly more.
       bodies were byte-identical across models; `curve_shim.G1Shim` was worse -- a
       separate `axiom : Type` per model, so genuinely different types that no proof
       could transfer between. `lake build` passes; `Test/CommonBase.lean` guards it.
-      Net -84 lines. `Common/` is hand-owned and `extract.sh` never touches it.
+      `Common/` is hand-owned and `extract.sh` never touches it.
 
-- [ ] **Single-root extraction.** Confirm `charon rustc --start-from` is repeatable:
-      `nix develop path:. -c charon rustc --help | grep -A3 start-from`
-      - [ ] repeatable -> pass all roots in one run (one-line change to `extract.sh`)
-      - [ ] not repeatable -> write one Rust fn calling all cores, `--start-from` that
-      **Confirmed necessary, with a concrete failure.** `Common/` fixed the hand-owned
-      half of the duplication, but the GENERATED half still collides. Importing two
-      models fails:
+- [x] **Single-root extraction.** DONE. `charon rustc --start-from` IS repeatable -- verified
+      by running it, not by reading help text. `extract.sh` now makes ONE charon
+      run with all three entry points as roots, ONE aeneas run, and ONE Lean library,
+      `lean/Zkcash`, so no function is emitted twice.
+
+      Why it was needed: `fv_transact_entry` calls `fv_verify_proof_full_entry` and
+      `fv_check_public_amount_entry`, so transact's closure already contained both smaller
+      models and aeneas emitted those functions again into each library. Importing two of
+      them failed with
 
           environment already contains
           'zkcash.utils.fv_verify_proof_full_entry_loop0_loop3.body.eq_1'
-          from TransactShim.Funs
 
-      `fv_transact_entry` calls `fv_verify_proof_full_entry` and
-      `fv_check_public_amount_entry`, so TransactShim's closure already CONTAINS both
-      smaller models, and aeneas emits those functions again into each library.
-      `Common/` cannot deduplicate what aeneas regenerates.
+      `Common/` could not fix that half: it is hand-owned and cannot deduplicate generated
+      code. Whole-contract theorems have to span instructions, so the union had to be one
+      library.
 
-      Consequence: **VerifyProofShim and CheckPublicAmountShim are strict subsets of
-      TransactShim** -- development scaffolding, not components. Whole-contract theorems
-      need to span instructions, so the union must be one library.
-      *Est. 1 hour if repeatable, half a day for the fallback.*
+      Follow-through, all done: the hand-filled trusted base was ported to `lean/Zkcash`
+      (16 axioms / 17 definitions, wired to `Common/`, identical to the old TransactShim
+      one because the generated surface is identical); the three per-entry-point libraries
+      TransactShim / VerifyProofShim / CheckPublicAmountShim were deleted; `Test/CommonBase.lean`
+      repointed at `Zkcash.Funs`; `lake build` passes with 0 errors.
+
+      STILL OPEN: `extract.sh` regenerates the three deleted libraries and is now
+      inconsistent with the lakefile. Either retire it in favour of `extract.sh`
+      or keep it only for its `--diagnose-fr` probe mode. Its three `.llbc` inputs
+      (`transact_shim`, `verify_proof_shim`, `check_public_amount_shim`) are likewise orphaned.
 
 - [ ] **Retire the `fv_*` twins.** `fv_transact_entry` (lib.rs:549) is a ~150-line hand
       transcription of `transact`, never called at runtime, with no test comparing them.
@@ -98,7 +104,7 @@ Recommended order (not size order):
 
 ## 2. Trusted base: 22 -> 6
 
-Current: 22 DERIVED / 22 TRUSTED in `lean/TransactShim/FunsExternal.lean`.
+Current: 22 DERIVED / 22 TRUSTED in `lean/Zkcash/FunsExternal.lean`.
 Target: only the assumptions that genuinely cannot be discharged.
 
 ### DIAGNOSTIC — 5 axioms -> 0

@@ -5,9 +5,9 @@
 --
 -- Why this file exists: `bn254_r` and `FrShim` were previously declared once per model
 -- (TransactShim, VerifyProofShim, CheckPublicAmountShim). Those were `def`s with equal
--- bodies, so the duplication was safe but pointless -- and it made the three libraries
--- impossible to import into one Lean file, because they all declare the same top-level
--- names. Declaring them ONCE here fixes both.
+-- bodies, so the duplication was safe but pointless. Declaring them ONCE here removes it.
+-- (The models still cannot be imported into one Lean file: their GENERATED code overlaps,
+-- which Common/ cannot fix. See Test/CommonBase.lean.)
 import Aeneas
 import Mathlib.Data.ZMod.Basic
 open Aeneas Aeneas.Std Result ControlFlow Error

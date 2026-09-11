@@ -79,8 +79,8 @@ Then produce the model:
 ```bash
 ./extract.sh
 ```
-This regenerates `lean/TransactShim/`, `lean/VerifyProofShim/` and
-`lean/CheckPublicAmountShim/` — the Lean model of `transact` (SOL-only for now) — and builds it.
+This regenerates `lean/Zkcash/` — the Lean model of `transact` (SOL-only for now), extracted
+in a single charon/aeneas run with every entry point as a root — and builds it.
 Tested to reproduce `MODEL_REPORT.md`'s results from a completely clean
 `vendor`/`lean`/`.llbc` state. `extract.sh`'s own comments explain the one
 non-obvious step (why it needs `charon`'s own build output, not a plain `cargo build`) — read those
@@ -156,7 +156,7 @@ before any of it goes near production.
 | `anchor/.cargo/config.toml` (gitignored, from the template above) | `[patch.crates-io]` entries for the 17 vendored/patched dependencies | Wires problem #1's fix in |
 
 `formal-verification/` holds the toolchain and generated Lean output
-(`lean/TransactShim/`, `lean/VerifyProofShim/`, `lean/CheckPublicAmountShim/`).
+(`lean/Zkcash/`), plus the hand-owned shared trusted base in `lean/Common/`.
 
 ### Two smaller reference notes
 
@@ -174,6 +174,5 @@ before any of it goes near production.
 This is work in progress. Reproducing the extraction cleanly shows the pipeline is stable; it does
 not show that this is the right model to prove theorems against. The extraction flow and the
 trusted base both still need a critical review rather than a confirming one — `MODEL_REPORT.md`'s
-"What is open" lists the specific gaps, the largest being that the assumptions in
-`TransactShim/` and `VerifyProofShim/`'s `*External.lean` files are still bare signatures with
-no content.
+"What is open" lists the specific gaps, the largest being that nothing yet links the written
+spec to the extracted model.

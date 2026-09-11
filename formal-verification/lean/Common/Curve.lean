@@ -5,8 +5,8 @@
 -- That comment understated the problem: `curve_shim.G1Shim` was declared as a separate
 -- `axiom : Type` in each library, so the two were DIFFERENT TYPES even when the text
 -- matched, and no fact proved about one transferred to the other. Declaring it once
--- here is what actually makes VerifyProofShim a sub-model of TransactShim rather than
--- an unrelated universe that happens to look similar.
+-- here gives both models ONE curve surface. (The models still cannot be imported
+-- together -- their generated code overlaps; see Test/CommonBase.lean.)
 --
 --   DERIVED  1  fr_lt_modulus_be -- plain integer arithmetic, so it is reproduced.
 --   TRUSTED  7  the G1 type and the BN254 group operations.
