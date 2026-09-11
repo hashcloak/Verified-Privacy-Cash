@@ -1,26 +1,54 @@
 #!/usr/bin/env bash
-# Reproduces the Lean model (TransactShim + CheckPublicAmountShim + VerifyProofShim)
-# from the zkcash source and builds it. Run from formal-verification/, inside
-# `nix develop path:.`.
-# Requires setup-vendor.sh + cargo-config.toml.template only if charon hits the cdylib
-# link error (reproduced on macOS AND on Linux/Manjaro; see SETUP.md Part 2).
+# Reproduces the Lean model from the zkcash source and builds it.
+# ONE charon run, ONE aeneas run, ONE Lean library (lean/Zkcash).
 #
 # Modes:
-#   ./extract.sh                regenerate the model (charon -> .llbc -> aeneas -> lean),
-#                               materialize the *External imports, then `lake build` it.
-#   ./extract.sh --diagnose-fr  diagnostic: does --monomorphize let Charon
-#                               translate the REAL ark-bn254 Fr (no FrShim)? Reports
-#                               success/failure per variant; does NOT touch the model.
+#   ./extract.sh                regenerate the model and lake build it
+#   ./extract.sh --diagnose-fr  diagnostic only: does --monomorphize let Charon translate
+#                               the REAL ark-bn254 Fr (no FrShim)? Does NOT touch the model.
 #
-# The tricky part this script exists to avoid redoing by hand: charon rustc needs .rlib
-# files built by charon's *own* bundled compiler (a plain `cargo build` produces
-# incompatible metadata -- see SETUP.md). The only reliable source for matching .rlib
-# paths is charon's own build attempt, captured via -v. That attempt necessarily fails
-# (charon cargo hits the cdylib linker issue on zkcash itself, see SETUP.md #2) --
-# what we need is the verbose command line it prints just before failing, not a
-# successful run.
+# Why this exists. extract.sh makes three charon runs and produces three libraries. But
+# fv_transact_entry CALLS fv_verify_proof_full_entry and fv_check_public_amount_entry, so
+# transact's closure already contains the two smaller models, and aeneas emits those
+# functions again into each library. Importing two of them therefore fails:
+#
+#     environment already contains
+#     'zkcash.utils.fv_verify_proof_full_entry_loop0_loop3.body.eq_1' from TransactShim.Funs
+#
+# Whole-contract theorems have to span instructions, so the union has to be one library.
+# Naming every entry point as a root of a single run emits each function exactly once.
+#
+# SAFETY. This script writes only zkcash_model.llbc and lean/Zkcash/. It never touches
+# lean/Common, lean/Spec or lean/Test. A failed run therefore cannot damage the
+# hand-written trusted base, and the *External.lean files are stashed and restored
+# even if aeneas dies part-way (see the trap below).
+#
+# NOT YET RUN -- it needs `nix develop path:.` for charon and aeneas. Two things to watch
+# on the first run are marked FIRST RUN below.
+#
+# Usage:
+#   nix develop path:.            # then
+#   ./extract.sh
+#   AENEAS_STRICT=0 ./extract.sh   # tolerate aeneas errors (see below)
 set -euo pipefail
 cd "$(dirname "$0")"
+
+SUBDIR=Zkcash
+LLBC=zkcash_model.llbc
+
+# AENEAS_STRICT=1 passes -abort-on-error to aeneas. Without it aeneas reports an error on a
+# function it cannot translate and CARRIES ON, dropping that function's body -- the run then
+# "succeeds" with a hole in the model. curve_shim.rs records this happening already ("Aeneas
+# drops the bodies of verify_proof/prepare_inputs"). With one big run a silent hole is worse,
+# because everything is in the same library. Set AENEAS_STRICT=0 to see all errors at once
+# instead of stopping at the first, which is what you want when diagnosing.
+AENEAS_STRICT="${AENEAS_STRICT:-1}"
+
+# Guard: never let SUBDIR name a directory that holds existing work.
+case "$SUBDIR" in
+  ""|TransactShim|VerifyProofShim|CheckPublicAmountShim|Common|Spec|Test)
+    echo "ERROR: SUBDIR='$SUBDIR' would overwrite existing work. Refusing." >&2; exit 2;;
+esac
 
 MODE="regen"
 if [ "${1:-}" = "--diagnose-fr" ]; then
@@ -29,6 +57,13 @@ elif [ -n "${1:-}" ]; then
   echo "Unknown argument: $1 (use no args, or --diagnose-fr)" >&2
   exit 2
 fi
+
+for tool in charon aeneas lake lean; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "ERROR: '$tool' not on PATH. Run this inside: nix develop path:." >&2
+    exit 2
+  fi
+done
 
 echo "Capturing a real rustc invocation for zkcash from charon's own compiler..."
 CAPTURE=$(mktemp)
@@ -93,110 +128,112 @@ if [ "$MODE" = "diagnose-fr" ]; then
   exit 0
 fi
 
-# ---------------------------------------------------------------------------
-# Normal path: regenerate the model.
-# ---------------------------------------------------------------------------
-echo "Extracting check_public_amount..."
-eval "charon rustc --opaque \"zkcash::fr_shim\" \
-  --dest-file ../formal-verification/check_public_amount_shim.llbc \
-  --start-from zkcash::utils::fv_check_public_amount_entry \
-  --preset=aeneas -- $ARGS"
-
-echo "Extracting transact..."
-eval "charon rustc \
+# --- ONE charon run, every entry point as a root -----------------------------------
+# Flags are the union of what extract.sh passes to its three runs: both --opaque shims,
+# plus the --exclude that works around the ErrorCode naming collision.
+#
+# FIRST RUN: charon 0.1.223 documents --start-from as "a list of item paths", but the
+# exact CLI form (repeating the flag, as below, versus one comma-separated value) is
+# untested here. If charon rejects the repetition, see the hint printed on failure.
+echo "Extracting ALL entry points in ONE run..."
+if ! eval "charon rustc \
   --exclude \"anchor_lang::error::{impl core::convert::From<anchor_lang::error::ErrorCode> for _}\" \
   --opaque \"zkcash::fr_shim\" \
   --opaque \"zkcash::curve_shim\" \
-  --dest-file ../formal-verification/transact_shim.llbc \
   --start-from zkcash::fv_transact_entry \
-  --preset=aeneas -- $ARGS"
-
-# verify_proof, via curve_shim (see curve_shim.rs for why the shim is required:
-# --opaque/--exclude on ark_ff/ark_ec/num_bigint does NOT work, because those types
-# stay in the signatures of the code we want and Aeneas then drops its bodies).
-# fv_transact_entry now CALLS fv_verify_proof_full_entry, so the transact model above
-# already contains all of this. This separate, much smaller target is kept because it is
-# far easier to develop the curve_shim assumptions against than the full transact model.
-echo "Extracting verify_proof..."
-eval "charon rustc \
-  --opaque \"zkcash::curve_shim\" \
-  --dest-file ../formal-verification/verify_proof_shim.llbc \
   --start-from zkcash::utils::fv_verify_proof_full_entry \
-  --preset=aeneas -- $ARGS"
+  --start-from zkcash::utils::fv_check_public_amount_entry \
+  --dest-file ../formal-verification/$LLBC \
+  --preset=aeneas -- $ARGS"; then
+  cat >&2 <<'HINT'
+
+charon failed. If the error is about --start-from being given more than once, try either
+of these in the command above:
+
+  1. one flag, comma-separated:
+       --start-from 'zkcash::fv_transact_entry,zkcash::utils::fv_verify_proof_full_entry,...'
+
+  2. a single dummy root in Rust that calls every entry point, then:
+       --start-from zkcash::fv_all_entries
+
+Note that fv_transact_entry already calls the other two, so
+  --start-from zkcash::fv_transact_entry
+alone produces the same closure today. The list only starts to matter when instructions
+that nothing calls (initialize, update_global_config, transact_spl, ...) are added.
+HINT
+  exit 1
+fi
 
 cd ../formal-verification
 
-# The *External.lean files are HUMAN-OWNED (this is where FrShim etc. get their real
-# ZMod definitions -- the trusted base). aeneas only ever regenerates Types.lean,
-# Funs.lean, and the *External_Template.lean scaffolding; it must NOT clobber hand-filled
-# *External.lean. So stash any existing *External.lean (and the current templates, to
-# detect drift) before the rm, then restore them afterwards.
-FV_MODULES="TransactShim CheckPublicAmountShim VerifyProofShim"
+# --- aeneas, into lean/$SUBDIR only -------------------------------------------------
+# Same stash/restore discipline as extract.sh: the *External.lean files are HUMAN-OWNED
+# and aeneas must never clobber them. The restore runs from a trap on EXIT, NOT inline,
+# and THAT TRAP MUST NOT BE REMOVED: between the rm -rf below and the restore, a
+# hand-written trusted base exists only in $BAK, so any failure in between (an aeneas
+# error, a Ctrl-C) would otherwise delete it and leave the stash orphaned in /tmp.
 BAK=$(mktemp -d)
-for m in $FV_MODULES; do
-  for f in TypesExternal FunsExternal; do
-    if [ -f "lean/$m/$f.lean" ]; then cp "lean/$m/$f.lean" "$BAK/${m}__$f.lean"; fi
-    if [ -f "lean/$m/${f}_Template.lean" ]; then cp "lean/$m/${f}_Template.lean" "$BAK/${m}__${f}_Template.lean"; fi
-  done
+for f in TypesExternal FunsExternal; do
+  if [ -f "lean/$SUBDIR/$f.lean" ]; then cp "lean/$SUBDIR/$f.lean" "$BAK/$f.lean"; fi
+  if [ -f "lean/$SUBDIR/${f}_Template.lean" ]; then cp "lean/$SUBDIR/${f}_Template.lean" "$BAK/${f}_Template.lean"; fi
 done
 
-# Restore/bootstrap the *External.lean files the lakefile imports:
-#   - if a hand-filled copy was stashed, RESTORE it (never clobber human work), and warn
-#     if the freshly-generated template's trusted-base surface changed vs the stashed one
-#     (a signal the restored file may need manual reconciliation);
-#   - otherwise bootstrap it from the freshly-generated template.
-#
-# Run from a trap on EXIT, not inline, and DO NOT REMOVE THAT TRAP. Between the `rm -rf`
-# below and this restore, the hand-written trusted base exists ONLY in $BAK. This script
-# runs under `set -e`, so any failure in between (an aeneas error, a Ctrl-C) used to abort
-# with the files deleted and the stash orphaned in /tmp -- and because the NEXT run then
-# found nothing to stash, it silently "bootstrapped" the trusted base from the empty
-# templates, replacing real definitions with bare axioms. That destroys the least
-# reproducible work in the repo and only shows up later as a broken proof in Spec/.
 restore_externals () {
-  local m f
-  for m in $FV_MODULES; do
-    for f in TypesExternal FunsExternal; do
-      if [ -f "$BAK/${m}__$f.lean" ]; then
-        mkdir -p "lean/$m"
-        cp "$BAK/${m}__$f.lean" "lean/$m/$f.lean"
-        if [ -f "$BAK/${m}__${f}_Template.lean" ] && [ -f "lean/$m/${f}_Template.lean" ] && \
-           ! diff -q "$BAK/${m}__${f}_Template.lean" "lean/$m/${f}_Template.lean" >/dev/null 2>&1; then
-          echo "WARNING: lean/$m/${f}_Template.lean changed since lean/$m/$f.lean was written --" >&2
-          echo "         the trusted-base surface may have shifted; reconcile lean/$m/$f.lean by hand." >&2
-        fi
-      elif [ -f "lean/$m/${f}_Template.lean" ]; then
-        cp "lean/$m/${f}_Template.lean" "lean/$m/$f.lean"
+  local f
+  for f in TypesExternal FunsExternal; do
+    if [ -f "$BAK/$f.lean" ]; then
+      mkdir -p "lean/$SUBDIR"
+      cp "$BAK/$f.lean" "lean/$SUBDIR/$f.lean"
+      if [ -f "$BAK/${f}_Template.lean" ] && [ -f "lean/$SUBDIR/${f}_Template.lean" ] && \
+         ! diff -q "$BAK/${f}_Template.lean" "lean/$SUBDIR/${f}_Template.lean" >/dev/null 2>&1; then
+        echo "WARNING: lean/$SUBDIR/${f}_Template.lean changed since lean/$SUBDIR/$f.lean was" >&2
+        echo "         written -- the trusted-base surface may have shifted; reconcile by hand." >&2
       fi
-    done
+    elif [ -f "lean/$SUBDIR/${f}_Template.lean" ]; then
+      cp "lean/$SUBDIR/${f}_Template.lean" "lean/$SUBDIR/$f.lean"
+      echo "NOTE: bootstrapped lean/$SUBDIR/$f.lean from the generated template. It re-declares" >&2
+      echo "      what lean/Common/ already provides -- wire it to Common/ before relying on it." >&2
+    fi
   done
   rm -rf "$BAK"
 }
 trap restore_externals EXIT
 
-rm -rf lean/CheckPublicAmountShim lean/TransactShim lean/VerifyProofShim
-aeneas check_public_amount_shim.llbc -backend lean -split-files -dest lean -subdir CheckPublicAmountShim
-aeneas transact_shim.llbc -backend lean -split-files -dest lean -subdir TransactShim
-aeneas verify_proof_shim.llbc -backend lean -split-files -dest lean -subdir VerifyProofShim
+rm -rf "lean/$SUBDIR"
+
+AENEAS_FLAGS=""
+if [ "$AENEAS_STRICT" = "1" ]; then AENEAS_FLAGS="-abort-on-error"; fi
+aeneas "$LLBC" -backend lean -split-files -dest lean -subdir "$SUBDIR" $AENEAS_FLAGS
 
 restore_externals
 trap - EXIT
 
-# Work around an aeneas a827e6f codegen bug: the derived PartialOrd `le` default method
-# is emitted as `le.default <instance>`, but the pinned Aeneas Lean lib's le.default takes
-# the `partial_cmp` FUNCTION, not the instance. Binary and lib are the SAME rev (a827e6f),
-# so this is an internal inconsistency -- REGENERATING DOES NOT FIX IT. Append `.partial_cmp`
-# at each le.default site so the model typechecks. (Idempotent: the `[^.]` guard skips
-# already-patched sites.) See MODEL_REPORT.md's "What is open".
-for m in $FV_MODULES; do
-  sed -zi -E 's/(core\.cmp\.PartialOrd\.le\.default[[:space:]]+fr_shim\.FrShim\.Insts\.CoreCmpPartialOrdFrShim)([^.])/\1.partial_cmp\2/g' "lean/$m/Funs.lean"
-done
+# Same aeneas a827e6f codegen workaround extract.sh applies: the derived PartialOrd `le`
+# default method is emitted as `le.default <instance>`, but the pinned Aeneas Lean lib's
+# le.default takes the partial_cmp FUNCTION. Binary and lib are the same revision, so
+# regenerating does not fix it. Idempotent: the [^.] guard skips already-patched sites.
+sed -zi -E 's/(core\.cmp\.PartialOrd\.le\.default[[:space:]]+fr_shim\.FrShim\.Insts\.CoreCmpPartialOrdFrShim)([^.])/\1.partial_cmp\2/g' "lean/$SUBDIR/Funs.lean"
 
-# Build the regenerated model. LD_LIBRARY_PATH guards this box's bundled-clang crash;
-# `cache get` is a no-op once Mathlib's oleans are present.
+# --- lakefile ----------------------------------------------------------------------
+# Deliberately NOT edited here. A generation script that rewrites your build config is
+# exactly what makes a broken run hard to diagnose, so this only tells you what to add.
+if ! grep -q "name = \"$SUBDIR\"" lean/lakefile.toml; then
+  cat <<EOF
+
+NEXT STEP: lean/$SUBDIR is generated but not built yet. Add to lean/lakefile.toml:
+
+[[lean_lib]]
+name = "$SUBDIR"
+globs = ["$SUBDIR.Types", "$SUBDIR.TypesExternal", "$SUBDIR.Funs", "$SUBDIR.FunsExternal"]
+
+and add "$SUBDIR" to defaultTargets on line 2. Then re-run this script, or just: lake build
+
+EOF
+fi
+
 cd lean
 export LD_LIBRARY_PATH="$(lean --print-prefix)/lib:${LD_LIBRARY_PATH:-}"
 lake exe cache get
 lake build
 
-echo "Done. lean/{TransactShim,CheckPublicAmountShim,VerifyProofShim}/ regenerated AND built."
+echo "Done. $LLBC and lean/$SUBDIR/ generated; nothing else was modified."

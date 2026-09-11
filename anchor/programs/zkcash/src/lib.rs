@@ -539,8 +539,8 @@ pub mod zkcash {
 //     / proof_ext_data_hash / output_commitments is what lets the model state
 //     that the values the proof was checked against are the same ones the
 //     balance updates and Merkle appends below then use.
-//     The assumptions in VerifyProofShim/FunsExternal.lean are still bare
-//     signatures with no content -- see MODEL_REPORT.md.
+//     The curve assumptions live in lean/Common/Curve.lean, stated as axioms with
+//     content rather than bare signatures -- see MODEL_REPORT.md.
 //   - CPI transfers / Rent::get() / try_borrow_mut_lamports replaced by plain
 //     u64 balance arithmetic (Solana runtime mechanics are trusted, not derived)
 //   - event emission dropped (not state-transition-relevant)
