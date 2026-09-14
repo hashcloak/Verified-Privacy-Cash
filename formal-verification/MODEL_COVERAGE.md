@@ -181,6 +181,15 @@ shielded pool. Everything else is dischargeable engineering.
 
 ## 3. First proof
 
+- [x] **First theorem about the model: the verifier, soundness direction.**
+      `lean/proofs/VerifyProof/Main.lean`, `fv_verify_proof_full_entry_sound`: if the verifier
+      returns `true`, all seven public inputs are below r, all IC entries decode, and
+      e(A, B) · e(vk_x, γ) · e(C, δ) · e(α, β) = 1 for the decoded key, proof B and C, some A,
+      and vk_x = IC₀ + Σ kᵢ · ICᵢ₊₁. Assumes only the syscall contracts; `#print axioms` adds
+      nothing beyond Lean's built-ins and the three syscall declarations. It is a model-level
+      theorem, not spec -> model: it does not tie A to `proof_a_raw` (the program decodes A with
+      its own arkworks code, and nothing relates that decoder to the syscall's), says nothing
+      about completeness, and does not mention the spec's groups.
 - [ ] **Prove one property end to end**, spec -> model. `check_public_amount` is the
       candidate: it is the only shim with zero axioms remaining, so nothing blocks it.
 

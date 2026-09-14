@@ -103,6 +103,12 @@ work this model exists to support.
   model's `ZMod bn254_r`/byte arrays are separate universes; bridging them — starting from
   `check_public_amount`, whose trusted base already has real semantics — is the first step
   towards any of `theorems.lean`.
+- **The verifier is proved in one direction only.** `lean/proofs/VerifyProof/` proves that when
+  `fv_verify_proof_full_entry` returns `true`, the public inputs are in range and the Groth16
+  pairing equation holds for the decoded verifying key and proof — from the syscall contracts
+  alone. Proof point A is only known to exist, not to be the negation of `proof_a_raw`; valid
+  proofs are not yet shown to be accepted; and the statement is about the model's curve types,
+  not the spec's.
 - **The three curve syscalls have a soundness-direction contract, not yet a completeness one.**
   `code_model/hand_written/SyscallContracts.lean` states what a *successful* answer means —
   addition gives P + Q, multiplication gives k·P, a pairing answer of 1 means the four pairings
