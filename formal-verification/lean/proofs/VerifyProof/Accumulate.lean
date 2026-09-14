@@ -6,7 +6,7 @@ open Aeneas Aeneas.Std Result ControlFlow
 `vk_x = IC₀ + Σ kᵢ · ICᵢ₊₁` is computed by a loop that calls the multiplication and addition
 syscalls, which may fail. So, unlike the copy loops, the result here is conditional: IF the loop
 reports success, THEN every scalar was range-checked, every IC entry decodes, and the result
-decodes to that sum (`loop0_sound`, by induction on the iterations left). The meaning of the
+decodes to that sum (`loop0_ok_imp_sum`, by induction on the iterations left). The meaning of the
 syscall answers comes only from `curve_shim.AltBn128Syscalls`. -/
 
 namespace zkcash
@@ -58,8 +58,9 @@ theorem bytesAt_eq {n m : Std.Usize} (a : Array Std.U8 n) (off : ℕ) (h : off +
     rw [getElem_eq_getElem!, getElem_eq_getElem!]
     exact hpt i (by omega)
 
-/-- The G1 point the verifying key's `j`-th IC entry decodes to (0 if it does not decode;
-    every theorem below also proves it does decode). -/
+/-- The G1 point the verifying key's `j`-th IC entry decodes to, or 0 if it does not decode.
+    A proof device only: the lemmas that use it also prove the entry decodes, and the main
+    theorem's statement quantifies over the IC points instead of mentioning it. -/
 def ic (S : curve_shim.AltBn128Syscalls G1 G2 GT) (vk_ic : Array (Array Std.U8 64#usize) 8#usize) (j : ℕ) : G1 :=
   (S.decodeG1 vk_ic.val[j]!).getD 0
 
@@ -166,7 +167,7 @@ theorem loop0_end (vk_ic : Array (Array Std.U8 64#usize) 8#usize)
 /-- The accumulation loop, from iteration `idx` on: if it reports true, every remaining public
     input was below r, every remaining IC entry decodes, and the result decodes to the starting
     point plus `Σ_{j ∈ [idx, 7)} k_j · IC_(j+1)`. -/
-theorem loop0_sound (vk_ic : Array (Array Std.U8 64#usize) 8#usize)
+theorem loop0_ok_imp_sum (vk_ic : Array (Array Std.U8 64#usize) 8#usize)
     (pubs : Array (Array Std.U8 32#usize) 7#usize) :
     ∀ (n : ℕ) (idx : Std.Usize) (prep prep' : Array Std.U8 64#usize), 7 - idx.val = n → idx.val < 7 →
     utils.fv_verify_proof_full_entry_loop0 vk_ic pubs prep true idx = ok (prep', true) →

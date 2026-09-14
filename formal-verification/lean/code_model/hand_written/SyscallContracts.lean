@@ -49,7 +49,7 @@ def curve_shim.bytesAt {n : Usize} (a : Array Std.U8 n) (off : ℕ) (m : Usize)
 def curve_shim.natOfBE {n : Usize} (b : Array Std.U8 n) : ℕ :=
   b.val.foldl (fun acc byte => acc * 256 + byte.val) 0
 
-/-- What the three alt_bn128 syscalls promise, soundness direction only, for any `G1`, `G2`, `GT`
+/-- What the three alt_bn128 syscalls promise when they succeed -- not that they succeed -- for any `G1`, `G2`, `GT`
     with the structure below. See the file header for where each promise comes from.
 
     `G1` is a commutative monoid, so `k • P` means P added to itself k times -- which is what

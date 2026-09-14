@@ -108,8 +108,9 @@ work this model exists to support.
   pairing equation holds for the decoded verifying key and proof — from the syscall contracts
   alone. Proof point A is only known to exist, not to be the negation of `proof_a_raw`; valid
   proofs are not yet shown to be accepted; and the statement is about the model's curve types,
-  not the spec's.
-- **The three curve syscalls have a soundness-direction contract, not yet a completeness one.**
+  not the spec's. It is not Groth16 soundness (an assumption in `Spec/`); it shows the program
+  checks the equation that soundness is about.
+- **The three curve syscalls say what a successful answer means, not yet that valid inputs succeed.**
   `code_model/hand_written/SyscallContracts.lean` states what a *successful* answer means —
   addition gives P + Q, multiplication gives k·P, a pairing answer of 1 means the four pairings
   multiply to 1 — as a class over the model's own curve types, independent of `Spec/`. It is

@@ -1,16 +1,24 @@
 import proofs.VerifyProof.Accumulate
 open Aeneas Aeneas.Std Result ControlFlow
 
-/-! # `fv_verify_proof_full_entry`: soundness direction
+/-! # `fv_verify_proof_full_entry`: accepting means the Groth16 equation holds
 
-`fv_verify_proof_full_entry_sound`: if the verifier returns `true`, then
+`fv_verify_proof_full_entry_checks_groth16_equation`: if the verifier returns `true`, then
 1. all seven public inputs, read as big-endian integers `kᵢ`, are below r;
-2. all eight verifying-key IC entries decode to G1 points;
-3. proof B and C and the key's α, β, γ, δ decode, and for some G1 point A,
+2. the eight verifying-key IC entries decode to G1 points IC₀..IC₇, proof B and C and the
+   key's α, β, γ, δ decode, and for some G1 point A,
      e(A, B) · e(vk_x, γ) · e(C, δ) · e(α, β) = 1,   where vk_x = IC₀ + Σᵢ kᵢ · ICᵢ₊₁.
 
 That is the Groth16 verification equation, rearranged the way the program checks it.
 Because of (1), each kᵢ already is its value mod r -- no reduction is hidden in the statement.
+
+This is NOT Groth16 soundness. It is the first of three steps from "the program accepted" to
+"a valid witness exists":
+- this theorem: the program accepts ⇒ it checked the Groth16 equation, on the right points;
+- the bridge (not done): that equation ⇒ the spec's `Groth16.verify` accepts;
+- Groth16 soundness, an assumption in `Spec/`: `Groth16.verify` accepts ⇒ a witness exists.
+The cryptography only protects a program that checks the right equation; this theorem rules
+out checking the wrong one -- swapped key elements, a misindexed IC, a missing range check.
 
 Assumes only the syscall contracts, `curve_shim.AltBn128Syscalls`. It does NOT say:
 - that A is the negation of the point in `proof_a_raw`. The program decodes and negates A with
@@ -39,7 +47,7 @@ def verifierInputs (proof_root proof_public_amount proof_ext_data_hash : Array S
 
 /-- If the verifier accepts, the inputs are in range and the Groth16 pairing equation holds
     for the decoded key and some proof points; see the module header for what is not claimed. -/
-theorem fv_verify_proof_full_entry_sound
+theorem fv_verify_proof_full_entry_checks_groth16_equation
     (proof_root proof_public_amount proof_ext_data_hash : Array Std.U8 32#usize)
     (proof_input_nullifiers proof_output_commitments : Array (Array Std.U8 32#usize) 2#usize)
     (proof_a_raw : Array Std.U8 64#usize) (proof_b : Array Std.U8 128#usize) (proof_c : Array Std.U8 64#usize)
@@ -51,13 +59,13 @@ theorem fv_verify_proof_full_entry_sound
     let inputs := verifierInputs proof_root proof_public_amount proof_ext_data_hash
       proof_input_nullifiers proof_output_commitments
     (∀ j : ℕ, j < 7 → curve_shim.natOfBE (inputs[j]!) < bn254_r) ∧
-    (∀ j : ℕ, j < 8 → S.decodeG1 (vk_ic.val[j]!) = some (ic S vk_ic j)) ∧
-    ∃ (A : G1) (B : G2) (C α : G1) (β γ δ : G2),
+    ∃ (IC : ℕ → G1) (A : G1) (B : G2) (C α : G1) (β γ δ : G2),
+      (∀ j : ℕ, j < 8 → S.decodeG1 (vk_ic.val[j]!) = some (IC j)) ∧
       S.decodeG2 proof_b = some B ∧ S.decodeG1 proof_c = some C ∧
       S.decodeG1 vk_alpha_g1 = some α ∧ S.decodeG2 vk_beta_g2 = some β ∧
       S.decodeG2 vk_gamme_g2 = some γ ∧ S.decodeG2 vk_delta_g2 = some δ ∧
       S.pairing A B *
-        S.pairing (ic S vk_ic 0 + ∑ j ∈ Finset.range 7, curve_shim.natOfBE (inputs[j]!) • ic S vk_ic (j + 1)) γ *
+        S.pairing (IC 0 + ∑ j ∈ Finset.range 7, curve_shim.natOfBE (inputs[j]!) • IC (j + 1)) γ *
         S.pairing C δ * S.pairing α β = 1 := by
   intro inputs
   -- Walk through the function, naming the result of every step.
@@ -191,14 +199,14 @@ theorem fv_verify_proof_full_entry_sound
   rw [getElem_eq_getElem!] at hprep'
   subst hprep'
   obtain ⟨hall, acc, hacc, hprep1⟩ :=
-    loop0_sound (S := S) vk_ic (back a4) 7 0#usize _ prep1 (by simp) (by simp) hloop
+    loop0_ok_imp_sum (S := S) vk_ic (back a4) 7 0#usize _ prep1 (by simp) (by simp) hloop
   have hacc0 : S.decodeG1 (vk_ic.val[0]!) = some acc := hacc
   have hic0 : ic S vk_ic 0 = acc := by simp only [ic, hacc0, Option.getD_some]
   have hvkx : ic S vk_ic 0 + ∑ j ∈ Finset.range 7, curve_shim.natOfBE (inputs[j]!) • ic S vk_ic (j + 1) = P₂ := by
     rw [h3, Option.some.injEq] at hprep1
     rw [hprep1, ← hinputs, Finset.range_eq_Ico, hic0]
     rfl
-  refine ⟨fun j hj => ?_, fun j hj => ?_, P₁, Q₁, P₃, P₄, Q₄, Q₂, Q₃, h2, h5, h7, h8, h4, h6, ?_⟩
+  refine ⟨fun j hj => ?_, ic S vk_ic, P₁, Q₁, P₃, P₄, Q₄, Q₂, Q₃, fun j hj => ?_, h2, h5, h7, h8, h4, h6, ?_⟩
   · rw [← hinputs]; exact (hall j (by simp) hj).1
   · rcases j with _ | j
     · rw [hacc0, hic0]
