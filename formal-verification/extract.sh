@@ -211,11 +211,29 @@ aeneas "$LLBC" -backend lean -split-files -dest lean -subdir "$SUBDIR" $AENEAS_F
 restore_externals
 trap - EXIT
 
-# Same aeneas a827e6f codegen workaround extract.sh applies: the derived PartialOrd `le`
-# default method is emitted as `le.default <instance>`, but the pinned Aeneas Lean lib's
-# le.default takes the partial_cmp FUNCTION. Binary and lib are the same revision, so
-# regenerating does not fix it. Idempotent: the [^.] guard skips already-patched sites.
-sed -zi -E 's/(core\.cmp\.PartialOrd\.le\.default[[:space:]]+fr_shim\.FrShim\.Insts\.CoreCmpPartialOrdFrShim)([^.])/\1.partial_cmp\2/g' "lean/$SUBDIR/Funs.lean"
+# aeneas a827e6f codegen bug: the derived PartialOrd `le` default method is emitted as
+# `le.default <instance>`, but the pinned Aeneas Lean lib's le.default takes the partial_cmp
+# FUNCTION. Binary and lib are the same revision, so regenerating does not fix it. Append
+# `.partial_cmp` at each site.
+#
+# Every patched site is MARKED inline with a block comment, and a header line under the
+# aeneas banner records the count, so this generated file never silently passes for pure
+# aeneas output. To see exactly what changed after generation, search Funs.lean for
+# "PATCHED by extract.sh". Idempotent: the [^.] guard skips sites already ending in
+# `.partial_cmp`. If it patches 0 sites, either aeneas fixed the bug (the build passes) or
+# the emitted shape changed and the regex no longer matches (the build fails on le.default).
+FUNS="lean/$SUBDIR/Funs.lean"
+PATCH_MARK='/- PATCHED by extract.sh: aeneas le.default bug, see extract.sh -/'
+sed -zi -E "s#(core\.cmp\.PartialOrd\.le\.default[[:space:]]+fr_shim\.FrShim\.Insts\.CoreCmpPartialOrdFrShim)([^.])#\1.partial_cmp $PATCH_MARK\2#g" "$FUNS"
+patched=$(grep -c "PATCHED by extract.sh: aeneas le.default bug" "$FUNS" || true)
+echo "Patched $patched le.default site(s) in $FUNS, each marked inline."
+if [ "$patched" -gt 0 ]; then
+  if ! grep -q "post-processed by extract.sh" "$FUNS"; then
+    sed -i "1a -- NOTE: post-processed by extract.sh after aeneas ran: $patched site(s) patched for the le.default codegen bug, each marked inline. Not pure aeneas output." "$FUNS"
+  fi
+else
+  echo "WARNING: patched 0 le.default sites -- see the comment above this step in extract.sh." >&2
+fi
 
 # --- lakefile ----------------------------------------------------------------------
 # Deliberately NOT edited here. A generation script that rewrites your build config is

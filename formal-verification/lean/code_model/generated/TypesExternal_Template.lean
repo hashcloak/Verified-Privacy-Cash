@@ -40,7 +40,7 @@ axiom solana_hash.Hash : Type
 axiom curve_shim.G1Shim : Type
 
 /-- [zkcash::fr_shim::FrShim]
-    Source: 'programs/zkcash/src/fr_shim.rs', lines 19:0-19:32
+    Source: 'programs/zkcash/src/fr_shim.rs', lines 20:0-20:32
     Visibility: public -/
 axiom fr_shim.FrShim : Type
 

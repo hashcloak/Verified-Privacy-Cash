@@ -44,16 +44,18 @@ instead of assumptions. The surface breaks down as:
 | Rust core/std plumbing | 8 | `TryFrom`, `checked_neg`, `Option::ok_or`, `Result::map_err`, `Display`/`ToString`, `io::Write` |
 | Opaque types | 5 | `FrShim`, `G1Shim`, `Pubkey`, `Hash`, `std::io::Error` |
 
-Of that surface, 22 entries are now **DERIVED** — real Lean definitions, nothing assumed — and
-22 remain **TRUSTED**. `FrShim` is `ZMod bn254_r` with all eight operations defined, borsh
+Of that surface, 25 entries are now **DERIVED** — real Lean definitions, nothing assumed — and
+19 remain **TRUSTED**. The G1 point type and its three operations are defined to mirror
+arkworks 0.5.0 byte for byte, so `verify_proof` depends on exactly three axioms: the `alt_bn128`
+syscalls. `FrShim` is `ZMod bn254_r` with all eight operations defined, borsh
 serialization and the `Vec<u8>` writer it targets are reproduced in full, as are the Rust
 core/std plumbing and the public-input canonicity check `fr_lt_modulus_be`. The BN254 material
 lives in `lean/code_model/hand_written/` and is declared exactly once; previously each library carried its own
 `axiom curve_shim.G1Shim : Type`, which made them *different types* that no proof could transfer
 between.
 
-The 22 still assumed are 6 CRYPTO (Poseidon and SHA-256), 11 CURVE (the group operations and the
-verifying key) and 5 DIAGNOSTIC (`Display`/`Debug`/`to_string` and anchor's error conversions,
+The 19 still assumed are 6 CRYPTO (Poseidon and SHA-256), 8 CURVE (the three `alt_bn128` syscalls and
+the five verifying-key constants) and 5 DIAGNOSTIC (`Display`/`Debug`/`to_string` and anchor's error conversions,
 reachable only on error paths that abort before any state is written). `MODEL_COVERAGE.md` tracks
 reducing these to 6: the three hash functions, which must stay abstract because collision
 resistance is false of any concrete function, and the three `alt_bn128_*` syscalls, which are
@@ -101,7 +103,7 @@ work this model exists to support.
   model's `ZMod bn254_r`/byte arrays are separate universes; bridging them — starting from
   `check_public_amount`, whose trusted base already has real semantics — is the first step
   towards any of `theorems.lean`.
-- **The curve assumptions are still bare signatures.** They state *that* an assumption exists,
+- **The three curve syscalls are still bare signatures.** They state *that* an assumption exists,
   not what it computes. On-chain those three `alt_bn128_*` calls are Solana syscalls executed by
   the validator, so nothing in this pipeline can derive them, and almost every guarantee
   `transact` provides is downstream of the proof check. Giving them content means stating them
