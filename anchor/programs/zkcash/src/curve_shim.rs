@@ -76,11 +76,11 @@ pub struct G1Shim(pub [u8; 64]);
 impl G1Shim {
     /// `G1::deserialize_with_mode(bytes, Compress::No, Validate::Yes)`.
     ///
-    /// The real call is handed 65 bytes: the 64-byte point followed by a zero
-    /// "infinity flag" byte (the `&[0u8][..]` tail of the `concat` at utils.rs:263).
-    /// That byte is constant, so it is dropped here rather than modelled.
-    /// `None` corresponds to the real `Err(_)` (bad encoding, or a point that is not
-    /// on the curve / not in the correct subgroup -- `Validate::Yes`).
+    /// The real call is handed 65 bytes: this 64-byte point plus a trailing zero byte
+    /// (utils.rs:263). ark-serialize 0.5.0 reads exactly 64 -- the flag bits live in the
+    /// top two bits of y -- and never consumes the 65th, so it is not modelled here.
+    /// `None` = the real `Err(_)`. Exact semantics, including the infinity-flag path, are
+    /// defined in lean/code_model/hand_written/Curve.lean.
     pub fn deserialize_uncompressed(_bytes: &[u8; 64]) -> Option<G1Shim> {
         unimplemented!()
     }

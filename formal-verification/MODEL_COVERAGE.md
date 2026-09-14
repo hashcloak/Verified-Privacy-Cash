@@ -111,7 +111,7 @@ Recommended order (not size order):
 
 ## 2. Trusted base: 22 -> 6
 
-Current: 22 DERIVED / 22 TRUSTED in `lean/code_model/hand_written/TrustedFuns.lean`.
+Current: 25 DERIVED / 19 TRUSTED in `lean/code_model/hand_written/TrustedFuns.lean`.
 Target: only the assumptions that genuinely cannot be discharged.
 
 ### DIAGNOSTIC — 5 axioms -> 0
@@ -136,17 +136,21 @@ Target: only the assumptions that genuinely cannot be discharged.
       can only be stated about an abstract one. Defining them would make the model
       strictly less useful.
 
-### CURVE — 11 axioms -> 3
+### CURVE — 8 axioms left (was 11) -> 3
 
 - [ ] 5 verifying-key constants -> transcribe from `utils.rs:17-62`. Opaque only
       because `curve_shim` is `--opaque`; no trust is involved.
       - [ ] Add a drift guard (test pinning the values). The Rust side const-evals from
             `VERIFYING_KEY` so it "cannot drift"; a Lean transcription has no such link.
-- [ ] `deserialize_uncompressed`, `negate`, `to_bytes` -> define via Mathlib's
-      `WeierstrassCurve.Affine.Point` over `ZMod q`, `y^2 = x^3 + 3`.
-      These are **not** syscalls — they are arkworks code compiled into the BPF program.
-      BN254 G1 has cofactor 1, so on-curve already implies prime-order subgroup.
-      *Est. 1-2 weeks; Mathlib's affine group law is real but heavy.*
+- [x] `deserialize_uncompressed`, `negate`, `to_bytes` -> DONE, defined in
+      `hand_written/Curve.lean`. Not via Mathlib: they mirror arkworks 0.5.0 byte for byte
+      (little-endian coordinates, the two flag bits in y's top byte, the canonical `< q`
+      checks, the infinity path, y² = x³ + 3 with the trivially-true BN254 subgroup check).
+      That keeps them faithful to the deployed code, at the cost of not yet carrying
+      Mathlib's group-law theorems. Verified: `#print axioms fv_verify_proof_full_entry` went
+      from 7 to 3 (only the syscalls), and test vectors -- the generator (1, 2), its negation
+      to y = q - 2, the infinity flag, both-flags, off-curve, non-canonical x -- behave as the
+      arkworks source says. Not differential-tested against arkworks itself.
 - [ ] **Keep as assumptions:** `alt_bn128_addition`, `alt_bn128_multiplication`,
       `alt_bn128_pairing`. Genuine syscalls. State them *against* Mathlib's group law
       (add/mul) and the abstract `Pairing` class (pairing) — with content, not as bare
@@ -154,7 +158,7 @@ Target: only the assumptions that genuinely cannot be discharged.
 
 ### Types — 2 axioms -> 0
 
-- [ ] `curve_shim.G1Shim` -> Mathlib point type
+- [x] `curve_shim.G1Shim` -> DONE, defined as arkworks' `Affine`: x, y in 𝔽_q plus the infinity flag
 - [ ] `std.io.error.Error` -> `Unit` (never inspected; no constructor needed)
 
 ### Endgame
@@ -192,7 +196,7 @@ seven times more unproven model.
 | prerequisites (section 0) | 2-3 days |
 | remaining 6 instructions | 3-5 days |
 | SPL trusted surface | 2-3 days |
-| trusted base 22 -> 6 | 1-2 weeks |
+| trusted base 19 -> 6 | a few days -- the heavy curve layer is done |
 | first proof | unknown — it is the experiment |
 
 Coverage alone: ~2 weeks. Coverage plus a trusted base worth trusting: ~4-5 weeks.

@@ -10,19 +10,19 @@
 -- assumed) or TRUSTED (an `axiom` -- a reader must take it on faith, so the reason is
 -- stated next to it). A theorem about the model is only as good as the TRUSTED entries.
 --
---   DERIVED    22  integer/option/result plumbing, the anchor error offset, the
+--   DERIVED    25  integer/option/result plumbing, the anchor error offset, the
 --                  public-input canonicity check `fr_lt_modulus_be`, all of FrShim (real
 --                  field arithmetic over `ZMod bn254_r`), and ALL of borsh serialization
 --                  plus the `Vec<u8>` writer it targets.
---   TRUSTED    22  in three groups:
+--   TRUSTED    19  in three groups:
 --     CRYPTO         6  Poseidon and SHA-256. Collision/preimage resistance is exactly what
 --                       `Spec/privacy_cash_spec.lean` states abstractly via `H1`/`H3`/`H4`
 --                       and `CollisionResistantOn`; connecting the two belongs in a theorem,
 --                       not here.
---     CURVE         11  BN254 group operations and the verifying key. On-chain the group ops
---                       are Solana syscalls (`sol_alt_bn128_group_op`) executed natively by
---                       the validator, so NOTHING in this pipeline could derive them -- see
---                       curve_shim.rs. Prefer the shortest statement that is obviously right.
+--     CURVE          8  the three alt_bn128 syscalls (`sol_alt_bn128_group_op`), executed natively
+--                       by the validator so nothing in this pipeline can derive them, plus the
+--                       five verifying-key constants. The G1 point type and its deserialize /
+--                       negate / to_bytes operations are DERIVED, in Curve.lean.
 --     DIAGNOSTIC     5  Display/Debug/to_string and anchor's error conversions. Reachable
 --                       only on error paths that abort the instruction; they cannot affect
 --                       a state transition, because no state has been written when they run.
