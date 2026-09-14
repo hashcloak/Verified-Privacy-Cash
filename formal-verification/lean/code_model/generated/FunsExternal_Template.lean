@@ -305,48 +305,48 @@ axiom curve_shim.alt_bn128_pairing_shim
   : Array Std.U8 768#usize → Result (Option (Array Std.U8 32#usize))
 
 /-- [zkcash::fr_shim::{impl core::cmp::PartialEq<zkcash::fr_shim::FrShim> for zkcash::fr_shim::FrShim}::eq]:
-    Source: 'programs/zkcash/src/fr_shim.rs', lines 18:22-18:31
+    Source: 'programs/zkcash/src/fr_shim.rs', lines 19:22-19:31
     Visibility: public -/
 axiom fr_shim.FrShim.Insts.CoreCmpPartialEqFrShim.eq
   : fr_shim.FrShim → fr_shim.FrShim → Result Bool
 
 /-- [zkcash::fr_shim::{zkcash::fr_shim::FrShim}::from_u64]:
-    Source: 'programs/zkcash/src/fr_shim.rs', lines 22:4-22:57
+    Source: 'programs/zkcash/src/fr_shim.rs', lines 23:4-23:57
     Visibility: public -/
 axiom fr_shim.FrShim.from_u64 : Std.U64 → Result fr_shim.FrShim
 
 /-- [zkcash::fr_shim::{zkcash::fr_shim::FrShim}::from_be_bytes_mod_order]:
-    Source: 'programs/zkcash/src/fr_shim.rs', lines 23:4-23:82
+    Source: 'programs/zkcash/src/fr_shim.rs', lines 24:4-24:82
     Visibility: public -/
 axiom fr_shim.FrShim.from_be_bytes_mod_order
   : Array Std.U8 32#usize → Result fr_shim.FrShim
 
 /-- [zkcash::fr_shim::{zkcash::fr_shim::FrShim}::from_le_bytes_mod_order]:
-    Source: 'programs/zkcash/src/fr_shim.rs', lines 24:4-24:82
+    Source: 'programs/zkcash/src/fr_shim.rs', lines 25:4-25:82
     Visibility: public -/
 axiom fr_shim.FrShim.from_le_bytes_mod_order
   : Array Std.U8 32#usize → Result fr_shim.FrShim
 
 /-- [zkcash::fr_shim::{impl core::ops::arith::Add<zkcash::fr_shim::FrShim, zkcash::fr_shim::FrShim> for zkcash::fr_shim::FrShim}::add]:
-    Source: 'programs/zkcash/src/fr_shim.rs', lines 28:4-28:59
+    Source: 'programs/zkcash/src/fr_shim.rs', lines 29:4-29:59
     Visibility: public -/
 axiom fr_shim.FrShim.Insts.CoreOpsArithAddFrShimFrShim.add
   : fr_shim.FrShim → fr_shim.FrShim → Result fr_shim.FrShim
 
 /-- [zkcash::fr_shim::{impl core::ops::arith::Sub<zkcash::fr_shim::FrShim, zkcash::fr_shim::FrShim> for zkcash::fr_shim::FrShim}::sub]:
-    Source: 'programs/zkcash/src/fr_shim.rs', lines 32:4-32:59
+    Source: 'programs/zkcash/src/fr_shim.rs', lines 33:4-33:59
     Visibility: public -/
 axiom fr_shim.FrShim.Insts.CoreOpsArithSubFrShimFrShim.sub
   : fr_shim.FrShim → fr_shim.FrShim → Result fr_shim.FrShim
 
 /-- [zkcash::fr_shim::{impl core::ops::arith::Neg<zkcash::fr_shim::FrShim> for zkcash::fr_shim::FrShim}::neg]:
-    Source: 'programs/zkcash/src/fr_shim.rs', lines 36:4-36:45
+    Source: 'programs/zkcash/src/fr_shim.rs', lines 37:4-37:45
     Visibility: public -/
 axiom fr_shim.FrShim.Insts.CoreOpsArithNegFrShim.neg
   : fr_shim.FrShim → Result fr_shim.FrShim
 
 /-- [zkcash::fr_shim::{impl core::cmp::PartialOrd<zkcash::fr_shim::FrShim> for zkcash::fr_shim::FrShim}::partial_cmp]:
-    Source: 'programs/zkcash/src/fr_shim.rs', lines 39:4-39:92
+    Source: 'programs/zkcash/src/fr_shim.rs', lines 40:4-40:92
     Visibility: public -/
 axiom fr_shim.FrShim.Insts.CoreCmpPartialOrdFrShim.partial_cmp
   : fr_shim.FrShim → fr_shim.FrShim → Result (Option Ordering)
