@@ -103,11 +103,14 @@ work this model exists to support.
   model's `ZMod bn254_r`/byte arrays are separate universes; bridging them — starting from
   `check_public_amount`, whose trusted base already has real semantics — is the first step
   towards any of `theorems.lean`.
-- **The three curve syscalls are still bare signatures.** They state *that* an assumption exists,
-  not what it computes. On-chain those three `alt_bn128_*` calls are Solana syscalls executed by
-  the validator, so nothing in this pipeline can derive them, and almost every guarantee
-  `transact` provides is downstream of the proof check. Giving them content means stating them
-  against the abstract group rather than reimplementing them — see `MODEL_COVERAGE.md`.
+- **The three curve syscalls have a soundness-direction contract, not yet a completeness one.**
+  `code_model/hand_written/SyscallContracts.lean` states what a *successful* answer means —
+  addition gives P + Q, multiplication gives k·P, a pairing answer of 1 means the four pairings
+  multiply to 1 — as a class over the model's own curve types, independent of `Spec/`. It is
+  justified from `solana-bn254` 2.2.2's source, but which implementation the deployed validator
+  runs is not pinned. Nothing yet says a *valid* input is accepted (completeness), and nothing yet
+  connects these types to the spec's `G1`/`G2`/`GT` (the bridge). Almost every guarantee
+  `transact` provides is downstream of the proof check.
 - **The abstraction itself needs review.** Reproducing the extraction cleanly shows the pipeline
   is stable, not that this is the right model to prove theorems against. Those are separate
   questions and only the first is settled.

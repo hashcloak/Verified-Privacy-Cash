@@ -151,10 +151,16 @@ Target: only the assumptions that genuinely cannot be discharged.
       from 7 to 3 (only the syscalls), and test vectors -- the generator (1, 2), its negation
       to y = q - 2, the infinity flag, both-flags, off-curve, non-canonical x -- behave as the
       arkworks source says. Not differential-tested against arkworks itself.
-- [ ] **Keep as assumptions:** `alt_bn128_addition`, `alt_bn128_multiplication`,
-      `alt_bn128_pairing`. Genuine syscalls. State them *against* Mathlib's group law
-      (add/mul) and the abstract `Pairing` class (pairing) — with content, not as bare
-      signatures.
+- [x] **Syscall contracts, soundness direction.** `alt_bn128_addition`, `alt_bn128_multiplication`
+      and `alt_bn128_pairing` stay declarations -- genuine syscalls. What a successful answer
+      means is now stated in `hand_written/SyscallContracts.lean`: a class over the model's own
+      curve types, deliberately NOT borrowing `Spec/`'s `G1`/`G2`/`GT`/`Pairing`, since model and
+      spec must stay independent for a bridge theorem to mean anything. It assumes no
+      bilinearity, no group order and no reduction mod r.
+- [ ] **Syscall contracts, completeness direction** -- that a valid input is accepted.
+- [ ] **Bridge to the spec** -- map the model's curve types onto `Spec/`'s, and rearrange the
+      pairing check into `Groth16.verify` (needs bilinearity). Blocked until `Spec/`'s top-level
+      `Tree` and `Byte` stop clashing with Mathlib's and Aeneas's.
 
 ### Types — 2 axioms -> 0
 
