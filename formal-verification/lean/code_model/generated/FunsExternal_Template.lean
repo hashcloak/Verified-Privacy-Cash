@@ -221,6 +221,14 @@ axiom light_hasher.poseidon.Poseidon.Insts.Light_hasherHasher.ID
 axiom solana_hash.Hash.to_bytes
   : solana_hash.Hash → Result (Array Std.U8 32#usize)
 
+/-- [solana_pubkey::{solana_pubkey::Pubkey}::new_from_array]:
+    Source: '/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/solana-pubkey-2.3.0/src/lib.rs', lines 469:4-469:63
+    Name pattern: [solana_pubkey::{solana_pubkey::Pubkey}::new_from_array]
+    Visibility: public -/
+@[rust_fun "solana_pubkey::{solana_pubkey::Pubkey}::new_from_array"]
+axiom solana_pubkey.Pubkey.new_from_array
+  : Array Std.U8 32#usize → Result solana_pubkey.Pubkey
+
 /-- [solana_pubkey::{impl borsh::ser::BorshSerialize for solana_pubkey::Pubkey}::serialize]:
     Source: '/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/solana-pubkey-2.3.0/src/lib.rs', lines 1072:12-1075:72
     Name pattern: [solana_pubkey::{borsh::ser::BorshSerialize<solana_pubkey::Pubkey>}::serialize]

@@ -63,10 +63,21 @@ significantly more.
       or keep it only for its `--diagnose-fr` probe mode. Its three `.llbc` inputs
       (`transact_shim`, `verify_proof_shim`, `check_public_amount_shim`) are likewise orphaned.
 
-- [ ] **Retire the `fv_*` twins.** `fv_transact_entry` (lib.rs:549) is a ~150-line hand
+- [ ] **Retire the `fv_*` twins.** `fv_transact_entry` (lib.rs:584) is a ~150-line hand
       transcription of `transact`, never called at runtime, with no test comparing them.
       Its correspondence to the real code is the single largest assumption in the
       project and appears on no trusted-base list. The seam refactor removes it.
+- [x] **Bind each paid account to its address in `fv_transact_entry`.** The twin took
+      `recipient: Pubkey` (hashed into ext_data_hash) and `recipient_lamports: &mut u64` (paid)
+      as unrelated parameters, likewise for the fee recipient, and `mint_address` as a free
+      parameter. So "the withdrawal goes to the recipient the proof committed to" could not
+      even be stated. Now each is an `FvAccount { key, lamports }`, `ext_data` is rebuilt by
+      `fv_ext_data_from_minified` (a transcription of `ExtData::from_minified`), and
+      `mint_address` is `utils::SOL_ADDRESS`, extracted with its real bytes.
+- [ ] **Distinct accounts.** Rust's `&mut` rules make the twin's signer, recipient, fee
+      recipient and tree token account four different accounts. The real instruction does
+      not require that (recipient and fee recipient are both `UncheckedAccount`), so the
+      model says nothing about transactions that reuse one account in two roles.
 
 ---
 
@@ -111,7 +122,7 @@ Recommended order (not size order):
 
 ## 2. Trusted base: 22 -> 6
 
-Current: 25 DERIVED / 19 TRUSTED in `lean/code_model/hand_written/TrustedFuns.lean`.
+Current: 26 DERIVED / 19 TRUSTED in `lean/code_model/hand_written/TrustedFuns.lean`.
 Target: only the assumptions that genuinely cannot be discharged.
 
 ### DIAGNOSTIC — 5 axioms -> 0

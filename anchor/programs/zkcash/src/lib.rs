@@ -525,10 +525,14 @@ pub mod zkcash {
 }
 
 // --- formal-verification model: transact wrapper ---
-// Transcription of `transact` (above, lines 215-522) with:
+// Transcription of `transact` (above) with:
 //   - Context<Transact>/AccountLoader replaced by plain references (Anchor's
 //     account resolution is a trusted precondition, not something this model
 //     derives or proves)
+//   - each account the instruction pays or reads an address from passed as an
+//     `FvAccount`, its address and lamport balance together, so the balance the model
+//     credits is the balance of the address that went into ext_data_hash
+//   - `ExtData::from_minified` transcribed as `fv_ext_data_from_minified`
 //   - Fr operations replaced by the FrShim shim (fr_shim.rs)
 //   - verify_proof replaced by `utils::fv_verify_proof_full_entry`, a real
 //     transcription of it (and of the Groth16Verifier methods it drives)
@@ -539,13 +543,44 @@ pub mod zkcash {
 //     / proof_ext_data_hash / output_commitments is what lets the model state
 //     that the values the proof was checked against are the same ones the
 //     balance updates and Merkle appends below then use.
-//     The curve assumptions live in lean/code_model/hand_written/Curve.lean, as axioms with
-//     content rather than bare signatures -- see MODEL_REPORT.md.
+//     What the syscalls promise is stated in
+//     lean/code_model/hand_written/SyscallContracts.lean -- see MODEL_REPORT.md.
 //   - CPI transfers / Rent::get() / try_borrow_mut_lamports replaced by plain
 //     u64 balance arithmetic (Solana runtime mechanics are trusted, not derived)
-//   - event emission dropped (not state-transition-relevant)
+//   - event emission dropped (not state-transition-relevant), and with it the
+//     `second_index` overflow check, which feeds only the second event
+//
+// Rust's borrow rules make the `&mut` accounts below distinct, so the model covers only
+// transactions whose signer, recipient, fee recipient and tree token account are four
+// different accounts. The real instruction does not require that.
+//
 // NOT part of the program's real logic. Must be kept in lockstep with `transact`
 // by hand if `transact` changes. See ../../../formal-verification/MODEL_REPORT.md.
+
+/// A Solana account as `fv_transact_entry` sees it: its address and its lamport balance.
+/// EXTRACTION-ONLY. Keeping the two in one value is what ties a balance to an address.
+pub struct FvAccount {
+    pub key: Pubkey,
+    pub lamports: u64,
+}
+
+/// Transcription of `ExtData::from_minified`, reading the two addresses from the accounts
+/// passed to `fv_transact_entry` instead of from `ctx.accounts`.
+/// EXTRACTION-ONLY.
+pub fn fv_ext_data_from_minified(
+    recipient: &FvAccount,
+    fee_recipient_account: &FvAccount,
+    minified: ExtDataMinified,
+) -> ExtData {
+    ExtData {
+        recipient: recipient.key,
+        ext_amount: minified.ext_amount,
+        fee: minified.fee,
+        fee_recipient: fee_recipient_account.key,
+        mint_address: utils::SOL_ADDRESS,
+    }
+}
+
 pub fn fv_transact_entry(
     tree_account: &mut MerkleTreeAccount,
     global_config: &GlobalConfig,
@@ -557,32 +592,30 @@ pub fn fv_transact_entry(
     proof_a: [u8; 64],
     proof_b: [u8; 128],
     proof_c: [u8; 64],
-    ext_amount: i64,
-    fee: u64,
-    recipient: Pubkey,
-    fee_recipient: Pubkey,
-    mint_address: Pubkey,
+    ext_data_minified: ExtDataMinified,
     encrypted_output1: Vec<u8>,
     encrypted_output2: Vec<u8>,
     rent_exempt_minimum: u64,
     tree_token_lamports: &mut u64,
     signer_lamports: &mut u64,
-    recipient_lamports: &mut u64,
-    fee_recipient_lamports: &mut u64,
+    recipient: &mut FvAccount,
+    fee_recipient_account: &mut FvAccount,
 ) -> Result<()> {
+    let ext_data = fv_ext_data_from_minified(recipient, fee_recipient_account, ext_data_minified);
+
     require!(
         MerkleTree::is_known_root(tree_account, proof_root),
         ErrorCode::UnknownRoot
     );
 
     let calculated_ext_data_hash = utils::calculate_complete_ext_data_hash(
-        recipient,
-        ext_amount,
+        ext_data.recipient,
+        ext_data.ext_amount,
         &encrypted_output1,
         &encrypted_output2,
-        fee,
-        fee_recipient,
-        mint_address,
+        ext_data.fee,
+        ext_data.fee_recipient,
+        ext_data.mint_address,
     )?;
 
     require!(
@@ -592,9 +625,12 @@ pub fn fv_transact_entry(
     );
 
     require!(
-        utils::fv_check_public_amount_entry(ext_amount, fee, proof_public_amount),
+        utils::fv_check_public_amount_entry(ext_data.ext_amount, ext_data.fee, proof_public_amount),
         ErrorCode::InvalidPublicAmountData
     );
+
+    let ext_amount = ext_data.ext_amount;
+    let fee = ext_data.fee;
 
     utils::validate_fee(
         ext_amount,
@@ -652,7 +688,7 @@ pub fn fv_transact_entry(
         );
 
         *tree_token_lamports = tree_token_lamports.checked_sub(ext_amount_abs).ok_or(ErrorCode::ArithmeticOverflow)?;
-        *recipient_lamports = recipient_lamports.checked_add(ext_amount_abs).ok_or(ErrorCode::ArithmeticOverflow)?;
+        recipient.lamports = recipient.lamports.checked_add(ext_amount_abs).ok_or(ErrorCode::ArithmeticOverflow)?;
     }
 
     if fee > 0 {
@@ -665,7 +701,7 @@ pub fn fv_transact_entry(
         }
 
         *tree_token_lamports = tree_token_lamports.checked_sub(fee).ok_or(ErrorCode::ArithmeticOverflow)?;
-        *fee_recipient_lamports = fee_recipient_lamports.checked_add(fee).ok_or(ErrorCode::ArithmeticOverflow)?;
+        fee_recipient_account.lamports = fee_recipient_account.lamports.checked_add(fee).ok_or(ErrorCode::ArithmeticOverflow)?;
     }
 
     MerkleTree::append::<Poseidon>(output_commitments[0], tree_account)?;

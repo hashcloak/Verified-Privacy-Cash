@@ -213,6 +213,30 @@ structure light_hasher.Hasher (Self : Type) where
 @[reducible, rust_type "light_hasher::poseidon::Poseidon"]
 def light_hasher.poseidon.Poseidon := Unit
 
+/-- [zkcash::FvAccount]
+    Source: 'programs/zkcash/src/lib.rs', lines 562:0-565:1
+    Visibility: public -/
+structure FvAccount where
+  key : solana_pubkey.Pubkey
+  lamports : Std.U64
+
+/-- [zkcash::ExtDataMinified]
+    Source: 'programs/zkcash/src/lib.rs', lines 751:0-754:1
+    Visibility: public -/
+structure ExtDataMinified where
+  ext_amount : Std.I64
+  fee : Std.U64
+
+/-- [zkcash::ExtData]
+    Source: 'programs/zkcash/src/lib.rs', lines 742:0-748:1
+    Visibility: public -/
+structure ExtData where
+  recipient : solana_pubkey.Pubkey
+  ext_amount : Std.I64
+  fee : Std.U64
+  fee_recipient : solana_pubkey.Pubkey
+  mint_address : solana_pubkey.Pubkey
+
 /-- [zkcash::utils::calculate_complete_ext_data_hash::CompleteExtData]
     Source: 'programs/zkcash/src/utils.rs', lines 499:4-507:5 -/
 structure utils.calculate_complete_ext_data_hash.CompleteExtData where
@@ -225,7 +249,7 @@ structure utils.calculate_complete_ext_data_hash.CompleteExtData where
   mint_address : solana_pubkey.Pubkey
 
 /-- [zkcash::ErrorCode]
-    Source: 'programs/zkcash/src/lib.rs', lines 1067:0-1108:1
+    Source: 'programs/zkcash/src/lib.rs', lines 1103:0-1144:1
     Visibility: public -/
 @[discriminant u32]
 inductive ErrorCode where
@@ -251,7 +275,7 @@ inductive ErrorCode where
 | InvalidTokenAccountMintAddress : ErrorCode
 
 /-- [zkcash::MerkleTreeAccount]
-    Source: 'programs/zkcash/src/lib.rs', lines 1051:0-1064:1
+    Source: 'programs/zkcash/src/lib.rs', lines 1087:0-1100:1
     Visibility: public -/
 structure MerkleTreeAccount where
   authority : solana_pubkey.Pubkey
@@ -267,7 +291,7 @@ structure MerkleTreeAccount where
   _padding : Array Std.U8 5#usize
 
 /-- [zkcash::GlobalConfig]
-    Source: 'programs/zkcash/src/lib.rs', lines 1035:0-1041:1
+    Source: 'programs/zkcash/src/lib.rs', lines 1071:0-1077:1
     Visibility: public -/
 structure GlobalConfig where
   authority : solana_pubkey.Pubkey
@@ -277,7 +301,7 @@ structure GlobalConfig where
   bump : Std.U8
 
 /-- [zkcash::fv_transact_entry::closure]
-    Source: 'programs/zkcash/src/lib.rs', lines 641:21-641:52 -/
+    Source: 'programs/zkcash/src/lib.rs', lines 677:21-677:52 -/
 @[reducible]
 def fv_transact_entry.closure := Unit
 

@@ -5,12 +5,14 @@
 -- three entry points, so `transact`, `verify_proof` and `check_public_amount` live in one
 -- library and no function is emitted twice. The trusted-base surface is identical to the
 -- older TransactShim split -- same 44 functions and 5 types -- because transact's closure
--- already contained the other two; the counts below therefore carry over unchanged. Each entry
+-- already contained the other two; the counts below therefore carried over unchanged. Binding
+-- fv_transact_entry's accounts added one more DERIVED entry, `Pubkey::new_from_array`, reached
+-- through `utils::SOL_ADDRESS`. Each entry
 -- is either DERIVED (a real Lean definition -- the Rust behaviour is reproduced, nothing is
 -- assumed) or TRUSTED (an `axiom` -- a reader must take it on faith, so the reason is
 -- stated next to it). A theorem about the model is only as good as the TRUSTED entries.
 --
---   DERIVED    25  integer/option/result plumbing, the anchor error offset, the
+--   DERIVED    26  integer/option/result plumbing, `Pubkey::new_from_array`, the anchor error offset, the
 --                  public-input canonicity check `fr_lt_modulus_be`, all of FrShim (real
 --                  field arithmetic over `ZMod bn254_r`), and ALL of borsh serialization
 --                  plus the `Vec<u8>` writer it targets.
@@ -322,6 +324,15 @@ axiom light_hasher.poseidon.Poseidon.Insts.Light_hasherHasher.ID
 @[rust_fun "solana_hash::{solana_hash::Hash}::to_bytes"]
 def solana_hash.Hash.to_bytes (h : solana_hash.Hash) : Result (Array Std.U8 32#usize) :=
   ok h
+
+/-- DERIVED. `Pubkey::new_from_array` is `Self(pubkey_array)`, and `solana_pubkey.Pubkey` is
+    defined as those 32 bytes in TypesExternal.lean, so this is the identity. Reached through
+    `utils::SOL_ADDRESS`, whose `pubkey!` macro expands to a call to it.
+    Source: vendor/solana-pubkey/src/lib.rs, lines 469:4-471:5 -/
+@[rust_fun "solana_pubkey::{solana_pubkey::Pubkey}::new_from_array"]
+def solana_pubkey.Pubkey.new_from_array (pubkey_array : Array Std.U8 32#usize) :
+    Result solana_pubkey.Pubkey :=
+  ok pubkey_array
 
 /-- DERIVED. borsh `Pubkey`: its 32 bytes, with NO length prefix (it is a fixed-size array,
     not a `Vec`). Counterpart of `PubkeyToBytes` in Spec/privacy_cash_spec.lean. Relies on
