@@ -12,19 +12,21 @@
 -- assumed) or TRUSTED (an `axiom` -- a reader must take it on faith, so the reason is
 -- stated next to it). A theorem about the model is only as good as the TRUSTED entries.
 --
---   DERIVED    26  integer/option/result plumbing, `Pubkey::new_from_array`, the anchor error offset, the
+--   DERIVED    31  integer/option/result plumbing, `Pubkey::new_from_array`, the anchor error offset, the
 --                  public-input canonicity check `fr_lt_modulus_be`, all of FrShim (real
---                  field arithmetic over `ZMod bn254_r`), and ALL of borsh serialization
---                  plus the `Vec<u8>` writer it targets.
---   TRUSTED    19  in three groups:
+--                  field arithmetic over `ZMod bn254_r`), ALL of borsh serialization
+--                  plus the `Vec<u8>` writer it targets, and the five verifying-key constants
+--                  (transcribed from utils.rs; check_vk_transcription.sh guards the copy).
+--   TRUSTED    14  in three groups:
 --     CRYPTO         6  Poseidon and SHA-256. Collision/preimage resistance is exactly what
 --                       `Spec/privacy_cash_spec.lean` states abstractly via `H1`/`H3`/`H4`
 --                       and `CollisionResistantOn`; connecting the two belongs in a theorem,
 --                       not here.
---     CURVE          8  the three alt_bn128 syscalls (`sol_alt_bn128_group_op`), executed natively
---                       by the validator so nothing in this pipeline can derive them, plus the
---                       five verifying-key constants. The G1 point type and its deserialize /
---                       negate / to_bytes operations are DERIVED, in Curve.lean.
+--     CURVE          3  the three alt_bn128 syscalls (`sol_alt_bn128_group_op`), executed natively
+--                       by the validator so nothing in this pipeline can derive them. The G1
+--                       point type and its deserialize / negate / to_bytes operations are
+--                       DERIVED, in Curve.lean; what the syscalls promise is stated in
+--                       SyscallContracts.lean.
 --     DIAGNOSTIC     5  Display/Debug/to_string and anchor's error conversions. Reachable
 --                       only on error paths that abort the instruction; they cannot affect
 --                       a state transition, because no state has been written when they run.
@@ -353,34 +355,129 @@ def solana_pubkey.Pubkey.Insts.BorshSerBorshSerialize.serialize
 @[rust_fun "solana_sha256_hasher::hash"]
 axiom solana_sha256_hasher.hash : Slice Std.U8 → Result solana_hash.Hash
 
--- TRUSTED (CURVE). Verifying-key component. Uninterpreted: the model knows transact uses
--- ONE FIXED key, not which bytes it is (curve_shim is --opaque, so Aeneas never sees the
--- initializer). Enough for structural theorems; not enough to depend on the key's value.
-/-- [zkcash::curve_shim::FV_VK_ALPHA_G1]
-    Source: 'programs/zkcash/src/curve_shim.rs', lines 56:0-56:77
-    Visibility: public -/
-axiom curve_shim.FV_VK_ALPHA_G1 : Result (Array Std.U8 64#usize)
+-- BEGIN VERIFYING KEY. Everything between BEGIN and END is checked against utils.rs by
+-- formal-verification/check_vk_transcription.sh -- keep the definitions in this order.
+--
+-- The five verifying-key constants were axioms: `curve_shim` is `--opaque`, so Aeneas never saw
+-- their initializers (Aeneas cannot project a field out of `VERIFYING_KEY`, whose `vk_ic` is a
+-- slice). No trust is involved -- the bytes are in the source -- so they are transcribed here
+-- instead of assumed. The Rust side derives FV_VK_* from VERIFYING_KEY by const-eval and cannot
+-- drift; this copy can, which is what the check script is for.
 
--- TRUSTED (CURVE). Verifying-key component; see FV_VK_ALPHA_G1.
-/-- [zkcash::curve_shim::FV_VK_BETA_G2]
-    Source: 'programs/zkcash/src/curve_shim.rs', lines 57:0-57:76
-    Visibility: public -/
-axiom curve_shim.FV_VK_BETA_G2 : Result (Array Std.U8 128#usize)
+/-- DERIVED (transcribed). Verifying-key α, a G1 point. Copied byte for byte from `VERIFYING_KEY` in
+    anchor/programs/zkcash/src/utils.rs; `check_vk_transcription.sh` fails if the two differ.
+    [zkcash::curve_shim::FV_VK_ALPHA_G1]
+    Source: 'programs/zkcash/src/curve_shim.rs', lines 56:0-56:77 -/
+def curve_shim.FV_VK_ALPHA_G1 : Result (Array Std.U8 64#usize) :=
+  ok (Array.make 64#usize [
+      45#u8, 77#u8, 154#u8, 167#u8, 227#u8, 2#u8, 217#u8, 223#u8, 65#u8, 116#u8, 157#u8, 85#u8, 7#u8, 148#u8, 157#u8, 5#u8,
+      219#u8, 234#u8, 51#u8, 251#u8, 177#u8, 108#u8, 100#u8, 59#u8, 34#u8, 245#u8, 153#u8, 162#u8, 190#u8, 109#u8, 242#u8, 226#u8,
+      20#u8, 190#u8, 221#u8, 80#u8, 60#u8, 55#u8, 206#u8, 176#u8, 97#u8, 216#u8, 236#u8, 96#u8, 32#u8, 159#u8, 227#u8, 69#u8,
+      206#u8, 137#u8, 131#u8, 10#u8, 25#u8, 35#u8, 3#u8, 1#u8, 240#u8, 118#u8, 202#u8, 255#u8, 0#u8, 77#u8, 25#u8, 38#u8
+    ])
 
--- TRUSTED (CURVE). Verifying-key component; see FV_VK_ALPHA_G1.
-/-- [zkcash::curve_shim::FV_VK_GAMME_G2]
-    Source: 'programs/zkcash/src/curve_shim.rs', lines 58:0-58:78
-    Visibility: public -/
-axiom curve_shim.FV_VK_GAMME_G2 : Result (Array Std.U8 128#usize)
+/-- DERIVED (transcribed). Verifying-key β, a G2 point. Copied byte for byte from `VERIFYING_KEY` in
+    anchor/programs/zkcash/src/utils.rs; `check_vk_transcription.sh` fails if the two differ.
+    [zkcash::curve_shim::FV_VK_BETA_G2]
+    Source: 'programs/zkcash/src/curve_shim.rs', lines 57:0-57:76 -/
+def curve_shim.FV_VK_BETA_G2 : Result (Array Std.U8 128#usize) :=
+  ok (Array.make 128#usize [
+      9#u8, 103#u8, 3#u8, 47#u8, 203#u8, 247#u8, 118#u8, 209#u8, 175#u8, 201#u8, 133#u8, 248#u8, 136#u8, 119#u8, 241#u8, 130#u8,
+      211#u8, 132#u8, 128#u8, 166#u8, 83#u8, 242#u8, 222#u8, 202#u8, 169#u8, 121#u8, 76#u8, 188#u8, 59#u8, 243#u8, 6#u8, 12#u8,
+      14#u8, 24#u8, 120#u8, 71#u8, 173#u8, 76#u8, 121#u8, 131#u8, 116#u8, 208#u8, 214#u8, 115#u8, 43#u8, 245#u8, 1#u8, 132#u8,
+      125#u8, 214#u8, 139#u8, 192#u8, 224#u8, 113#u8, 36#u8, 30#u8, 2#u8, 19#u8, 188#u8, 127#u8, 193#u8, 61#u8, 183#u8, 171#u8,
+      48#u8, 76#u8, 251#u8, 209#u8, 224#u8, 138#u8, 112#u8, 74#u8, 153#u8, 245#u8, 232#u8, 71#u8, 217#u8, 63#u8, 140#u8, 60#u8,
+      170#u8, 253#u8, 222#u8, 196#u8, 107#u8, 122#u8, 13#u8, 55#u8, 157#u8, 166#u8, 154#u8, 77#u8, 17#u8, 35#u8, 70#u8, 167#u8,
+      23#u8, 57#u8, 193#u8, 177#u8, 164#u8, 87#u8, 168#u8, 199#u8, 49#u8, 49#u8, 35#u8, 210#u8, 77#u8, 47#u8, 145#u8, 146#u8,
+      248#u8, 150#u8, 183#u8, 198#u8, 62#u8, 234#u8, 5#u8, 169#u8, 213#u8, 127#u8, 6#u8, 84#u8, 122#u8, 208#u8, 206#u8, 200#u8
+    ])
 
--- TRUSTED (CURVE). Verifying-key component; see FV_VK_ALPHA_G1.
-/-- [zkcash::curve_shim::FV_VK_DELTA_G2]
-    Source: 'programs/zkcash/src/curve_shim.rs', lines 59:0-59:78
-    Visibility: public -/
-axiom curve_shim.FV_VK_DELTA_G2 : Result (Array Std.U8 128#usize)
+/-- DERIVED (transcribed). Verifying-key γ, a G2 point. `GAMME` follows the Rust field name. Copied byte for byte from `VERIFYING_KEY` in
+    anchor/programs/zkcash/src/utils.rs; `check_vk_transcription.sh` fails if the two differ.
+    [zkcash::curve_shim::FV_VK_GAMME_G2]
+    Source: 'programs/zkcash/src/curve_shim.rs', lines 58:0-58:78 -/
+def curve_shim.FV_VK_GAMME_G2 : Result (Array Std.U8 128#usize) :=
+  ok (Array.make 128#usize [
+      25#u8, 142#u8, 147#u8, 147#u8, 146#u8, 13#u8, 72#u8, 58#u8, 114#u8, 96#u8, 191#u8, 183#u8, 49#u8, 251#u8, 93#u8, 37#u8,
+      241#u8, 170#u8, 73#u8, 51#u8, 53#u8, 169#u8, 231#u8, 18#u8, 151#u8, 228#u8, 133#u8, 183#u8, 174#u8, 243#u8, 18#u8, 194#u8,
+      24#u8, 0#u8, 222#u8, 239#u8, 18#u8, 31#u8, 30#u8, 118#u8, 66#u8, 106#u8, 0#u8, 102#u8, 94#u8, 92#u8, 68#u8, 121#u8,
+      103#u8, 67#u8, 34#u8, 212#u8, 247#u8, 94#u8, 218#u8, 221#u8, 70#u8, 222#u8, 189#u8, 92#u8, 217#u8, 146#u8, 246#u8, 237#u8,
+      9#u8, 6#u8, 137#u8, 208#u8, 88#u8, 95#u8, 240#u8, 117#u8, 236#u8, 158#u8, 153#u8, 173#u8, 105#u8, 12#u8, 51#u8, 149#u8,
+      188#u8, 75#u8, 49#u8, 51#u8, 112#u8, 179#u8, 142#u8, 243#u8, 85#u8, 172#u8, 218#u8, 220#u8, 209#u8, 34#u8, 151#u8, 91#u8,
+      18#u8, 200#u8, 94#u8, 165#u8, 219#u8, 140#u8, 109#u8, 235#u8, 74#u8, 171#u8, 113#u8, 128#u8, 141#u8, 203#u8, 64#u8, 143#u8,
+      227#u8, 209#u8, 231#u8, 105#u8, 12#u8, 67#u8, 211#u8, 123#u8, 76#u8, 230#u8, 204#u8, 1#u8, 102#u8, 250#u8, 125#u8, 170#u8
+    ])
 
--- TRUSTED (CURVE). The 8 input-commitment points (7 public inputs + 1); see FV_VK_ALPHA_G1.
-/-- [zkcash::curve_shim::FV_VK_IC]
-    Source: 'programs/zkcash/src/curve_shim.rs', lines 60:0-69:2
-    Visibility: public -/
-axiom curve_shim.FV_VK_IC : Result (Array (Array Std.U8 64#usize) 8#usize)
+/-- DERIVED (transcribed). Verifying-key δ, a G2 point. Copied byte for byte from `VERIFYING_KEY` in
+    anchor/programs/zkcash/src/utils.rs; `check_vk_transcription.sh` fails if the two differ.
+    [zkcash::curve_shim::FV_VK_DELTA_G2]
+    Source: 'programs/zkcash/src/curve_shim.rs', lines 59:0-59:78 -/
+def curve_shim.FV_VK_DELTA_G2 : Result (Array Std.U8 128#usize) :=
+  ok (Array.make 128#usize [
+      25#u8, 252#u8, 204#u8, 73#u8, 0#u8, 218#u8, 132#u8, 40#u8, 192#u8, 175#u8, 106#u8, 179#u8, 247#u8, 34#u8, 6#u8, 163#u8,
+      111#u8, 68#u8, 46#u8, 211#u8, 76#u8, 146#u8, 16#u8, 158#u8, 28#u8, 23#u8, 146#u8, 254#u8, 157#u8, 94#u8, 7#u8, 92#u8,
+      34#u8, 128#u8, 9#u8, 143#u8, 49#u8, 11#u8, 128#u8, 172#u8, 203#u8, 141#u8, 109#u8, 166#u8, 180#u8, 82#u8, 110#u8, 179#u8,
+      223#u8, 71#u8, 56#u8, 138#u8, 77#u8, 154#u8, 73#u8, 160#u8, 146#u8, 198#u8, 203#u8, 125#u8, 196#u8, 135#u8, 167#u8, 56#u8,
+      21#u8, 152#u8, 106#u8, 224#u8, 184#u8, 3#u8, 47#u8, 85#u8, 250#u8, 118#u8, 220#u8, 185#u8, 175#u8, 242#u8, 111#u8, 30#u8,
+      40#u8, 24#u8, 69#u8, 173#u8, 252#u8, 13#u8, 109#u8, 1#u8, 241#u8, 162#u8, 122#u8, 76#u8, 24#u8, 38#u8, 72#u8, 88#u8,
+      45#u8, 118#u8, 91#u8, 197#u8, 236#u8, 236#u8, 152#u8, 29#u8, 29#u8, 233#u8, 108#u8, 250#u8, 155#u8, 255#u8, 230#u8, 156#u8,
+      182#u8, 159#u8, 1#u8, 3#u8, 41#u8, 60#u8, 40#u8, 136#u8, 181#u8, 220#u8, 23#u8, 150#u8, 130#u8, 211#u8, 23#u8, 83#u8
+    ])
+
+/-- DERIVED (transcribed). The 8 input-commitment points IC₀..IC₇ (7 public inputs + 1), G1
+    points. Copied byte for byte from `VERIFYING_KEY.vk_ic` in anchor/programs/zkcash/src/utils.rs;
+    `check_vk_transcription.sh` fails if the two differ.
+    [zkcash::curve_shim::FV_VK_IC]
+    Source: 'programs/zkcash/src/curve_shim.rs', lines 60:0-69:2 -/
+def curve_shim.FV_VK_IC : Result (Array (Array Std.U8 64#usize) 8#usize) :=
+  ok (Array.make 8#usize [
+      Array.make 64#usize [
+        35#u8, 121#u8, 23#u8, 162#u8, 32#u8, 101#u8, 247#u8, 115#u8, 177#u8, 199#u8, 50#u8, 158#u8, 3#u8, 60#u8, 188#u8, 95#u8,
+        91#u8, 29#u8, 121#u8, 210#u8, 53#u8, 155#u8, 245#u8, 226#u8, 203#u8, 245#u8, 186#u8, 167#u8, 39#u8, 32#u8, 160#u8, 202#u8,
+        22#u8, 22#u8, 168#u8, 160#u8, 125#u8, 45#u8, 56#u8, 45#u8, 132#u8, 214#u8, 20#u8, 198#u8, 76#u8, 81#u8, 2#u8, 150#u8,
+        0#u8, 61#u8, 86#u8, 130#u8, 105#u8, 170#u8, 141#u8, 244#u8, 13#u8, 180#u8, 81#u8, 79#u8, 18#u8, 166#u8, 129#u8, 129#u8
+      ],
+      Array.make 64#usize [
+        13#u8, 148#u8, 63#u8, 234#u8, 185#u8, 42#u8, 3#u8, 159#u8, 127#u8, 24#u8, 240#u8, 200#u8, 72#u8, 24#u8, 176#u8, 7#u8,
+        181#u8, 215#u8, 212#u8, 52#u8, 13#u8, 160#u8, 172#u8, 182#u8, 177#u8, 22#u8, 235#u8, 4#u8, 173#u8, 229#u8, 25#u8, 108#u8,
+        46#u8, 61#u8, 233#u8, 184#u8, 181#u8, 152#u8, 132#u8, 103#u8, 252#u8, 100#u8, 229#u8, 144#u8, 217#u8, 36#u8, 39#u8, 254#u8,
+        67#u8, 237#u8, 70#u8, 214#u8, 192#u8, 231#u8, 140#u8, 86#u8, 113#u8, 40#u8, 11#u8, 88#u8, 12#u8, 150#u8, 157#u8, 226#u8
+      ],
+      Array.make 64#usize [
+        26#u8, 105#u8, 150#u8, 204#u8, 178#u8, 202#u8, 26#u8, 62#u8, 39#u8, 178#u8, 179#u8, 225#u8, 133#u8, 140#u8, 138#u8, 40#u8,
+        60#u8, 187#u8, 99#u8, 57#u8, 237#u8, 7#u8, 203#u8, 159#u8, 251#u8, 103#u8, 46#u8, 207#u8, 219#u8, 186#u8, 19#u8, 64#u8,
+        0#u8, 42#u8, 73#u8, 5#u8, 76#u8, 48#u8, 115#u8, 80#u8, 96#u8, 29#u8, 197#u8, 213#u8, 228#u8, 240#u8, 7#u8, 144#u8,
+        140#u8, 3#u8, 127#u8, 89#u8, 87#u8, 247#u8, 98#u8, 153#u8, 174#u8, 81#u8, 7#u8, 158#u8, 183#u8, 80#u8, 139#u8, 147#u8
+      ],
+      Array.make 64#usize [
+        6#u8, 249#u8, 88#u8, 104#u8, 56#u8, 74#u8, 144#u8, 136#u8, 129#u8, 176#u8, 70#u8, 216#u8, 18#u8, 147#u8, 78#u8, 141#u8,
+        24#u8, 93#u8, 95#u8, 242#u8, 68#u8, 49#u8, 215#u8, 152#u8, 246#u8, 110#u8, 151#u8, 241#u8, 228#u8, 59#u8, 230#u8, 187#u8,
+        29#u8, 56#u8, 186#u8, 210#u8, 200#u8, 190#u8, 93#u8, 64#u8, 110#u8, 0#u8, 55#u8, 105#u8, 166#u8, 104#u8, 208#u8, 46#u8,
+        82#u8, 81#u8, 146#u8, 136#u8, 179#u8, 99#u8, 104#u8, 232#u8, 99#u8, 248#u8, 162#u8, 137#u8, 21#u8, 217#u8, 220#u8, 77#u8
+      ],
+      Array.make 64#usize [
+        34#u8, 163#u8, 170#u8, 91#u8, 254#u8, 215#u8, 220#u8, 175#u8, 71#u8, 67#u8, 56#u8, 43#u8, 178#u8, 48#u8, 92#u8, 7#u8,
+        170#u8, 124#u8, 201#u8, 232#u8, 207#u8, 202#u8, 134#u8, 80#u8, 123#u8, 31#u8, 26#u8, 236#u8, 76#u8, 175#u8, 186#u8, 155#u8,
+        46#u8, 253#u8, 236#u8, 170#u8, 12#u8, 248#u8, 30#u8, 127#u8, 51#u8, 136#u8, 100#u8, 51#u8, 34#u8, 7#u8, 218#u8, 21#u8,
+        133#u8, 51#u8, 148#u8, 235#u8, 92#u8, 210#u8, 117#u8, 134#u8, 121#u8, 78#u8, 166#u8, 90#u8, 10#u8, 194#u8, 193#u8, 148#u8
+      ],
+      Array.make 64#usize [
+        36#u8, 180#u8, 82#u8, 206#u8, 231#u8, 195#u8, 86#u8, 41#u8, 106#u8, 145#u8, 21#u8, 107#u8, 234#u8, 233#u8, 139#u8, 225#u8,
+        54#u8, 131#u8, 165#u8, 186#u8, 77#u8, 127#u8, 180#u8, 146#u8, 240#u8, 188#u8, 64#u8, 37#u8, 52#u8, 96#u8, 13#u8, 163#u8,
+        24#u8, 163#u8, 180#u8, 194#u8, 36#u8, 190#u8, 184#u8, 250#u8, 134#u8, 211#u8, 189#u8, 81#u8, 228#u8, 125#u8, 4#u8, 21#u8,
+        20#u8, 20#u8, 255#u8, 26#u8, 142#u8, 105#u8, 230#u8, 174#u8, 244#u8, 121#u8, 184#u8, 65#u8, 9#u8, 40#u8, 77#u8, 148#u8
+      ],
+      Array.make 64#usize [
+        11#u8, 24#u8, 12#u8, 201#u8, 201#u8, 217#u8, 179#u8, 163#u8, 6#u8, 167#u8, 37#u8, 40#u8, 172#u8, 236#u8, 81#u8, 246#u8,
+        31#u8, 38#u8, 112#u8, 17#u8, 100#u8, 163#u8, 111#u8, 57#u8, 31#u8, 198#u8, 231#u8, 63#u8, 224#u8, 178#u8, 38#u8, 76#u8,
+        12#u8, 154#u8, 160#u8, 41#u8, 58#u8, 177#u8, 5#u8, 197#u8, 223#u8, 113#u8, 12#u8, 75#u8, 237#u8, 239#u8, 9#u8, 40#u8,
+        178#u8, 44#u8, 222#u8, 130#u8, 125#u8, 221#u8, 142#u8, 241#u8, 213#u8, 58#u8, 131#u8, 242#u8, 120#u8, 108#u8, 213#u8, 163#u8
+      ],
+      Array.make 64#usize [
+        1#u8, 83#u8, 134#u8, 187#u8, 30#u8, 49#u8, 61#u8, 118#u8, 206#u8, 110#u8, 225#u8, 192#u8, 155#u8, 101#u8, 155#u8, 204#u8,
+        202#u8, 49#u8, 229#u8, 41#u8, 148#u8, 232#u8, 24#u8, 47#u8, 85#u8, 47#u8, 108#u8, 99#u8, 113#u8, 12#u8, 209#u8, 88#u8,
+        41#u8, 144#u8, 185#u8, 30#u8, 176#u8, 46#u8, 190#u8, 244#u8, 148#u8, 151#u8, 142#u8, 64#u8, 45#u8, 22#u8, 16#u8, 17#u8,
+        48#u8, 122#u8, 183#u8, 81#u8, 187#u8, 18#u8, 142#u8, 10#u8, 230#u8, 78#u8, 6#u8, 42#u8, 245#u8, 140#u8, 166#u8, 121#u8
+      ]
+    ])
+-- END VERIFYING KEY

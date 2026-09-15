@@ -252,5 +252,10 @@ cd lean
 export LD_LIBRARY_PATH="$(lean --print-prefix)/lib:${LD_LIBRARY_PATH:-}"
 lake exe cache get
 lake build
+cd ..
+
+# The verifying key reaches Lean as a hand copy in hand_written/TrustedFuns.lean (curve_shim is
+# --opaque, so aeneas never sees the bytes). Fail loudly if utils.rs and the copy disagree.
+./check_vk_transcription.sh
 
 echo "Done. $LLBC and lean/$SUBDIR/ generated; nothing else was modified."
