@@ -151,10 +151,16 @@ Target: only the assumptions that genuinely cannot be discharged.
       from 7 to 3 (only the syscalls), and test vectors -- the generator (1, 2), its negation
       to y = q - 2, the infinity flag, both-flags, off-curve, non-canonical x -- behave as the
       arkworks source says. Not differential-tested against arkworks itself.
-- [ ] **Keep as assumptions:** `alt_bn128_addition`, `alt_bn128_multiplication`,
-      `alt_bn128_pairing`. Genuine syscalls. State them *against* Mathlib's group law
-      (add/mul) and the abstract `Pairing` class (pairing) — with content, not as bare
-      signatures.
+- [x] **Syscall contracts: what a successful answer means.** `alt_bn128_addition`, `alt_bn128_multiplication`
+      and `alt_bn128_pairing` stay declarations -- genuine syscalls. What a successful answer
+      means is now stated in `hand_written/SyscallContracts.lean`: a class over the model's own
+      curve types, deliberately NOT borrowing `Spec/`'s `G1`/`G2`/`GT`/`Pairing`, since model and
+      spec must stay independent for a bridge theorem to mean anything. It assumes no
+      bilinearity, no group order and no reduction mod r.
+- [ ] **Syscall contracts: that valid inputs succeed** (completeness).
+- [ ] **Bridge to the spec** -- map the model's curve types onto `Spec/`'s, and rearrange the
+      pairing check into `Groth16.verify` (needs bilinearity). Blocked until `Spec/`'s top-level
+      `Tree` and `Byte` stop clashing with Mathlib's and Aeneas's.
 
 ### Types — 2 axioms -> 0
 
@@ -175,6 +181,18 @@ shielded pool. Everything else is dischargeable engineering.
 
 ## 3. First proof
 
+- [x] **First theorem about the model: accepting means the Groth16 equation holds.**
+      `lean/proofs/VerifyProof/Main.lean`, `fv_verify_proof_full_entry_checks_groth16_equation`:
+      if the verifier
+      returns `true`, all seven public inputs are below r, all IC entries decode, and
+      e(A, B) · e(vk_x, γ) · e(C, δ) · e(α, β) = 1 for the decoded key, proof B and C, some A,
+      and vk_x = IC₀ + Σ kᵢ · ICᵢ₊₁. Assumes only the syscall contracts; `#print axioms` adds
+      nothing beyond Lean's built-ins and the three syscall declarations. It is a model-level
+      theorem, not spec -> model: it does not tie A to `proof_a_raw` (the program decodes A with
+      its own arkworks code, and nothing relates that decoder to the syscall's), says nothing
+      about completeness, and does not mention the spec's groups. It is also not Groth16
+      soundness, which stays an assumption in `Spec/`: it shows the program checks the equation
+      that soundness is about.
 - [ ] **Prove one property end to end**, spec -> model. `check_public_amount` is the
       candidate: it is the only shim with zero axioms remaining, so nothing blocks it.
 

@@ -130,6 +130,9 @@ def curve_shim.G1Shim.to_bytes (p : curve_shim.G1Shim) : Result (Array Std.U8 64
 def curve_shim.fr_lt_modulus_be (bytes : Array Std.U8 32#usize) : Result Bool :=
   ok (decide ((bytes.val.foldl (fun acc byte => acc * 256 + byte.val) 0 : Nat) < bn254_r))
 
+-- The three syscalls below are only DECLARED here. What a successful answer means is stated
+-- in SyscallContracts.lean, as a class rather than axioms.
+
 -- TRUSTED (CURVE). Syscall. Input is a 64-byte G1 point followed by a 32-byte scalar;
 -- output encodes [k]P.
 /-- [zkcash::curve_shim::alt_bn128_multiplication_shim]:
