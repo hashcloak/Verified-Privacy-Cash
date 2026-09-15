@@ -30,7 +30,7 @@ and what each one replaces.
 
 Everything reachable from an entry point is mechanically extracted. Everything at the boundary
 arrives in Lean as an assumption, in the hand-owned `*External.lean` files. The generated
-surface is 49 items (44 functions, 5 types), roughly half of which now carry real definitions
+surface is 50 items (45 functions, 5 types), roughly half of which now carry real definitions
 instead of assumptions. The surface breaks down as:
 
 | Assumed | Count | Where |
@@ -40,11 +40,12 @@ instead of assumptions. The surface breaks down as:
 | Poseidon hashing | 6 | `light_hasher` |
 | SHA-256 and `Hash::to_bytes` | 2 | `solana_sha256_hasher`, `solana_hash` |
 | Borsh serialization | 5 | `u8`/`i64`/`u64`/`Vec`/`Pubkey` |
+| `Pubkey` constructor | 1 | `solana_pubkey::Pubkey::new_from_array`, reached through `utils::SOL_ADDRESS` |
 | Anchor error conversion | 3 | `anchor_lang::error` |
 | Rust core/std plumbing | 8 | `TryFrom`, `checked_neg`, `Option::ok_or`, `Result::map_err`, `Display`/`ToString`, `io::Write` |
 | Opaque types | 5 | `FrShim`, `G1Shim`, `Pubkey`, `Hash`, `std::io::Error` |
 
-Of that surface, 25 entries are now **DERIVED** — real Lean definitions, nothing assumed — and
+Of that surface, 26 entries are now **DERIVED** — real Lean definitions, nothing assumed — and
 19 remain **TRUSTED**. The G1 point type and its three operations are defined to mirror
 arkworks 0.5.0 byte for byte, so `verify_proof` depends on exactly three axioms: the `alt_bn128`
 syscalls. `FrShim` is `ZMod bn254_r` with all eight operations defined, borsh

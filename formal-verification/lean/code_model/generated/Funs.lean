@@ -142,6 +142,36 @@ impl_def fr_shim.FrShim.Insts.CoreCmpPartialOrdFrShim : core.cmp.PartialOrd
     fr_shim.FrShim.Insts.CoreCmpPartialOrdFrShim.partial_cmp /- PATCHED by extract.sh: aeneas le.default bug, see extract.sh -/
 }
 
+/-- [zkcash::utils::SOL_ADDRESS]
+    Source: 'programs/zkcash/src/utils.rs', lines 15:0-15:89
+    Visibility: public -/
+@[global_simps, irreducible]
+def utils.SOL_ADDRESS : Result solana_pubkey.Pubkey :=
+  solana_pubkey.Pubkey.new_from_array
+    (Array.make 32#usize [
+      0#u8, 0#u8, 0#u8, 0#u8, 0#u8, 0#u8, 0#u8, 0#u8, 0#u8, 0#u8, 0#u8, 0#u8,
+      0#u8, 0#u8, 0#u8, 0#u8, 0#u8, 0#u8, 0#u8, 0#u8, 0#u8, 0#u8, 0#u8, 0#u8,
+      0#u8, 0#u8, 0#u8, 0#u8, 0#u8, 0#u8, 0#u8, 1#u8
+      ])
+
+/-- [zkcash::fv_ext_data_from_minified]:
+    Source: 'programs/zkcash/src/lib.rs', lines 570:0-582:1
+    Visibility: public -/
+def fv_ext_data_from_minified
+  (recipient : FvAccount) (fee_recipient_account : FvAccount)
+  (minified : ExtDataMinified) :
+  Result ExtData
+  := do
+  let p ← utils.SOL_ADDRESS
+  ok
+    {
+      recipient := recipient.key,
+      ext_amount := minified.ext_amount,
+      fee := minified.fee,
+      fee_recipient := fee_recipient_account.key,
+      mint_address := p
+    }
+
 /-- [zkcash::utils::calculate_complete_ext_data_hash::{impl borsh::ser::BorshSerialize for zkcash::utils::calculate_complete_ext_data_hash::CompleteExtData}::serialize]:
     Source: 'programs/zkcash/src/utils.rs', lines 498:13-498:28
     Visibility: public -/
@@ -915,7 +945,7 @@ def utils.fv_verify_proof_full_entry
       else ok false
 
 /-- [zkcash::{zkcash::ErrorCode}::name]:
-    Source: 'programs/zkcash/src/lib.rs', lines 1066:0-1066:13
+    Source: 'programs/zkcash/src/lib.rs', lines 1102:0-1102:13
     Visibility: public -/
 def ErrorCode.name (self : ErrorCode) : Result String := do
   match self with
@@ -981,7 +1011,7 @@ def ErrorCode.name (self : ErrorCode) : Result String := do
       "InvalidTokenAccountMintAddress")
 
 /-- [zkcash::{impl core::fmt::Display for zkcash::ErrorCode}::fmt]:
-    Source: 'programs/zkcash/src/lib.rs', lines 1066:0-1066:13
+    Source: 'programs/zkcash/src/lib.rs', lines 1102:0-1102:13
     Visibility: public -/
 def ErrorCode.Insts.CoreFmtDisplay.fmt
   (self : ErrorCode) (fmt : core.fmt.Formatter) :
@@ -1079,14 +1109,14 @@ def ErrorCode.Insts.CoreFmtDisplay.fmt
     core.fmt.Formatter.write_fmt fmt a
 
 /-- Trait implementation: [zkcash::{impl core::fmt::Display for zkcash::ErrorCode}]
-    Source: 'programs/zkcash/src/lib.rs', lines 1066:0-1066:13 -/
+    Source: 'programs/zkcash/src/lib.rs', lines 1102:0-1102:13 -/
 @[reducible]
 def ErrorCode.Insts.CoreFmtDisplay : core.fmt.Display ErrorCode := {
   fmt := ErrorCode.Insts.CoreFmtDisplay.fmt
 }
 
 /-- [zkcash::{impl core::convert::From<zkcash::ErrorCode> for u32}::from]:
-    Source: 'programs/zkcash/src/lib.rs', lines 1066:0-1066:13
+    Source: 'programs/zkcash/src/lib.rs', lines 1102:0-1102:13
     Visibility: public -/
 def U32.Insts.CoreConvertFromErrorCode.from
   (e : ErrorCode) : Result Std.U32 := do
@@ -1096,7 +1126,7 @@ def U32.Insts.CoreConvertFromErrorCode.from
   i + i1
 
 /-- Trait implementation: [zkcash::{impl core::convert::From<zkcash::ErrorCode> for u32}]
-    Source: 'programs/zkcash/src/lib.rs', lines 1066:0-1066:13 -/
+    Source: 'programs/zkcash/src/lib.rs', lines 1102:0-1102:13 -/
 @[reducible]
 def U32.Insts.CoreConvertFromErrorCode : core.convert.From Std.U32 ErrorCode
   := {
@@ -1104,7 +1134,7 @@ def U32.Insts.CoreConvertFromErrorCode : core.convert.From Std.U32 ErrorCode
 }
 
 /-- [zkcash::{impl core::convert::From<zkcash::ErrorCode> for anchor_lang::error::Error}::from]:
-    Source: 'programs/zkcash/src/lib.rs', lines 1066:0-1066:13
+    Source: 'programs/zkcash/src/lib.rs', lines 1102:0-1102:13
     Visibility: public -/
 def anchor_lang.error.Error.Insts.CoreConvertFromErrorCode.from
   (error_code : ErrorCode) : Result anchor_lang.error.Error := do
@@ -1124,7 +1154,7 @@ def anchor_lang.error.Error.Insts.CoreConvertFromErrorCode.from
     }
 
 /-- Trait implementation: [zkcash::{impl core::convert::From<zkcash::ErrorCode> for anchor_lang::error::Error}]
-    Source: 'programs/zkcash/src/lib.rs', lines 1066:0-1066:13 -/
+    Source: 'programs/zkcash/src/lib.rs', lines 1102:0-1102:13 -/
 @[reducible]
 def anchor_lang.error.Error.Insts.CoreConvertFromErrorCode : core.convert.From
   anchor_lang.error.Error ErrorCode := {
@@ -1697,7 +1727,7 @@ def merkle_tree.MerkleTree.append
     ok (core.result.Result.Err e, tree_account)
 
 /-- [zkcash::fv_transact_entry::{impl core::ops::function::FnOnce<(core::num::error::TryFromIntError,), zkcash::ErrorCode> for zkcash::fv_transact_entry::closure}::call_once]:
-    Source: 'programs/zkcash/src/lib.rs', lines 641:21-641:52 -/
+    Source: 'programs/zkcash/src/lib.rs', lines 677:21-677:52 -/
 def
   fv_transact_entry.closure.Insts.CoreOpsFunctionFnOnceTupleTryFromIntErrorErrorCode.call_once
   (c : fv_transact_entry.closure)
@@ -1707,7 +1737,7 @@ def
   ok ErrorCode.InvalidExtAmount
 
 /-- Trait implementation: [zkcash::fv_transact_entry::{impl core::ops::function::FnOnce<(core::num::error::TryFromIntError,), zkcash::ErrorCode> for zkcash::fv_transact_entry::closure}]
-    Source: 'programs/zkcash/src/lib.rs', lines 641:21-641:52 -/
+    Source: 'programs/zkcash/src/lib.rs', lines 677:21-677:52 -/
 @[reducible]
 def
   fv_transact_entry.closure.Insts.CoreOpsFunctionFnOnceTupleTryFromIntErrorErrorCode
@@ -1718,7 +1748,7 @@ def
 }
 
 /-- [zkcash::fv_transact_entry]:
-    Source: 'programs/zkcash/src/lib.rs', lines 549:0-675:1
+    Source: 'programs/zkcash/src/lib.rs', lines 584:0-711:1
     Visibility: public -/
 def fv_transact_entry
   (tree_account : MerkleTreeAccount) (global_config : GlobalConfig)
@@ -1728,24 +1758,25 @@ def fv_transact_entry
   (input_nullifiers : Array (Array Std.U8 32#usize) 2#usize)
   (output_commitments : Array (Array Std.U8 32#usize) 2#usize)
   (proof_a : Array Std.U8 64#usize) (proof_b : Array Std.U8 128#usize)
-  (proof_c : Array Std.U8 64#usize) (ext_amount : Std.I64) (fee : Std.U64)
-  (recipient : solana_pubkey.Pubkey) (fee_recipient : solana_pubkey.Pubkey)
-  (mint_address : solana_pubkey.Pubkey)
+  (proof_c : Array Std.U8 64#usize) (ext_data_minified : ExtDataMinified)
   (encrypted_output1 : alloc.vec.Vec Std.U8)
   (encrypted_output2 : alloc.vec.Vec Std.U8) (rent_exempt_minimum : Std.U64)
   (tree_token_lamports : Std.U64) (signer_lamports : Std.U64)
-  (recipient_lamports : Std.U64) (fee_recipient_lamports : Std.U64) :
+  (recipient : FvAccount) (fee_recipient_account : FvAccount) :
   Result ((core.result.Result Unit anchor_lang.error.Error) ×
-    MerkleTreeAccount × Std.U64 × Std.U64 × Std.U64 × Std.U64)
+    MerkleTreeAccount × Std.U64 × Std.U64 × FvAccount × FvAccount)
   := do
+  let ext_data ←
+    fv_ext_data_from_minified recipient fee_recipient_account ext_data_minified
   let b ← merkle_tree.MerkleTree.is_known_root tree_account proof_root
   if b
   then
     let s := alloc.vec.Vec.deref encrypted_output1
     let s1 := alloc.vec.Vec.deref encrypted_output2
     let r ←
-      utils.calculate_complete_ext_data_hash recipient ext_amount s s1 fee
-        fee_recipient mint_address
+      utils.calculate_complete_ext_data_hash ext_data.recipient
+        ext_data.ext_amount s s1 ext_data.fee ext_data.fee_recipient
+        ext_data.mint_address
     let cf ← core.result.Result.Insts.CoreOpsTry.branch r
     match cf with
     | core.ops.control_flow.ControlFlow.Continue val =>
@@ -1755,12 +1786,14 @@ def fv_transact_entry
       if b1
       then
         let b2 ←
-          utils.fv_check_public_amount_entry ext_amount fee proof_public_amount
+          utils.fv_check_public_amount_entry ext_data.ext_amount ext_data.fee
+            proof_public_amount
         if b2
         then
           let r1 ←
-            utils.validate_fee ext_amount fee global_config.deposit_fee_rate
-              global_config.withdrawal_fee_rate global_config.fee_error_margin
+            utils.validate_fee ext_data.ext_amount ext_data.fee
+              global_config.deposit_fee_rate global_config.withdrawal_fee_rate
+              global_config.fee_error_margin
           let cf1 ← core.result.Result.Insts.CoreOpsTry.branch r1
           match cf1 with
           | core.ops.control_flow.ControlFlow.Continue _ =>
@@ -1775,9 +1808,10 @@ def fv_transact_entry
                 proof_b proof_c a a1 a2 a3 a4
             if b3
             then
-              if ext_amount > 0#i64
+              if ext_data.ext_amount > 0#i64
               then
-                let deposit_amount ← lift (IScalar.hcast .U64 ext_amount)
+                let deposit_amount ←
+                  lift (IScalar.hcast .U64 ext_data.ext_amount)
                 if deposit_amount <= tree_account.max_deposit_amount
                 then
                   let o ←
@@ -1794,12 +1828,13 @@ def fv_transact_entry
                     let cf3 ← core.result.Result.Insts.CoreOpsTry.branch r3
                     match cf3 with
                     | core.ops.control_flow.ControlFlow.Continue val2 =>
-                      if fee > 0#u64
+                      if ext_data.fee > 0#u64
                       then
-                        if ext_amount >= 0#i64
+                        if ext_data.ext_amount >= 0#i64
                         then
                           let o2 ←
-                            lift (U64.checked_add fee rent_exempt_minimum)
+                            lift (U64.checked_add ext_data.fee
+                              rent_exempt_minimum)
                           let r4 ←
                             core.option.Option.ok_or o2
                               ErrorCode.ArithmeticOverflow
@@ -1809,7 +1844,8 @@ def fv_transact_entry
                           | core.ops.control_flow.ControlFlow.Continue val3 =>
                             if val2 >= val3
                             then
-                              let o3 ← lift (U64.checked_sub val2 fee)
+                              let o3 ←
+                                lift (U64.checked_sub val2 ext_data.fee)
                               let r5 ←
                                 core.option.Option.ok_or o3
                                   ErrorCode.ArithmeticOverflow
@@ -1819,8 +1855,9 @@ def fv_transact_entry
                               | core.ops.control_flow.ControlFlow.Continue val4
                                 =>
                                 let o4 ←
-                                  lift (U64.checked_add fee_recipient_lamports
-                                    fee)
+                                  lift (U64.checked_add
+                                    fee_recipient_account.lamports
+                                    ext_data.fee)
                                 let r6 ←
                                   core.option.Option.ok_or o4
                                     ErrorCode.ArithmeticOverflow
@@ -1857,8 +1894,12 @@ def fv_transact_entry
                                       core.ops.control_flow.ControlFlow.Continue
                                       _ =>
                                       ok (core.result.Result.Ok (),
-                                        tree_account2, val4, val1,
-                                        recipient_lamports, val5)
+                                        tree_account2, val4, val1, recipient,
+                                        {
+                                          fee_recipient_account
+                                            with
+                                            lamports := val5
+                                        })
                                     | core.ops.control_flow.ControlFlow.Break
                                       residual =>
                                       let r9 ←
@@ -1866,7 +1907,12 @@ def fv_transact_entry
                                           Unit (core.convert.FromSame
                                           anchor_lang.error.Error) residual
                                       ok (r9, tree_account2, val4, val1,
-                                        recipient_lamports, val5)
+                                        recipient,
+                                        {
+                                          fee_recipient_account
+                                            with
+                                            lamports := val5
+                                        })
                                   | core.ops.control_flow.ControlFlow.Break
                                     residual =>
                                     let r8 ←
@@ -1874,7 +1920,12 @@ def fv_transact_entry
                                         Unit (core.convert.FromSame
                                         anchor_lang.error.Error) residual
                                     ok (r8, tree_account1, val4, val1,
-                                      recipient_lamports, val5)
+                                      recipient,
+                                      {
+                                        fee_recipient_account
+                                          with
+                                          lamports := val5
+                                      })
                                 | core.ops.control_flow.ControlFlow.Break
                                   residual =>
                                   let r7 ←
@@ -1882,8 +1933,8 @@ def fv_transact_entry
                                       Unit
                                       anchor_lang.error.Error.Insts.CoreConvertFromErrorCode
                                       residual
-                                  ok (r7, tree_account, val4, val1,
-                                    recipient_lamports, fee_recipient_lamports)
+                                  ok (r7, tree_account, val4, val1, recipient,
+                                    fee_recipient_account)
                               | core.ops.control_flow.ControlFlow.Break
                                 residual =>
                                 let r6 ←
@@ -1891,8 +1942,8 @@ def fv_transact_entry
                                     Unit
                                     anchor_lang.error.Error.Insts.CoreConvertFromErrorCode
                                     residual
-                                ok (r6, tree_account, val2, val1,
-                                  recipient_lamports, fee_recipient_lamports)
+                                ok (r6, tree_account, val2, val1, recipient,
+                                  fee_recipient_account)
                             else
                               let s2 ←
                                 ErrorCode.name
@@ -1918,23 +1969,22 @@ def fv_transact_entry
                                           filename :=
                                             (toStr
                                               "programs/zkcash/src/lib.rs"),
-                                          line := 661#u32
+                                          line := 697#u32
                                         })),
                                     compared_values := none
                                   }
                               ok (core.result.Result.Err e, tree_account, val2,
-                                val1, recipient_lamports,
-                                fee_recipient_lamports)
+                                val1, recipient, fee_recipient_account)
                           | core.ops.control_flow.ControlFlow.Break residual =>
                             let r5 ←
                               core.result.Result.Insts.CoreOpsTryTraitFromResidualResultInfallible.from_residual
                                 Unit
                                 anchor_lang.error.Error.Insts.CoreConvertFromErrorCode
                                 residual
-                            ok (r5, tree_account, val2, val1,
-                              recipient_lamports, fee_recipient_lamports)
+                            ok (r5, tree_account, val2, val1, recipient,
+                              fee_recipient_account)
                         else
-                          let o2 ← lift (U64.checked_sub val2 fee)
+                          let o2 ← lift (U64.checked_sub val2 ext_data.fee)
                           let r4 ←
                             core.option.Option.ok_or o2
                               ErrorCode.ArithmeticOverflow
@@ -1943,7 +1993,8 @@ def fv_transact_entry
                           match cf4 with
                           | core.ops.control_flow.ControlFlow.Continue val3 =>
                             let o3 ←
-                              lift (U64.checked_add fee_recipient_lamports fee)
+                              lift (U64.checked_add
+                                fee_recipient_account.lamports ext_data.fee)
                             let r5 ←
                               core.option.Option.ok_or o3
                                 ErrorCode.ArithmeticOverflow
@@ -1974,23 +2025,33 @@ def fv_transact_entry
                                 | core.ops.control_flow.ControlFlow.Continue _
                                   =>
                                   ok (core.result.Result.Ok (), tree_account2,
-                                    val3, val1, recipient_lamports, val4)
+                                    val3, val1, recipient,
+                                    {
+                                      fee_recipient_account
+                                        with
+                                        lamports := val4
+                                    })
                                 | core.ops.control_flow.ControlFlow.Break
                                   residual =>
                                   let r8 ←
                                     core.result.Result.Insts.CoreOpsTryTraitFromResidualResultInfallible.from_residual
                                       Unit (core.convert.FromSame
                                       anchor_lang.error.Error) residual
-                                  ok (r8, tree_account2, val3, val1,
-                                    recipient_lamports, val4)
+                                  ok (r8, tree_account2, val3, val1, recipient,
+                                    {
+                                      fee_recipient_account
+                                        with
+                                        lamports := val4
+                                    })
                               | core.ops.control_flow.ControlFlow.Break
                                 residual =>
                                 let r7 ←
                                   core.result.Result.Insts.CoreOpsTryTraitFromResidualResultInfallible.from_residual
                                     Unit (core.convert.FromSame
                                     anchor_lang.error.Error) residual
-                                ok (r7, tree_account1, val3, val1,
-                                  recipient_lamports, val4)
+                                ok (r7, tree_account1, val3, val1, recipient,
+                                  { fee_recipient_account with lamports := val4
+                                  })
                             | core.ops.control_flow.ControlFlow.Break residual
                               =>
                               let r6 ←
@@ -1998,16 +2059,16 @@ def fv_transact_entry
                                   Unit
                                   anchor_lang.error.Error.Insts.CoreConvertFromErrorCode
                                   residual
-                              ok (r6, tree_account, val3, val1,
-                                recipient_lamports, fee_recipient_lamports)
+                              ok (r6, tree_account, val3, val1, recipient,
+                                fee_recipient_account)
                           | core.ops.control_flow.ControlFlow.Break residual =>
                             let r5 ←
                               core.result.Result.Insts.CoreOpsTryTraitFromResidualResultInfallible.from_residual
                                 Unit
                                 anchor_lang.error.Error.Insts.CoreConvertFromErrorCode
                                 residual
-                            ok (r5, tree_account, val2, val1,
-                              recipient_lamports, fee_recipient_lamports)
+                            ok (r5, tree_account, val2, val1, recipient,
+                              fee_recipient_account)
                       else
                         let a5 ← Array.index_usize output_commitments 0#usize
                         let (r4, tree_account1) ←
@@ -2029,21 +2090,21 @@ def fv_transact_entry
                           match cf5 with
                           | core.ops.control_flow.ControlFlow.Continue _ =>
                             ok (core.result.Result.Ok (), tree_account2, val2,
-                              val1, recipient_lamports, fee_recipient_lamports)
+                              val1, recipient, fee_recipient_account)
                           | core.ops.control_flow.ControlFlow.Break residual =>
                             let r6 ←
                               core.result.Result.Insts.CoreOpsTryTraitFromResidualResultInfallible.from_residual
                                 Unit (core.convert.FromSame
                                 anchor_lang.error.Error) residual
-                            ok (r6, tree_account2, val2, val1,
-                              recipient_lamports, fee_recipient_lamports)
+                            ok (r6, tree_account2, val2, val1, recipient,
+                              fee_recipient_account)
                         | core.ops.control_flow.ControlFlow.Break residual =>
                           let r5 ←
                             core.result.Result.Insts.CoreOpsTryTraitFromResidualResultInfallible.from_residual
                               Unit (core.convert.FromSame
                               anchor_lang.error.Error) residual
-                          ok (r5, tree_account1, val2, val1,
-                            recipient_lamports, fee_recipient_lamports)
+                          ok (r5, tree_account1, val2, val1, recipient,
+                            fee_recipient_account)
                     | core.ops.control_flow.ControlFlow.Break residual =>
                       let r4 ←
                         core.result.Result.Insts.CoreOpsTryTraitFromResidualResultInfallible.from_residual
@@ -2051,7 +2112,7 @@ def fv_transact_entry
                           anchor_lang.error.Error.Insts.CoreConvertFromErrorCode
                           residual
                       ok (r4, tree_account, tree_token_lamports, val1,
-                        recipient_lamports, fee_recipient_lamports)
+                        recipient, fee_recipient_account)
                   | core.ops.control_flow.ControlFlow.Break residual =>
                     let r3 ←
                       core.result.Result.Insts.CoreOpsTryTraitFromResidualResultInfallible.from_residual
@@ -2059,7 +2120,7 @@ def fv_transact_entry
                         anchor_lang.error.Error.Insts.CoreConvertFromErrorCode
                         residual
                     ok (r3, tree_account, tree_token_lamports, signer_lamports,
-                      recipient_lamports, fee_recipient_lamports)
+                      recipient, fee_recipient_account)
                 else
                   let s2 ← ErrorCode.name ErrorCode.DepositLimitExceeded
                   let i ←
@@ -2081,17 +2142,17 @@ def fv_transact_entry
                             (anchor_lang.error.ErrorOrigin.Source
                             {
                               filename := (toStr "programs/zkcash/src/lib.rs"),
-                              line := 630#u32
+                              line := 666#u32
                             })),
                         compared_values := none
                       }
                   ok (core.result.Result.Err e, tree_account,
-                    tree_token_lamports, signer_lamports, recipient_lamports,
-                    fee_recipient_lamports)
+                    tree_token_lamports, signer_lamports, recipient,
+                    fee_recipient_account)
               else
-                if ext_amount < 0#i64
+                if ext_data.ext_amount < 0#i64
                 then
-                  let o ← core.num.I64.checked_neg ext_amount
+                  let o ← core.num.I64.checked_neg ext_data.ext_amount
                   let r2 ←
                     core.option.Option.ok_or o ErrorCode.ArithmeticOverflow
                   let cf2 ← core.result.Result.Insts.CoreOpsTry.branch r2
@@ -2107,7 +2168,7 @@ def fv_transact_entry
                     let cf3 ← core.result.Result.Insts.CoreOpsTry.branch r4
                     match cf3 with
                     | core.ops.control_flow.ControlFlow.Continue val2 =>
-                      let o1 ← lift (U64.checked_add val2 fee)
+                      let o1 ← lift (U64.checked_add val2 ext_data.fee)
                       let r5 ←
                         core.option.Option.ok_or o1
                           ErrorCode.ArithmeticOverflow
@@ -2136,7 +2197,7 @@ def fv_transact_entry
                             | core.ops.control_flow.ControlFlow.Continue val5
                               =>
                               let o4 ←
-                                lift (U64.checked_add recipient_lamports val2)
+                                lift (U64.checked_add recipient.lamports val2)
                               let r8 ←
                                 core.option.Option.ok_or o4
                                   ErrorCode.ArithmeticOverflow
@@ -2145,12 +2206,12 @@ def fv_transact_entry
                               match cf7 with
                               | core.ops.control_flow.ControlFlow.Continue val6
                                 =>
-                                if fee > 0#u64
+                                if ext_data.fee > 0#u64
                                 then
-                                  if ext_amount >= 0#i64
+                                  if ext_data.ext_amount >= 0#i64
                                   then
                                     let o5 ←
-                                      lift (U64.checked_add fee
+                                      lift (U64.checked_add ext_data.fee
                                         rent_exempt_minimum)
                                     let r9 ←
                                       core.option.Option.ok_or o5
@@ -2165,7 +2226,8 @@ def fv_transact_entry
                                       if val5 >= val7
                                       then
                                         let o6 ←
-                                          lift (U64.checked_sub val5 fee)
+                                          lift (U64.checked_sub val5
+                                            ext_data.fee)
                                         let r10 ←
                                           core.option.Option.ok_or o6
                                             ErrorCode.ArithmeticOverflow
@@ -2178,7 +2240,8 @@ def fv_transact_entry
                                           val8 =>
                                           let o7 ←
                                             lift (U64.checked_add
-                                              fee_recipient_lamports fee)
+                                              fee_recipient_account.lamports
+                                              ext_data.fee)
                                           let r11 ←
                                             core.option.Option.ok_or o7
                                               ErrorCode.ArithmeticOverflow
@@ -2219,7 +2282,17 @@ def fv_transact_entry
                                                 _ =>
                                                 ok (core.result.Result.Ok (),
                                                   tree_account2, val8,
-                                                  signer_lamports, val6, val9)
+                                                  signer_lamports,
+                                                  {
+                                                    recipient
+                                                      with
+                                                      lamports := val6
+                                                  },
+                                                  {
+                                                    fee_recipient_account
+                                                      with
+                                                      lamports := val9
+                                                  })
                                               |
                                                 core.ops.control_flow.ControlFlow.Break
                                                 residual =>
@@ -2229,7 +2302,17 @@ def fv_transact_entry
                                                     anchor_lang.error.Error)
                                                     residual
                                                 ok (r14, tree_account2, val8,
-                                                  signer_lamports, val6, val9)
+                                                  signer_lamports,
+                                                  {
+                                                    recipient
+                                                      with
+                                                      lamports := val6
+                                                  },
+                                                  {
+                                                    fee_recipient_account
+                                                      with
+                                                      lamports := val9
+                                                  })
                                             |
                                               core.ops.control_flow.ControlFlow.Break
                                               residual =>
@@ -2239,7 +2322,17 @@ def fv_transact_entry
                                                   anchor_lang.error.Error)
                                                   residual
                                               ok (r13, tree_account1, val8,
-                                                signer_lamports, val6, val9)
+                                                signer_lamports,
+                                                {
+                                                  recipient
+                                                    with
+                                                    lamports := val6
+                                                },
+                                                {
+                                                  fee_recipient_account
+                                                    with
+                                                    lamports := val9
+                                                })
                                           |
                                             core.ops.control_flow.ControlFlow.Break
                                             residual =>
@@ -2249,8 +2342,9 @@ def fv_transact_entry
                                                 anchor_lang.error.Error.Insts.CoreConvertFromErrorCode
                                                 residual
                                             ok (r12, tree_account, val8,
-                                              signer_lamports, val6,
-                                              fee_recipient_lamports)
+                                              signer_lamports,
+                                              { recipient with lamports := val6
+                                              }, fee_recipient_account)
                                         |
                                           core.ops.control_flow.ControlFlow.Break
                                           residual =>
@@ -2260,8 +2354,9 @@ def fv_transact_entry
                                               anchor_lang.error.Error.Insts.CoreConvertFromErrorCode
                                               residual
                                           ok (r11, tree_account, val5,
-                                            signer_lamports, val6,
-                                            fee_recipient_lamports)
+                                            signer_lamports,
+                                            { recipient with lamports := val6 },
+                                            fee_recipient_account)
                                       else
                                         let s2 ←
                                           ErrorCode.name
@@ -2287,13 +2382,14 @@ def fv_transact_entry
                                                     filename :=
                                                       (toStr
                                                         "programs/zkcash/src/lib.rs"),
-                                                    line := 661#u32
+                                                    line := 697#u32
                                                   })),
                                               compared_values := none
                                             }
                                         ok (core.result.Result.Err e,
                                           tree_account, val5, signer_lamports,
-                                          val6, fee_recipient_lamports)
+                                          { recipient with lamports := val6 },
+                                          fee_recipient_account)
                                     | core.ops.control_flow.ControlFlow.Break
                                       residual =>
                                       let r10 ←
@@ -2302,10 +2398,12 @@ def fv_transact_entry
                                           anchor_lang.error.Error.Insts.CoreConvertFromErrorCode
                                           residual
                                       ok (r10, tree_account, val5,
-                                        signer_lamports, val6,
-                                        fee_recipient_lamports)
+                                        signer_lamports,
+                                        { recipient with lamports := val6 },
+                                        fee_recipient_account)
                                   else
-                                    let o5 ← lift (U64.checked_sub val5 fee)
+                                    let o5 ←
+                                      lift (U64.checked_sub val5 ext_data.fee)
                                     let r9 ←
                                       core.option.Option.ok_or o5
                                         ErrorCode.ArithmeticOverflow
@@ -2318,7 +2416,8 @@ def fv_transact_entry
                                       val7 =>
                                       let o6 ←
                                         lift (U64.checked_add
-                                          fee_recipient_lamports fee)
+                                          fee_recipient_account.lamports
+                                          ext_data.fee)
                                       let r10 ←
                                         core.option.Option.ok_or o6
                                           ErrorCode.ArithmeticOverflow
@@ -2359,7 +2458,14 @@ def fv_transact_entry
                                             _ =>
                                             ok (core.result.Result.Ok (),
                                               tree_account2, val7,
-                                              signer_lamports, val6, val8)
+                                              signer_lamports,
+                                              { recipient with lamports := val6
+                                              },
+                                              {
+                                                fee_recipient_account
+                                                  with
+                                                  lamports := val8
+                                              })
                                           |
                                             core.ops.control_flow.ControlFlow.Break
                                             residual =>
@@ -2369,7 +2475,14 @@ def fv_transact_entry
                                                 anchor_lang.error.Error)
                                                 residual
                                             ok (r13, tree_account2, val7,
-                                              signer_lamports, val6, val8)
+                                              signer_lamports,
+                                              { recipient with lamports := val6
+                                              },
+                                              {
+                                                fee_recipient_account
+                                                  with
+                                                  lamports := val8
+                                              })
                                         |
                                           core.ops.control_flow.ControlFlow.Break
                                           residual =>
@@ -2378,7 +2491,13 @@ def fv_transact_entry
                                               Unit (core.convert.FromSame
                                               anchor_lang.error.Error) residual
                                           ok (r12, tree_account1, val7,
-                                            signer_lamports, val6, val8)
+                                            signer_lamports,
+                                            { recipient with lamports := val6 },
+                                            {
+                                              fee_recipient_account
+                                                with
+                                                lamports := val8
+                                            })
                                       | core.ops.control_flow.ControlFlow.Break
                                         residual =>
                                         let r11 ←
@@ -2387,8 +2506,9 @@ def fv_transact_entry
                                             anchor_lang.error.Error.Insts.CoreConvertFromErrorCode
                                             residual
                                         ok (r11, tree_account, val7,
-                                          signer_lamports, val6,
-                                          fee_recipient_lamports)
+                                          signer_lamports,
+                                          { recipient with lamports := val6 },
+                                          fee_recipient_account)
                                     | core.ops.control_flow.ControlFlow.Break
                                       residual =>
                                       let r10 ←
@@ -2397,8 +2517,9 @@ def fv_transact_entry
                                           anchor_lang.error.Error.Insts.CoreConvertFromErrorCode
                                           residual
                                       ok (r10, tree_account, val5,
-                                        signer_lamports, val6,
-                                        fee_recipient_lamports)
+                                        signer_lamports,
+                                        { recipient with lamports := val6 },
+                                        fee_recipient_account)
                                 else
                                   let a5 ←
                                     Array.index_usize output_commitments
@@ -2429,7 +2550,8 @@ def fv_transact_entry
                                       _ =>
                                       ok (core.result.Result.Ok (),
                                         tree_account2, val5, signer_lamports,
-                                        val6, fee_recipient_lamports)
+                                        { recipient with lamports := val6 },
+                                        fee_recipient_account)
                                     | core.ops.control_flow.ControlFlow.Break
                                       residual =>
                                       let r11 ←
@@ -2437,8 +2559,9 @@ def fv_transact_entry
                                           Unit (core.convert.FromSame
                                           anchor_lang.error.Error) residual
                                       ok (r11, tree_account2, val5,
-                                        signer_lamports, val6,
-                                        fee_recipient_lamports)
+                                        signer_lamports,
+                                        { recipient with lamports := val6 },
+                                        fee_recipient_account)
                                   | core.ops.control_flow.ControlFlow.Break
                                     residual =>
                                     let r10 ←
@@ -2446,8 +2569,9 @@ def fv_transact_entry
                                         Unit (core.convert.FromSame
                                         anchor_lang.error.Error) residual
                                     ok (r10, tree_account1, val5,
-                                      signer_lamports, val6,
-                                      fee_recipient_lamports)
+                                      signer_lamports,
+                                      { recipient with lamports := val6 },
+                                      fee_recipient_account)
                               | core.ops.control_flow.ControlFlow.Break
                                 residual =>
                                 let r9 ←
@@ -2456,7 +2580,7 @@ def fv_transact_entry
                                     anchor_lang.error.Error.Insts.CoreConvertFromErrorCode
                                     residual
                                 ok (r9, tree_account, val5, signer_lamports,
-                                  recipient_lamports, fee_recipient_lamports)
+                                  recipient, fee_recipient_account)
                             | core.ops.control_flow.ControlFlow.Break residual
                               =>
                               let r8 ←
@@ -2465,8 +2589,8 @@ def fv_transact_entry
                                   anchor_lang.error.Error.Insts.CoreConvertFromErrorCode
                                   residual
                               ok (r8, tree_account, tree_token_lamports,
-                                signer_lamports, recipient_lamports,
-                                fee_recipient_lamports)
+                                signer_lamports, recipient,
+                                fee_recipient_account)
                           else
                             let s2 ←
                               ErrorCode.name
@@ -2491,13 +2615,13 @@ def fv_transact_entry
                                       {
                                         filename :=
                                           (toStr "programs/zkcash/src/lib.rs"),
-                                        line := 649#u32
+                                        line := 685#u32
                                       })),
                                   compared_values := none
                                 }
                             ok (core.result.Result.Err e, tree_account,
-                              tree_token_lamports, signer_lamports,
-                              recipient_lamports, fee_recipient_lamports)
+                              tree_token_lamports, signer_lamports, recipient,
+                              fee_recipient_account)
                         | core.ops.control_flow.ControlFlow.Break residual =>
                           let r7 ←
                             core.result.Result.Insts.CoreOpsTryTraitFromResidualResultInfallible.from_residual
@@ -2505,8 +2629,7 @@ def fv_transact_entry
                               anchor_lang.error.Error.Insts.CoreConvertFromErrorCode
                               residual
                           ok (r7, tree_account, tree_token_lamports,
-                            signer_lamports, recipient_lamports,
-                            fee_recipient_lamports)
+                            signer_lamports, recipient, fee_recipient_account)
                       | core.ops.control_flow.ControlFlow.Break residual =>
                         let r6 ←
                           core.result.Result.Insts.CoreOpsTryTraitFromResidualResultInfallible.from_residual
@@ -2514,8 +2637,7 @@ def fv_transact_entry
                             anchor_lang.error.Error.Insts.CoreConvertFromErrorCode
                             residual
                         ok (r6, tree_account, tree_token_lamports,
-                          signer_lamports, recipient_lamports,
-                          fee_recipient_lamports)
+                          signer_lamports, recipient, fee_recipient_account)
                     | core.ops.control_flow.ControlFlow.Break residual =>
                       let r5 ←
                         core.result.Result.Insts.CoreOpsTryTraitFromResidualResultInfallible.from_residual
@@ -2523,8 +2645,7 @@ def fv_transact_entry
                           anchor_lang.error.Error.Insts.CoreConvertFromErrorCode
                           residual
                       ok (r5, tree_account, tree_token_lamports,
-                        signer_lamports, recipient_lamports,
-                        fee_recipient_lamports)
+                        signer_lamports, recipient, fee_recipient_account)
                   | core.ops.control_flow.ControlFlow.Break residual =>
                     let r3 ←
                       core.result.Result.Insts.CoreOpsTryTraitFromResidualResultInfallible.from_residual
@@ -2532,13 +2653,14 @@ def fv_transact_entry
                         anchor_lang.error.Error.Insts.CoreConvertFromErrorCode
                         residual
                     ok (r3, tree_account, tree_token_lamports, signer_lamports,
-                      recipient_lamports, fee_recipient_lamports)
+                      recipient, fee_recipient_account)
                 else
-                  if fee > 0#u64
+                  if ext_data.fee > 0#u64
                   then
-                    if ext_amount >= 0#i64
+                    if ext_data.ext_amount >= 0#i64
                     then
-                      let o ← lift (U64.checked_add fee rent_exempt_minimum)
+                      let o ←
+                        lift (U64.checked_add ext_data.fee rent_exempt_minimum)
                       let r2 ←
                         core.option.Option.ok_or o ErrorCode.ArithmeticOverflow
                       let cf2 ← core.result.Result.Insts.CoreOpsTry.branch r2
@@ -2547,7 +2669,8 @@ def fv_transact_entry
                         if tree_token_lamports >= val1
                         then
                           let o1 ←
-                            lift (U64.checked_sub tree_token_lamports fee)
+                            lift (U64.checked_sub tree_token_lamports
+                              ext_data.fee)
                           let r3 ←
                             core.option.Option.ok_or o1
                               ErrorCode.ArithmeticOverflow
@@ -2556,7 +2679,8 @@ def fv_transact_entry
                           match cf3 with
                           | core.ops.control_flow.ControlFlow.Continue val2 =>
                             let o2 ←
-                              lift (U64.checked_add fee_recipient_lamports fee)
+                              lift (U64.checked_add
+                                fee_recipient_account.lamports ext_data.fee)
                             let r4 ←
                               core.option.Option.ok_or o2
                                 ErrorCode.ArithmeticOverflow
@@ -2587,8 +2711,12 @@ def fv_transact_entry
                                 | core.ops.control_flow.ControlFlow.Continue _
                                   =>
                                   ok (core.result.Result.Ok (), tree_account2,
-                                    val2, signer_lamports, recipient_lamports,
-                                    val3)
+                                    val2, signer_lamports, recipient,
+                                    {
+                                      fee_recipient_account
+                                        with
+                                        lamports := val3
+                                    })
                                 | core.ops.control_flow.ControlFlow.Break
                                   residual =>
                                   let r7 ←
@@ -2596,7 +2724,12 @@ def fv_transact_entry
                                       Unit (core.convert.FromSame
                                       anchor_lang.error.Error) residual
                                   ok (r7, tree_account2, val2, signer_lamports,
-                                    recipient_lamports, val3)
+                                    recipient,
+                                    {
+                                      fee_recipient_account
+                                        with
+                                        lamports := val3
+                                    })
                               | core.ops.control_flow.ControlFlow.Break
                                 residual =>
                                 let r6 ←
@@ -2604,7 +2737,9 @@ def fv_transact_entry
                                     Unit (core.convert.FromSame
                                     anchor_lang.error.Error) residual
                                 ok (r6, tree_account1, val2, signer_lamports,
-                                  recipient_lamports, val3)
+                                  recipient,
+                                  { fee_recipient_account with lamports := val3
+                                  })
                             | core.ops.control_flow.ControlFlow.Break residual
                               =>
                               let r5 ←
@@ -2613,7 +2748,7 @@ def fv_transact_entry
                                   anchor_lang.error.Error.Insts.CoreConvertFromErrorCode
                                   residual
                               ok (r5, tree_account, val2, signer_lamports,
-                                recipient_lamports, fee_recipient_lamports)
+                                recipient, fee_recipient_account)
                           | core.ops.control_flow.ControlFlow.Break residual =>
                             let r4 ←
                               core.result.Result.Insts.CoreOpsTryTraitFromResidualResultInfallible.from_residual
@@ -2621,8 +2756,8 @@ def fv_transact_entry
                                 anchor_lang.error.Error.Insts.CoreConvertFromErrorCode
                                 residual
                             ok (r4, tree_account, tree_token_lamports,
-                              signer_lamports, recipient_lamports,
-                              fee_recipient_lamports)
+                              signer_lamports, recipient,
+                              fee_recipient_account)
                         else
                           let s2 ←
                             ErrorCode.name ErrorCode.InsufficientFundsForFee
@@ -2646,13 +2781,13 @@ def fv_transact_entry
                                     {
                                       filename :=
                                         (toStr "programs/zkcash/src/lib.rs"),
-                                      line := 661#u32
+                                      line := 697#u32
                                     })),
                                 compared_values := none
                               }
                           ok (core.result.Result.Err e, tree_account,
-                            tree_token_lamports, signer_lamports,
-                            recipient_lamports, fee_recipient_lamports)
+                            tree_token_lamports, signer_lamports, recipient,
+                            fee_recipient_account)
                       | core.ops.control_flow.ControlFlow.Break residual =>
                         let r3 ←
                           core.result.Result.Insts.CoreOpsTryTraitFromResidualResultInfallible.from_residual
@@ -2660,17 +2795,18 @@ def fv_transact_entry
                             anchor_lang.error.Error.Insts.CoreConvertFromErrorCode
                             residual
                         ok (r3, tree_account, tree_token_lamports,
-                          signer_lamports, recipient_lamports,
-                          fee_recipient_lamports)
+                          signer_lamports, recipient, fee_recipient_account)
                     else
-                      let o ← lift (U64.checked_sub tree_token_lamports fee)
+                      let o ←
+                        lift (U64.checked_sub tree_token_lamports ext_data.fee)
                       let r2 ←
                         core.option.Option.ok_or o ErrorCode.ArithmeticOverflow
                       let cf2 ← core.result.Result.Insts.CoreOpsTry.branch r2
                       match cf2 with
                       | core.ops.control_flow.ControlFlow.Continue val1 =>
                         let o1 ←
-                          lift (U64.checked_add fee_recipient_lamports fee)
+                          lift (U64.checked_add fee_recipient_account.lamports
+                            ext_data.fee)
                         let r3 ←
                           core.option.Option.ok_or o1
                             ErrorCode.ArithmeticOverflow
@@ -2699,8 +2835,8 @@ def fv_transact_entry
                             match cf5 with
                             | core.ops.control_flow.ControlFlow.Continue _ =>
                               ok (core.result.Result.Ok (), tree_account2,
-                                val1, signer_lamports, recipient_lamports,
-                                val2)
+                                val1, signer_lamports, recipient,
+                                { fee_recipient_account with lamports := val2 })
                             | core.ops.control_flow.ControlFlow.Break residual
                               =>
                               let r6 ←
@@ -2708,14 +2844,16 @@ def fv_transact_entry
                                   Unit (core.convert.FromSame
                                   anchor_lang.error.Error) residual
                               ok (r6, tree_account2, val1, signer_lamports,
-                                recipient_lamports, val2)
+                                recipient,
+                                { fee_recipient_account with lamports := val2 })
                           | core.ops.control_flow.ControlFlow.Break residual =>
                             let r5 ←
                               core.result.Result.Insts.CoreOpsTryTraitFromResidualResultInfallible.from_residual
                                 Unit (core.convert.FromSame
                                 anchor_lang.error.Error) residual
                             ok (r5, tree_account1, val1, signer_lamports,
-                              recipient_lamports, val2)
+                              recipient,
+                              { fee_recipient_account with lamports := val2 })
                         | core.ops.control_flow.ControlFlow.Break residual =>
                           let r4 ←
                             core.result.Result.Insts.CoreOpsTryTraitFromResidualResultInfallible.from_residual
@@ -2723,7 +2861,7 @@ def fv_transact_entry
                               anchor_lang.error.Error.Insts.CoreConvertFromErrorCode
                               residual
                           ok (r4, tree_account, val1, signer_lamports,
-                            recipient_lamports, fee_recipient_lamports)
+                            recipient, fee_recipient_account)
                       | core.ops.control_flow.ControlFlow.Break residual =>
                         let r3 ←
                           core.result.Result.Insts.CoreOpsTryTraitFromResidualResultInfallible.from_residual
@@ -2731,8 +2869,7 @@ def fv_transact_entry
                             anchor_lang.error.Error.Insts.CoreConvertFromErrorCode
                             residual
                         ok (r3, tree_account, tree_token_lamports,
-                          signer_lamports, recipient_lamports,
-                          fee_recipient_lamports)
+                          signer_lamports, recipient, fee_recipient_account)
                   else
                     let a5 ← Array.index_usize output_commitments 0#usize
                     let (r2, tree_account1) ←
@@ -2751,24 +2888,22 @@ def fv_transact_entry
                       match cf3 with
                       | core.ops.control_flow.ControlFlow.Continue _ =>
                         ok (core.result.Result.Ok (), tree_account2,
-                          tree_token_lamports, signer_lamports,
-                          recipient_lamports, fee_recipient_lamports)
+                          tree_token_lamports, signer_lamports, recipient,
+                          fee_recipient_account)
                       | core.ops.control_flow.ControlFlow.Break residual =>
                         let r4 ←
                           core.result.Result.Insts.CoreOpsTryTraitFromResidualResultInfallible.from_residual
                             Unit (core.convert.FromSame
                             anchor_lang.error.Error) residual
                         ok (r4, tree_account2, tree_token_lamports,
-                          signer_lamports, recipient_lamports,
-                          fee_recipient_lamports)
+                          signer_lamports, recipient, fee_recipient_account)
                     | core.ops.control_flow.ControlFlow.Break residual =>
                       let r3 ←
                         core.result.Result.Insts.CoreOpsTryTraitFromResidualResultInfallible.from_residual
                           Unit (core.convert.FromSame anchor_lang.error.Error)
                           residual
                       ok (r3, tree_account1, tree_token_lamports,
-                        signer_lamports, recipient_lamports,
-                        fee_recipient_lamports)
+                        signer_lamports, recipient, fee_recipient_account)
             else
               let s2 ← ErrorCode.name ErrorCode.InvalidProof
               let i ←
@@ -2788,18 +2923,18 @@ def fv_transact_entry
                         (anchor_lang.error.ErrorOrigin.Source
                         {
                           filename := (toStr "programs/zkcash/src/lib.rs"),
-                          line := 609#u32
+                          line := 645#u32
                         })),
                     compared_values := none
                   }
               ok (core.result.Result.Err e, tree_account, tree_token_lamports,
-                signer_lamports, recipient_lamports, fee_recipient_lamports)
+                signer_lamports, recipient, fee_recipient_account)
           | core.ops.control_flow.ControlFlow.Break residual =>
             let r2 ←
               core.result.Result.Insts.CoreOpsTryTraitFromResidualResultInfallible.from_residual
                 Unit (core.convert.FromSame anchor_lang.error.Error) residual
             ok (r2, tree_account, tree_token_lamports, signer_lamports,
-              recipient_lamports, fee_recipient_lamports)
+              recipient, fee_recipient_account)
         else
           let s2 ← ErrorCode.name ErrorCode.InvalidPublicAmountData
           let i ←
@@ -2819,12 +2954,12 @@ def fv_transact_entry
                     (anchor_lang.error.ErrorOrigin.Source
                     {
                       filename := (toStr "programs/zkcash/src/lib.rs"),
-                      line := 594#u32
+                      line := 627#u32
                     })),
                 compared_values := none
               }
           ok (core.result.Result.Err e, tree_account, tree_token_lamports,
-            signer_lamports, recipient_lamports, fee_recipient_lamports)
+            signer_lamports, recipient, fee_recipient_account)
       else
         let s2 ← ErrorCode.name ErrorCode.ExtDataHashMismatch
         let i ←
@@ -2844,18 +2979,18 @@ def fv_transact_entry
                   (anchor_lang.error.ErrorOrigin.Source
                   {
                     filename := (toStr "programs/zkcash/src/lib.rs"),
-                    line := 588#u32
+                    line := 621#u32
                   })),
               compared_values := none
             }
         ok (core.result.Result.Err e, tree_account, tree_token_lamports,
-          signer_lamports, recipient_lamports, fee_recipient_lamports)
+          signer_lamports, recipient, fee_recipient_account)
     | core.ops.control_flow.ControlFlow.Break residual =>
       let r1 ←
         core.result.Result.Insts.CoreOpsTryTraitFromResidualResultInfallible.from_residual
           Unit (core.convert.FromSame anchor_lang.error.Error) residual
-      ok (r1, tree_account, tree_token_lamports, signer_lamports,
-        recipient_lamports, fee_recipient_lamports)
+      ok (r1, tree_account, tree_token_lamports, signer_lamports, recipient,
+        fee_recipient_account)
   else
     let s ← ErrorCode.name ErrorCode.UnknownRoot
     let i ←
@@ -2875,11 +3010,11 @@ def fv_transact_entry
               (anchor_lang.error.ErrorOrigin.Source
               {
                 filename := (toStr "programs/zkcash/src/lib.rs"),
-                line := 573#u32
+                line := 606#u32
               })),
           compared_values := none
         }
     ok (core.result.Result.Err e, tree_account, tree_token_lamports,
-      signer_lamports, recipient_lamports, fee_recipient_lamports)
+      signer_lamports, recipient, fee_recipient_account)
 
 end zkcash
