@@ -45,8 +45,8 @@ instead of assumptions. The surface breaks down as:
 | Rust core/std plumbing | 8 | `TryFrom`, `checked_neg`, `Option::ok_or`, `Result::map_err`, `Display`/`ToString`, `io::Write` |
 | Opaque types | 5 | `FrShim`, `G1Shim`, `Pubkey`, `Hash`, `std::io::Error` |
 
-Of that surface, 26 entries are now **DERIVED** — real Lean definitions, nothing assumed — and
-19 remain **TRUSTED**. The G1 point type and its three operations are defined to mirror
+Of that surface, 31 entries are now **DERIVED** — real Lean definitions, nothing assumed — and
+14 remain **TRUSTED**. The G1 point type and its three operations are defined to mirror
 arkworks 0.5.0 byte for byte, so `verify_proof` depends on exactly three axioms: the `alt_bn128`
 syscalls. `FrShim` is `ZMod bn254_r` with all eight operations defined, borsh
 serialization and the `Vec<u8>` writer it targets are reproduced in full, as are the Rust
@@ -55,8 +55,13 @@ lives in `lean/code_model/hand_written/` and is declared exactly once; previousl
 `axiom curve_shim.G1Shim : Type`, which made them *different types* that no proof could transfer
 between.
 
-The 19 still assumed are 6 CRYPTO (Poseidon and SHA-256), 8 CURVE (the three `alt_bn128` syscalls and
-the five verifying-key constants) and 5 DIAGNOSTIC (`Display`/`Debug`/`to_string` and anchor's error conversions,
+The five verifying-key constants are transcribed from `utils.rs` rather than assumed: `curve_shim` is
+`--opaque`, so Aeneas never sees their bytes, but no trust is involved. The copy is guarded by
+`check_vk_transcription.sh`, which compares it field by field with `VERIFYING_KEY` and runs at the
+end of `extract.sh`.
+
+The 14 still assumed are 6 CRYPTO (Poseidon and SHA-256), 3 CURVE (the three `alt_bn128` syscalls)
+and 5 DIAGNOSTIC (`Display`/`Debug`/`to_string` and anchor's error conversions,
 reachable only on error paths that abort before any state is written). `MODEL_COVERAGE.md` tracks
 reducing these to 6: the three hash functions, which must stay abstract because collision
 resistance is false of any concrete function, and the three `alt_bn128_*` syscalls, which are

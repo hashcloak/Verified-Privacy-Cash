@@ -120,9 +120,9 @@ Recommended order (not size order):
 
 ---
 
-## 2. Trusted base: 22 -> 6
+## 2. Trusted base: 14 -> 6
 
-Current: 26 DERIVED / 19 TRUSTED in `lean/code_model/hand_written/TrustedFuns.lean`.
+Current: 31 DERIVED / 14 TRUSTED in `lean/code_model/hand_written/TrustedFuns.lean`.
 Target: only the assumptions that genuinely cannot be discharged.
 
 ### DIAGNOSTIC — 5 axioms -> 0
@@ -147,12 +147,15 @@ Target: only the assumptions that genuinely cannot be discharged.
       can only be stated about an abstract one. Defining them would make the model
       strictly less useful.
 
-### CURVE — 8 axioms left (was 11) -> 3
+### CURVE — 3 axioms left (was 11) -> 3
 
-- [ ] 5 verifying-key constants -> transcribe from `utils.rs:17-62`. Opaque only
-      because `curve_shim` is `--opaque`; no trust is involved.
-      - [ ] Add a drift guard (test pinning the values). The Rust side const-evals from
-            `VERIFYING_KEY` so it "cannot drift"; a Lean transcription has no such link.
+- [x] 5 verifying-key constants -> DONE, transcribed from `utils.rs:17-62` into
+      `hand_written/TrustedFuns.lean` (between the BEGIN/END VERIFYING KEY markers). Opaque only
+      because `curve_shim` is `--opaque`; no trust is involved. Production code untouched.
+      - [x] Drift guard: `check_vk_transcription.sh` parses `VERIFYING_KEY` and the Lean copy
+            independently and compares them field by field (alpha, beta, gamme, delta, ic;
+            960 bytes); `extract.sh` runs it. Verified to fail on a changed byte, on gamma and
+            delta swapped, and on a rotated key in `utils.rs`.
 - [x] `deserialize_uncompressed`, `negate`, `to_bytes` -> DONE, defined in
       `hand_written/Curve.lean`. Not via Mathlib: they mirror arkworks 0.5.0 byte for byte
       (little-endian coordinates, the two flag bits in y's top byte, the canonical `< q`
@@ -225,7 +228,7 @@ seven times more unproven model.
 | prerequisites (section 0) | 2-3 days |
 | remaining 6 instructions | 3-5 days |
 | SPL trusted surface | 2-3 days |
-| trusted base 19 -> 6 | a few days -- the heavy curve layer is done |
+| trusted base 14 -> 6 | a few days -- the heavy curve layer is done |
 | first proof | unknown — it is the experiment |
 
 Coverage alone: ~2 weeks. Coverage plus a trusted base worth trusting: ~4-5 weeks.

@@ -45,12 +45,12 @@
 // looking at the initializers at all, and because they are BN254 curve data: alpha is a
 // G1 point, beta/gamma/delta are G2 points, and vk_ic is 8 G1 points.
 //
-// Consequence to be aware of: the model does NOT know these byte values -- they arrive in
-// Lean as uninterpreted constants of the right type. That is enough to state "verified
-// against THE verifying key" and to tie the transact model to a single fixed key, but a
-// theorem cannot depend on what the key actually is.
+// Because this module is --opaque, Aeneas never sees these bytes. The Lean model gets them
+// from a hand copy in lean/code_model/hand_written/TrustedFuns.lean instead, and
+// formal-verification/check_vk_transcription.sh (run by extract.sh) fails if that copy and
+// `VERIFYING_KEY` ever differ.
 //
-// Derived from `VERIFYING_KEY` by const-eval rather than copied, so they cannot drift.
+// Derived from `VERIFYING_KEY` by const-eval rather than copied, so on the Rust side they cannot drift.
 // `vk_ic`'s length is 8 (7 public inputs + 1), fixed by the circuit. The `GAMME`
 // spelling follows the field name in `Groth16Verifyingkey`.
 pub const FV_VK_ALPHA_G1: [u8; 64] = crate::utils::VERIFYING_KEY.vk_alpha_g1;
