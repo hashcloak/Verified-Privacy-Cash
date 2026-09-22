@@ -285,6 +285,11 @@ structure TxInputs where
   π: Groth16.Proof -- Groth16 proof for relation S
   mintAddr: Pubkey -- token type
 
+/-- The `PubInputs` record that `inputs` should produce a valid Groth16 proof for. -/
+def TxInputs.pubInputs (inputs : TxInputs) : PubInputs :=
+  { R := inputs.R, pubAmt := inputs.pubAmt, extDataHash := inputs.extDataHash,
+    nullifiers := ![inputs.k0, inputs.k1], outCommitments := ![inputs.outC0, inputs.outC1] }
+
 -- Borsh serialization (for the external data hash binding)
 def natToBytesLE (width n: ℕ ): Bytes :=
   (List.range width).map (fun i => BitVec.ofNat 8 (n >>> (8 * i)))
@@ -349,34 +354,76 @@ def transactEffects (inputs: TxInputs)(oldWorld: World): World :=
     balances := Function.update worldAfterTransfers.balances inputs.t ((worldAfterTransfers.balances inputs.t) + inputs.f)
   }
 
+--/////////////////////////////////////////
+-- Preconditions, one named condition each.
+-- Each is stated over the plain values it depends on, so the code-side theorem for
+-- the corresponding Rust check can refer to it directly.
+--/////////////////////////////////////////
+
+-- R is a non-zero root in the tree's root history.
+abbrev rootKnown (T: Tree) (R: F): Prop :=
+  R ∈ Set.range T.history ∧ R ≠ 0
+
+-- The external data (recipient, amounts, fee, encrypted outputs, mint) hashes to the
+-- value the proof commits to.
+abbrev externalDataBound (inputs: TxInputs): Prop :=
+  externalDataHash inputs = inputs.extDataHash
+
+-- The fee is at least the configured rate, minus the allowed error margin.
+abbrev feeSufficient (cfg: config) (extAmt: ℤ) (f: ℕ): Prop :=
+  let feeErrorMargin := cfg.feeMarginError
+  let feeRate := if extAmt > 0 then cfg.depositFeeRate else cfg.withdrawalFeeRate
+  let expectedFee := (extAmt.natAbs * feeRate) / 10000
+  let minAcceptableFee := (expectedFee * (10000 - feeErrorMargin)) / 10000
+  f ≥ minAcceptableFee
+
+-- The public amount the proof commits to is extAmt - fee, and extAmt is in range.
+abbrev pubAmtConsistent (extAmt: ℤ) (f: ℕ) (pubAmt: F): Prop :=
+  -- reference i64::MIN https://doc.rust-lang.org/std/i64/constant.MIN.html
+  extAmt ≠ -9_223_372_036_854_775_808 ∧
+  (extAmt > 0 → extAmt > f) ∧
+  pubAmt = (extAmt: F) - f
+
+-- The Groth16 proof verifies for the deployed key and these public inputs.
+abbrev proofValid (inputs: TxInputs): Prop :=
+  Groth16.verify Deployment.vk inputs.π inputs.pubInputs
+
+-- Neither input nullifier has been spent before.
+abbrev nullifiersFresh (spent: Finset F) (k0 k1: F): Prop :=
+  k0 ∉ spent ∧ k1 ∉ spent
+
+-- The two input nullifiers differ. Enforced by the circuit (`noDuplicateNullifiers`),
+-- not checked by the program itself.
+abbrev nullifiersDistinct (k0 k1: F): Prop :=
+  k0 ≠ k1
+
+-- A deposit does not exceed the configured maximum.
+abbrev depositWithinLimit (cfg: config) (extAmt: ℤ): Prop :=
+  extAmt > 0 → extAmt ≤ cfg.maxDepositLimit
+
+-- The pool can pay out the withdrawal and the fee and still keep its rent reserve.
+abbrev poolSolvent (solBalance rentExemptMin: ℕ) (extAmt: ℤ) (f: ℕ): Prop :=
+  (extAmt < 0 → solBalance ≥ |extAmt| + f + rentExemptMin) ∧
+  (extAmt ≥ 0 ∧ f > 0 → solBalance ≥ f + rentExemptMin)
+
+-- There is room in the tree for the two output commitments.
+abbrev treeHasRoom (T: Tree): Prop :=
+  T.nextIndex < (2^26-2)
+
 structure transactPreconditions
   (inputs: TxInputs)
   (oldWorld: World): Prop where
-  knownRoot: inputs.R ∈ Set.range oldWorld.state.tree.history ∧ inputs.R ≠ 0
-  externalDataBinding: externalDataHash inputs = inputs.extDataHash
-  minimumFee:
-    let feeErrorMargin := oldWorld.state.config.feeMarginError
-    let feeRate := if inputs.extAmt > 0 then oldWorld.state.config.depositFeeRate else oldWorld.state.config.withdrawalFeeRate
-    let expectedFee := (inputs.extAmt.natAbs * feeRate) / 10000
-    let minAcceptableFee := (expectedFee * (10000 - feeErrorMargin)) / 10000
-    inputs.f ≥ minAcceptableFee
-  pubAmtConsistency:
-    -- reference i64::MIN https://doc.rust-lang.org/std/i64/constant.MIN.html
-    inputs.extAmt ≠ -9_223_372_036_854_775_808 ∧
-    (inputs.extAmt > 0 → inputs.extAmt > inputs.f) ∧
-    inputs.pubAmt = (inputs.extAmt: F) - inputs.f
-  validZKP:
-    let pubInputs: PubInputs := { R := inputs.R, pubAmt := inputs.pubAmt, extDataHash := inputs.extDataHash, nullifiers := ![inputs.k0, inputs.k1], outCommitments := ![inputs.outC0, inputs.outC1] }
-    Groth16.verify Deployment.vk inputs.π pubInputs
-  newNullifiers: inputs.k0 ∉ oldWorld.state.nullifiers ∧ inputs.k1 ∉ oldWorld.state.nullifiers
-  distinctNullifiers: inputs.k0 ≠ inputs.k1
-  depositLimit:
-    inputs.extAmt > 0 → inputs.extAmt ≤ oldWorld.state.config.maxDepositLimit
-  poolSolvency:
-    (inputs.extAmt < 0 → oldWorld.state.solBalance ≥ |inputs.extAmt| + inputs.f + oldWorld.rentExemptMin) ∧
-    (inputs.extAmt ≥ 0 ∧ inputs.f > 0 → oldWorld.state.solBalance ≥ inputs.f +oldWorld.rentExemptMin)
+  knownRoot: rootKnown oldWorld.state.tree inputs.R
+  externalDataBinding: externalDataBound inputs
+  minimumFee: feeSufficient oldWorld.state.config inputs.extAmt inputs.f
+  pubAmtConsistency: pubAmtConsistent inputs.extAmt inputs.f inputs.pubAmt
+  validZKP: proofValid inputs
+  newNullifiers: nullifiersFresh oldWorld.state.nullifiers inputs.k0 inputs.k1
+  distinctNullifiers: nullifiersDistinct inputs.k0 inputs.k1
+  depositLimit: depositWithinLimit oldWorld.state.config inputs.extAmt
+  poolSolvency: poolSolvent oldWorld.state.solBalance oldWorld.rentExemptMin inputs.extAmt inputs.f
   -- The 2 output commitments are added to the tree; make sure there is space for both
-  treeNotFull: oldWorld.state.tree.nextIndex < (2^26-2)
+  treeNotFull: treeHasRoom oldWorld.state.tree
 
 /-- The actual world agrees with the predicted one on everything Privacy Cash controls. -/
 structure AgreesOnProgramEffects (inputs : TxInputs) (predicted actual : World) : Prop where
