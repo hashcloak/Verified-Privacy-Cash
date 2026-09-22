@@ -33,7 +33,11 @@ class PoseidonHashes where
   h_H1: ∀ (x y: F), H1 x = H1 y → x = y
 
 class Sha where
-  sha256: Bytes → BitVec 256
+  sha256: Bytes → Bytes
+
+/-- Read bytes as a number, little-endian (byte 0 is least significant),
+    as `Fr::from_le_bytes_mod_order` does. -/
+def natOfLE (bs : Bytes) : ℕ := bs.foldr (fun b acc => b.toNat + 256 * acc) 0
 
 /-
 Collision resistance / preimage resistance, relativized to a finite set of terms
@@ -191,13 +195,13 @@ def verify
     let vkX : G1 := vk.IC 0 + ∑ i : Fin 7, (pubInputsVec i) • vk.IC i.succ
     Pairing.e π.A π.B = Pairing.e vk.α vk.β * Pairing.e vkX vk.γ * Pairing.e π.C vk.δ
 
--- fixed for this circuit and thus relation S
-variable (vk: Groth16.VerificationKey)
-
--- We assume: If a proof verifies, there is a witness
-axiom soundnessRelationS: ∀ (π: Groth16.Proof) x, Groth16.verify vk π x → ∃ w, RelationS x w
-
 end Groth16
+
+class Deployment where
+  vk: Groth16.VerificationKey -- a fixed circuit
+  soundness: ∀ (π: Groth16.Proof) x, Groth16.verify vk π x → ∃ w, RelationS x w
+
+variable [Deployment]
 
 -- Configurations for the privacy-cash contract
 structure config where
@@ -263,14 +267,6 @@ def appendEffects(c: F) (oldTree: Tree): Tree :=
     rootIndex := newRootIndex
   }
 
-/-
-`transact` is written as follows:
-- Preconditions are a Prop
-- Effects are a function. Inputs: world, txInputs. Output: updated world.
-
-`transact` is the combination of both: given oldWorld, newWorld and txInputs;
-Preconditions are true AND newWorld equals effectsFunction on oldWorld and txInputs
--/
 structure TxInputs where
   R: F -- Merkle root
   pubAmt: F -- public amount
@@ -302,12 +298,8 @@ def vecU8 (bytes: Bytes): Bytes := u32LE bytes.length ++ bytes
 def serealizeExternalData (inputs: TxInputs): Bytes :=
   PubkeyToBytes inputs.A ++ i64LE inputs.extAmt ++ vecU8 inputs.encOut0 ++ vecU8 inputs.encOut1 ++ u64LE inputs.f ++ PubkeyToBytes inputs.t ++ PubkeyToBytes inputs.mintAddr
 
-def externalDataHash (inputs: TxInputs): F :=
-  let ext_data := serealizeExternalData inputs
-  let hash := sha256 ext_data
-  -- Convert the hash to F (ZMod p)
-  let hashNat := hash.toNat
-  (hashNat: F)
+def externalDataHash (inputs : TxInputs) : F :=
+  (natOfLE (sha256 (serealizeExternalData inputs)) : F)
 
 -- The actual moving of funds
 def transferEffects (inputs: TxInputs) (oldWorld: World): World :=
@@ -347,18 +339,17 @@ def transactEffects (inputs: TxInputs)(oldWorld: World): World :=
     state:= { worldAfterTransfers.state with
       -- Append outC0, then append outC1.
       -- This insert the output commitments & updates the Merkle root
-      tree:= appendEffects inputs.outC1 (appendEffects inputs.outC0 oldWorld.state.tree)
+      tree:= appendEffects inputs.outC1 (appendEffects inputs.outC0 worldAfterTransfers.state.tree)
       -- Add nullifiers to the state.
-      nullifiers := oldWorld.state.nullifiers ∪ {inputs.k0, inputs.k1}
+      nullifiers := worldAfterTransfers.state.nullifiers ∪ {inputs.k0, inputs.k1}
       -- The fee leaves the pool's SOL balance (paid out to the fee recipient below).
       solBalance := worldAfterTransfers.state.solBalance - inputs.f
     }
     -- Add the fee to the fee recipient's balance
-    balances := Function.update oldWorld.balances inputs.t ((oldWorld.balances inputs.t) + inputs.f)
+    balances := Function.update worldAfterTransfers.balances inputs.t ((worldAfterTransfers.balances inputs.t) + inputs.f)
   }
 
 structure transactPreconditions
-  (vk: Groth16.VerificationKey)
   (inputs: TxInputs)
   (oldWorld: World): Prop where
   knownRoot: inputs.R ∈ Set.range oldWorld.state.tree.history ∧ inputs.R ≠ 0
@@ -376,7 +367,7 @@ structure transactPreconditions
     inputs.pubAmt = (inputs.extAmt: F) - inputs.f
   validZKP:
     let pubInputs: PubInputs := { R := inputs.R, pubAmt := inputs.pubAmt, extDataHash := inputs.extDataHash, nullifiers := ![inputs.k0, inputs.k1], outCommitments := ![inputs.outC0, inputs.outC1] }
-    Groth16.verify vk inputs.π pubInputs
+    Groth16.verify Deployment.vk inputs.π pubInputs
   newNullifiers: inputs.k0 ∉ oldWorld.state.nullifiers ∧ inputs.k1 ∉ oldWorld.state.nullifiers
   distinctNullifiers: inputs.k0 ≠ inputs.k1
   depositLimit:
@@ -387,17 +378,54 @@ structure transactPreconditions
   -- The 2 output commitments are added to the tree; make sure there is space for both
   treeNotFull: oldWorld.state.tree.nextIndex < (2^26-2)
 
+/-- The actual world agrees with the predicted one on everything Privacy Cash controls. -/
+structure AgreesOnProgramEffects (inputs : TxInputs) (predicted actual : World) : Prop where
+  tree          : actual.state.tree = predicted.state.tree
+  nullifiers    : actual.state.nullifiers = predicted.state.nullifiers
+  solBalance    : actual.state.solBalance = predicted.state.solBalance
+  config        : actual.state.config = predicted.state.config
+  rentExemptMin : actual.rentExemptMin = predicted.rentExemptMin
+  payees : ∀ k, (k = inputs.A ∨ k = inputs.t) → k ≠ inputs.s →
+    actual.balances k = predicted.balances k
+
 -- ∧ is written by "\" + "and"
+/-
+`transact` holds when a transaction from `oldWorld` to `newWorld` is allowed and has
+the effects the program is responsible for.
+
+The spec does not model rent or network fees. On chain, a transaction also makes the
+signer pay rent for the two new nullifier accounts and the network fee, and those
+nullifier accounts receive the rent. Because of that, we cannot require `newWorld` to
+be exactly `transactEffects inputs oldWorld`: that would be false for every real
+transaction, and the code model could never be connected to this spec.
+
+So we compare only the parts the program itself controls. `transact` requires:
+- the preconditions hold in `oldWorld`, and
+- `newWorld` agrees with `transactEffects inputs oldWorld` on the Merkle tree, the
+  nullifier set, the pool's SOL balance, the config, the rent-exempt minimum, and the
+  balances of the recipient and the fee recipient.
+
+Balances that rent or network fees also move are not compared: the signer's balance
+(including when the signer is also the recipient or fee recipient) and the nullifier
+accounts' balances.
+
+`transact` also does not state that all other balances are unchanged. No theorem here
+depends on it; the code-side connection theorem states it separately.
+-/
 def transact
-  (vk: Groth16.VerificationKey)
   (inputs: TxInputs)
   (oldWorld: World)
   (newWorld: World)
   : Prop :=
   -- Preconditions hold AND
-  (transactPreconditions vk inputs oldWorld) ∧
-  -- The effects have been executed correctly, i.e. the new world equals applying the effects function to the old world
-    (transactEffects inputs oldWorld = newWorld)
+  (transactPreconditions inputs oldWorld) ∧
+  -- The effects have been executed correctly, i.e. newWorld agrees with transactEffects on the parts the program controls
+  AgreesOnProgramEffects inputs (transactEffects inputs oldWorld) newWorld
+
+-- Future work: model rent for the nullifier accounts and network fees in
+-- `transactEffects`. Then `transact` can require `newWorld = transactEffects inputs oldWorld`
+-- again, which also states that no other balance changed. Existing theorems carry over,
+-- since equality implies every comparison made here.
 
 --/////////////////////////////////////////
 -- (5) Invariants
@@ -406,16 +434,16 @@ def transact
 
 -- A claim about a pair of worlds; can we go from w1 to w2?
 --   This lets us reason about "in any number of steps"
-inductive ReachableWorld (vk: Groth16.VerificationKey): World → World → Prop where
+inductive ReachableWorld: World → World → Prop where
   -- No transactions; true for any world
- | noStep(w1: World): ReachableWorld vk w1 w1
+ | noStep(w1: World): ReachableWorld w1 w1
  -- Given a reachable pair w1, w2 and
  -- a proof that transact succeeds from w2 to w3,
  -- Then obtain proof that w3 is reachable from w1
  | extend{w1 w2 w3: World}(txInputs: TxInputs):
-      ReachableWorld vk w1 w2 →
-      transact vk txInputs w2 w3 →
-       ReachableWorld vk w1 w3
+      ReachableWorld w1 w2 →
+      transact txInputs w2 w3 →
+       ReachableWorld w1 w3
 
 -- 1. Set of nullifiers can only grow.
 
@@ -428,24 +456,22 @@ inductive ReachableWorld (vk: Groth16.VerificationKey): World → World → Prop
 -- When: transact succeeds, producing a new_world
 -- Then: world.nullifiers subset new_world.nullifier
 lemma nullifier_set_monotonicity_step
-  (vk: Groth16.VerificationKey)
   (oldWorld newWorld: World)
   (inputs: TxInputs)
-  (h: transact vk inputs oldWorld newWorld)
+  (h: transact inputs oldWorld newWorld)
   : oldWorld.state.nullifiers ⊆ newWorld.state.nullifiers := by
-  -- `transact` gives us that `newWorld` is exactly `transactEffects inputs oldWorld`.
-  obtain ⟨_, heffects⟩ := h
-  -- `transactEffects` sets the new nullifier set to `oldWorld.state.nullifiers ∪ {k0, k1}`,
-  -- (transferEffects, which runs first, never touches `nullifiers`), so the old set is
-  -- trivially a subset of the union.
-  simp only [← heffects, transactEffects]
-  exact Finset.subset_union_left
+  -- `transact` gives us that `newWorld` agrees with `transactEffects inputs oldWorld`, and its
+  -- preconditions guarantee `k0` is a fresh nullifier, absent from `oldWorld`.
+  obtain ⟨_, hagree⟩ := h
+  -- the new nullifier set is the one `transactEffects` predicts
+  rw [hagree.nullifiers]
+  simp only [transactEffects, transferEffects]
+  split_ifs <;> exact Finset.subset_union_left
 
 -- General proof by induction for Reachable Worlds
 theorem nullifier_set_monotonicity
-  (vk: Groth16.VerificationKey)
   (w1 w2: World)
-  (h: ReachableWorld vk w1 w2)
+  (h: ReachableWorld w1 w2)
   : w1.state.nullifiers ⊆ w2.state.nullifiers := by induction h with
   -- For same world, it holds trivially
   | noStep => exact Finset.Subset.refl _
@@ -455,7 +481,7 @@ theorem nullifier_set_monotonicity
     -- `ih : w1.state.nullifiers ⊆ w2.state.nullifiers` (from the reachability so far), and
     -- the single `transact` step from w2 to w3 only ever grows the nullifier set
     -- (nullifier_set_monotonicity_step). Chain the two subset relations.
-    exact ih.trans (nullifier_set_monotonicity_step vk _ _ inputs transact_proof)
+    exact ih.trans (nullifier_set_monotonicity_step _ _ inputs transact_proof)
 
 -- 2. No double spend across transactions
 -- Given:
@@ -466,13 +492,12 @@ theorem nullifier_set_monotonicity
 -- When: transact
 -- Then: FAIL. This is not possible
 theorem no_double_spend_across_txs
-  (vk: Groth16.VerificationKey)
   (oldWorld newWorld: World)
   (inputs: TxInputs)
   (n1: F)
   (h1: n1 ∈ oldWorld.state.nullifiers)
   (h2: n1 = inputs.k0 ∨ n1 = inputs.k1)
-  (h3: transact vk inputs oldWorld newWorld)
+  (h3: transact inputs oldWorld newWorld)
   : False := by
   obtain ⟨hpre, _⟩ := h3
   obtain ⟨hk0New, hk1New⟩ := hpre.newNullifiers
@@ -491,13 +516,12 @@ theorem no_double_spend_across_txs
 -- When: transact
 -- Then: FAIL. This is not possible
 theorem no_double_spend_within_transaction
-  (vk: Groth16.VerificationKey)
   (oldWorld newWorld: World)
   (inputs: TxInputs)
   (n1 n2: F)
   (h1: n1 = n2)
   (h2: (inputs.k0 = n1 ∧ inputs.k1 = n2) ∨ (inputs.k0 = n2 ∧ inputs.k1 = n1))
-  (h3: transact vk inputs oldWorld newWorld)
+  (h3: transact inputs oldWorld newWorld)
   : False := by
   obtain ⟨hpre, _⟩ := h3
   -- `distinctNullifiers` requires k0 ≠ k1; but under either assignment of {n1, n2}
@@ -515,16 +539,15 @@ theorem no_double_spend_within_transaction
 -- When: transact
 -- Then: new_world.state.solBalance = old_world.state.solBalance + inputs.extAmt - inputs.f
 theorem sol_balance_correctness
-  (vk: Groth16.VerificationKey)
   (oldWorld newWorld : World)
   (inputs: TxInputs)
-  (h1: transact vk inputs oldWorld newWorld)
-  : newWorld.state.solBalance = oldWorld.state.solBalance + inputs.extAmt - inputs.f
+  (h1: transact inputs oldWorld newWorld)
+  : (newWorld.state.solBalance : ℤ) = oldWorld.state.solBalance + inputs.extAmt - inputs.f
   := by
   obtain ⟨hpre, heff⟩ := h1
   have hsolvNeg := hpre.poolSolvency.1
   have hsolvNonneg := hpre.poolSolvency.2
-  subst heff
+  rw [heff.solBalance]
   simp only [transactEffects, transferEffects]
   split_ifs with hz hpos <;> (try dsimp only)
   · -- transfer (extAmt = 0): only the fee leaves the pool, and it never underflows
@@ -557,13 +580,12 @@ theorem sol_balance_correctness
     -- (theorem 2 TODO) OR used openings are not valid; used root is in history but doesn't equal the root the opening adds up to
   -- a new_world
 theorem transact_fails_when_coin_not_added
-  (vk: Groth16.VerificationKey)
   (oldWorld newWorld: World)
   (differentRoot: F)
   (inputs: TxInputs)
   (h1: differentRoot ∉ Set.range oldWorld.state.tree.history)
   (h2: inputs.R = differentRoot)
-  (h3: transact vk inputs oldWorld newWorld)
+  (h3: transact inputs oldWorld newWorld)
   : False := by
   obtain ⟨hpre, _⟩ := h3
   -- `knownRoot` requires `inputs.R` to be a historic root; `h2` identifies it with
