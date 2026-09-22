@@ -24,33 +24,12 @@ class PoseidonHashes where
   H3: F → F → F → F
   H4: F → F → F → F → F
 
-  -- collision resistance of poseidon
-
-  -- H1 : F → F has equal-cardinality domain and codomain, so asserting it is
-  -- globally injective is consistent. H2/H3/H4 map into F from a strictly
-  -- larger finite domain (F×F, F×F×F, F×F×F×F), so global injectivity is
-  -- mathematically impossible by pigeonhole (|domain| > |F| = |codomain|):
-  h_H1: ∀ (x y: F), H1 x = H1 y → x = y
-
 class Sha where
   sha256: Bytes → Bytes
 
 /-- Read bytes as a number, little-endian (byte 0 is least significant),
     as `Fr::from_le_bytes_mod_order` does. -/
 def natOfLE (bs : Bytes) : ℕ := bs.foldr (fun b acc => b.toNat + 256 * acc) 0
-
-/-
-Collision resistance / preimage resistance, relativized to a finite set of terms
-that a specific proof actually needs, rather than asserted globally (which is
-mathematically inconsistent for H2, H3, H4, and sha256 -- see notes above).
-Meant to be passed as an explicit hypothesis on the theorems that need them.
--/
-
-def CollisionResistantOn {α β: Type*} (H: α → β) (S: Set α): Prop :=
-  Set.InjOn H S
-
-def PreimageResistantOn {α β: Type*} (H: α → β) (known: Set α): Prop :=
-  H ⁻¹' (H '' known) ⊆ known
 
 -- open the namespaces defined by the class definition
 open PoseidonHashes Sha
@@ -62,6 +41,23 @@ https://lean-lang.org/doc/reference/4.26.0/Namespaces-and-Sections/#Lean___Parse
 "Section variables are parameters that are automatically added to declarations that mention them."
 -/
 variable [PoseidonHashes] [Sha]
+
+/-
+Security properties are stated as "the property holds, OR a hash collision at specific
+values determined by the theorem's hypotheses". We never assume collision-freeness
+(false for H2–H4 and unprovable for H1), and we never write the break as
+`∃ a b, …Collision a b` (always true, hence vacuous). Breaks are Prop-valued structures.
+-/
+
+/-- `a` and `b` are different inputs with the same `H1` output. -/
+structure H1Collision (a b : F) : Prop where
+  ne : a ≠ b
+  eq : H1 a = H1 b
+
+/-- Two different argument tuples with the same `H4` output. -/
+structure H4Collision (a b : F × F × F × F) : Prop where
+  ne : a ≠ b
+  eq : H4 a.1 a.2.1 a.2.2.1 a.2.2.2 = H4 b.1 b.2.1 b.2.2.1 b.2.2.2
 
 -- Keys, commitments, nullifiers
 def pubKey (sk: F): F := H1 sk
