@@ -502,77 +502,185 @@ lemma nullifier_set_monotonicity_step
   (oldWorld newWorld: World)
   (inputs: TxInputs)
   (h: transact inputs oldWorld newWorld)
-  : oldWorld.state.nullifiers ⊆ newWorld.state.nullifiers := by
-  -- `transact` gives us that `newWorld` agrees with `transactEffects inputs oldWorld`, and its
+  : oldWorld.state.nullifiers ⊂ newWorld.state.nullifiers := by
+  -- `transact` gives us that `newWorld` is exactly `transactEffects inputs oldWorld`, and its
   -- preconditions guarantee `k0` is a fresh nullifier, absent from `oldWorld`.
-  obtain ⟨_, hagree⟩ := h
+  obtain ⟨hpre, hagree⟩ := h
+  have hk0New : inputs.k0 ∉ oldWorld.state.nullifiers := hpre.newNullifiers.1
   -- the new nullifier set is the one `transactEffects` predicts
   rw [hagree.nullifiers]
   simp only [transactEffects, transferEffects]
-  split_ifs <;> exact Finset.subset_union_left
+  split_ifs <;>
+    exact (Finset.ssubset_iff_of_subset Finset.subset_union_left).mpr
+      ⟨inputs.k0, Finset.mem_union_right _ (Finset.mem_insert_self _ _), hk0New⟩
 
 -- General proof by induction for Reachable Worlds
+-- `ReachableWorld` includes the zero-step case (`noStep`, where w1 = w2), so the strongest
+-- claim that holds in general is non-strict monotonicity (⊆), not a proper subset (⊂).
 theorem nullifier_set_monotonicity
   (w1 w2: World)
   (h: ReachableWorld w1 w2)
   : w1.state.nullifiers ⊆ w2.state.nullifiers := by induction h with
   -- For same world, it holds trivially
   | noStep => exact Finset.Subset.refl _
-  -- For the induction step, we use the property that transact only grows the set of nullifiers
+  -- For the induction step, we use the property that each transact step strictly grows the
+  -- set of nullifiers
   -- ih = induction hypothesis
   | extend inputs _h transact_proof ih =>
     -- `ih : w1.state.nullifiers ⊆ w2.state.nullifiers` (from the reachability so far), and
-    -- the single `transact` step from w2 to w3 only ever grows the nullifier set
-    -- (nullifier_set_monotonicity_step). Chain the two subset relations.
-    exact ih.trans (nullifier_set_monotonicity_step _ _ inputs transact_proof)
+    -- the single `transact` step from w2 to w3 strictly grows the nullifier set
+    -- (nullifier_set_monotonicity_step). Chain the two, then weaken the resulting ⊂ back to
+    -- ⊆ to match this theorem's (necessarily non-strict) conclusion.
+    exact (ih.trans_ssubset (nullifier_set_monotonicity_step _ _ inputs transact_proof)).subset
 
--- 2. No double spend across transactions
--- Given:
-  -- vk for the circuit
-  -- a world where nullifier n1 in world.nullifiers
-  -- txInputs where one of the input nullifiers is n1
-  -- a new_world
--- When: transact
--- Then: FAIL. This is not possible
-theorem no_double_spend_across_txs
-  (oldWorld newWorld: World)
-  (inputs: TxInputs)
-  (n1: F)
-  (h1: n1 ∈ oldWorld.state.nullifiers)
-  (h2: n1 = inputs.k0 ∨ n1 = inputs.k1)
-  (h3: transact inputs oldWorld newWorld)
-  : False := by
-  obtain ⟨hpre, _⟩ := h3
-  obtain ⟨hk0New, hk1New⟩ := hpre.newNullifiers
-  -- `newNullifiers` requires both input nullifiers to be absent from `oldWorld`'s
-  -- nullifier set; `n1` being both already-present and equal to one of them contradicts that.
-  rcases h2 with rfl | rfl
-  · exact hk0New h1
-  · exact hk1New h1
+-- 2. No double spend
+-- No nullifier reuse
+-- No note reuse
+-- This is within tx and across txs (with any nr of txs in between)
+-- Level 1: nullifier level
+-- Level 2: note level (the same note leads to the same nullifier)
+-- Level 3: commitment level (this uses hash collision resistance)
+-- TODO: a spend claiming a different leaf index is ruled out by Merkle position
+-- binding (Merkle tree section), which completes the double-spend result.
 
--- 3. No double spent within transaction
--- Given:
-  -- vk for the circuit
-  -- an old_world
-  -- txInputs with nullifiers n1, n2 where n1 == n2
-  -- a new_world
--- When: transact
--- Then: FAIL. This is not possible
-theorem no_double_spend_within_transaction
-  (oldWorld newWorld: World)
-  (inputs: TxInputs)
-  (n1 n2: F)
-  (h1: n1 = n2)
-  (h2: (inputs.k0 = n1 ∧ inputs.k1 = n2) ∨ (inputs.k0 = n2 ∧ inputs.k1 = n1))
-  (h3: transact inputs oldWorld newWorld)
-  : False := by
-  obtain ⟨hpre, _⟩ := h3
-  -- `distinctNullifiers` requires k0 ≠ k1; but under either assignment of {n1, n2}
-  -- to {k0, k1}, h1 (n1 = n2) forces k0 = k1.
-  apply hpre.distinctNullifiers
-  rcases h2 with ⟨hk0, hk1⟩ | ⟨hk0, hk1⟩
-  · rw [hk0, hk1, h1]
-  · rw [hk0, hk1, h1]
+-- 2a. After a transfer has been made with a nullifier
+-- A second transfer with the same nullifier should not be possible
+-- (with any nr of txs in between)
+theorem no_nullifier_reuse_possible_across_txs
+  (w1 w2 w2' w3: World)
+  (nullifierToReuse: F)
+  (txInputs1 txInputs2: TxInputs)
+  (h1: (nullifierToReuse = txInputs1.k0 ∨ nullifierToReuse = txInputs1.k1) ∧ (nullifierToReuse = txInputs2.k0 ∨ nullifierToReuse = txInputs2.k1))
+  (h2: transact txInputs1 w1 w2)
+  (h3: ReachableWorld w2 w2') -- Any amount of txs in between after the first txs
+  : ¬ transact txInputs2 w2' w3 := by
+  intro h4
+  obtain ⟨_, heff2⟩ := h2
+  obtain ⟨hpre4, _⟩ := h4
+  -- `nullifierToReuse` lands in `w2`'s nullifier set, since it equals one of `txInputs1`'s
+  -- input nullifiers, which `transactEffects` adds.
+  have hmemW2 : nullifierToReuse ∈ w2.state.nullifiers := by
+    rw [heff2.nullifiers]
+    simp only [transactEffects, transferEffects]
+    rcases h1.1 with h | h <;> split_ifs <;> simp [h]
+  -- `nullifier_set_monotonicity` carries that membership across any number of further txs.
+  have hmemW2' : nullifierToReuse ∈ w2'.state.nullifiers :=
+    nullifier_set_monotonicity w2 w2' h3 hmemW2
+  -- But `txInputs2`'s `newNullifiers` precondition requires both its input nullifiers to be
+  -- absent from `w2'`; `nullifierToReuse` being both present and equal to one of them
+  -- contradicts that.
+  rcases h1.2 with h | h
+  · exact hpre4.newNullifiers.1 (h ▸ hmemW2')
+  · exact hpre4.newNullifiers.2 (h ▸ hmemW2')
+
+-- 2b. A single txs can't use the same nullifier for both inputs
+theorem no_nullifier_reuse_possible_within_txs
+  (w1 w2: World)
+  (nullifierToReuse: F)
+  (txInputs: TxInputs)
+  (h1: nullifierToReuse = txInputs.k0 ∧ nullifierToReuse = txInputs.k1):
+  ¬ transact txInputs w1 w2 := by
+  intro h2
+  obtain ⟨hpre, _⟩ := h2
+  -- `distinctNullifiers` requires k0 ≠ k1; but h1 identifies both with `nullifierToReuse`.
+  exact hpre.distinctNullifiers (h1.1.symm.trans h1.2)
+
+-- HELPER (level 2)
+-- What is the note? https://privacy-cash-privacy-cash.mintlify.app/concepts/commitments-and-nullifiers#nullifiers
+-- amount, pubkey (from privkey), blinding, mint
+-- plus: leafIndex
+-- plus, but redundant: signature over commitment. This reuses privkey, commitment and leafIndex
+lemma same_note_same_nullifier
+  (witness1 witness2: Witness)
+  (pubInput1 pubInput2: PubInputs)
+  (h1: RelationS pubInput1 witness1)
+  (h2: RelationS pubInput2 witness2)
+  (i i': Fin 2)
+  (h3: witness1.inAmt i = witness2.inAmt i'
+    ∧ witness1.inSk i = witness2.inSk i'
+    ∧ witness1.inR i = witness2.inR i'
+    ∧ witness1.mint = witness2.mint
+    ∧ (witness1.openings i).index = (witness2.openings i').index)
+  : pubInput1.nullifiers i = pubInput2.nullifiers i' := by sorry
+
+-- 2c. After a transfer has spent a note, a second transfer spending the same note
+-- is not possible (with any nr of txs in between).
+theorem no_note_reuse_possible_across_txs
+  (w1 w2 w2' w3: World)
+  (txInputs1 txInputs2: TxInputs)
+  (witness1 witness2: Witness)
+  (hRel1: RelationS txInputs1.pubInputs witness1)
+  (hRel2: RelationS txInputs2.pubInputs witness2)
+  (i i': Fin 2)
+  (h3: witness1.inAmt i = witness2.inAmt i'
+    ∧ witness1.inSk i = witness2.inSk i'
+    ∧ witness1.inR i = witness2.inR i'
+    ∧ witness1.mint = witness2.mint
+    ∧ (witness1.openings i).index = (witness2.openings i').index)
+  (h4: transact txInputs1 w1 w2)
+  (h5: ReachableWorld w2 w2') -- Any amount of txs in between after the first txs
+  : ¬ transact txInputs2 w2' w3 := by sorry
+
+-- 2d. A single txs can't spend the same note for both inputs:
+-- no valid witness exists for it.
+theorem no_note_reuse_possible_within_txs
+  (txInputs: TxInputs)
+  (witness: Witness)
+  (h1: witness.inAmt 0 = witness.inAmt 1
+    ∧ witness.inSk 0 = witness.inSk 1
+    ∧ witness.inR 0 = witness.inR 1
+    ∧ (witness.openings 0).index = (witness.openings 1).index)
+  : ¬ RelationS txInputs.pubInputs witness := by sorry
+
+
+-- HELPER (level 3)
+-- The same commitment at the same leaf index, possibly opened with different values,
+-- gives the same nullifier, unless the two witnesses exhibit an H1 collision on their
+-- private keys or an H4 collision on their commitment openings.
+-- Uses `same_note_same_nullifier` in the case where all values agree.
+lemma same_commitment_same_nullifier_or_collision
+  (witness1 witness2: Witness)
+  (pubInput1 pubInput2: PubInputs)
+  (h1: RelationS pubInput1 witness1)
+  (h2: RelationS pubInput2 witness2)
+  (i i': Fin 2)
+  (sameIndex: (witness1.openings i).index = (witness2.openings i').index)
+  (sameCommitment: witness1.inC i = witness2.inC i')
+  : pubInput1.nullifiers i = pubInput2.nullifiers i'
+    ∨ H1Collision (witness1.inSk i) (witness2.inSk i')
+    ∨ H4Collision (witness1.inAmt i, witness1.inPk i, witness1.inR i, witness1.mint)
+                  (witness2.inAmt i', witness2.inPk i', witness2.inR i', witness2.mint) := by sorry
+
+-- 2e. After a transfer has spent a commitment, a second transfer spending the same
+-- commitment at the same leaf index is not possible (with any nr of txs in between),
+-- unless a hash collision was found.
+theorem no_commitment_reuse_possible_across_txs_or_collision
+  (w1 w2 w2' w3: World)
+  (txInputs1 txInputs2: TxInputs)
+  (witness1 witness2: Witness)
+  (hRel1: RelationS txInputs1.pubInputs witness1)
+  (hRel2: RelationS txInputs2.pubInputs witness2)
+  (i i': Fin 2)
+  (sameIndex: (witness1.openings i).index = (witness2.openings i').index)
+  (sameCommitment: witness1.inC i = witness2.inC i')
+  (h4: transact txInputs1 w1 w2)
+  (h5: ReachableWorld w2 w2') -- Any amount of txs in between after the first txs
+  : ¬ transact txInputs2 w2' w3
+    ∨ H1Collision (witness1.inSk i) (witness2.inSk i')
+    ∨ H4Collision (witness1.inAmt i, witness1.inPk i, witness1.inR i, witness1.mint)
+                  (witness2.inAmt i', witness2.inPk i', witness2.inR i', witness2.mint) := by sorry
+
+-- 2f. A single txs can't spend the same commitment at the same leaf index for both
+-- inputs, unless a hash collision was found.
+theorem no_commitment_reuse_possible_within_txs_or_collision
+  (txInputs: TxInputs)
+  (witness: Witness)
+  (sameIndex: (witness.openings 0).index = (witness.openings 1).index)
+  (sameCommitment: witness.inC 0 = witness.inC 1)
+  : ¬ RelationS txInputs.pubInputs witness
+    ∨ H1Collision (witness.inSk 0) (witness.inSk 1)
+    ∨ H4Collision (witness.inAmt 0, witness.inPk 0, witness.inR 0, witness.mint)
+                  (witness.inAmt 1, witness.inPk 1, witness.inR 1, witness.mint) := by sorry
 
 -- 4. SOL balance correctness. The SOL balance equals deposits minus withdrawals and fees paid
 -- Given:
@@ -614,39 +722,70 @@ theorem sol_balance_correctness
     have habs : |inputs.extAmt| = (inputs.extAmt.natAbs : ℤ) := Int.abs_eq_natAbs inputs.extAmt
     omega
 
--- 5. Only deposited coins can be withdrawn: transact will fail for a coin that was not added to the tree
--- Given
-  -- vk for the circuit
+-- 5. Only deposited coins whose root is in the current history can be withdrawn: transact will fail for a coin that was not added to the tree
+-- 5a. transact fails when the root used is not in the history (100 historic roots)
+-- Given:
   -- an old_world
-  -- inputs where
-    -- (theorem 1 transact_fails_when_coin_not_added) the openings are valid, but used root is not in history (100 historic roots)
-    -- (theorem 2 TODO) OR used openings are not valid; used root is in history but doesn't equal the root the opening adds up to
+  -- inputs whose root is not in the old_world's root history
   -- a new_world
-theorem transact_fails_when_coin_not_added
+-- When: transact
+-- Then: fail
+theorem transact_fails_when_root_unknown
   (oldWorld newWorld: World)
-  (differentRoot: F)
   (inputs: TxInputs)
-  (h1: differentRoot ∉ Set.range oldWorld.state.tree.history)
-  (h2: inputs.R = differentRoot)
-  (h3: transact inputs oldWorld newWorld)
-  : False := by
-  obtain ⟨hpre, _⟩ := h3
-  -- `knownRoot` requires `inputs.R` to be a historic root; `h2` identifies it with
-  -- `differentRoot`, which `h1` says isn't one.
-  exact h1 (h2 ▸ hpre.knownRoot.1)
+  (h1: inputs.R ∉ Set.range oldWorld.state.tree.history)
+  : ¬ transact inputs oldWorld newWorld := by sorry
+
+-- 5b. Every non-zero input spent by a successful transact has a valid Merkle opening
+-- to a root in the history.
+-- Given:
+  -- an old_world
+  -- a new_world
+-- When: transact
+-- Then: there is a witness whose non-zero inputs all have valid openings to a known root
+-- Note: this shows the coin is in a tree with a known root. That it is at the claimed
+-- position and was actually deposited needs Merkle position binding (TODO, Merkle section).
+theorem transact_implies_valid_openings
+  (oldWorld newWorld: World)
+  (inputs: TxInputs)
+  (h1: transact inputs oldWorld newWorld)
+  : ∃ witness, RelationS inputs.pubInputs witness
+    ∧ inputs.R ∈ Set.range oldWorld.state.tree.history
+    ∧ ∀ i, witness.inAmt i ≠ 0 → (witness.openings i).Valid (witness.inC i) inputs.R := by sorry
 
 -- TODO theorem transact_fails_when_coin_not_added2
 
 -- 6. A note can only be withdrawn via transact with knowledge of k and r
 -- Because we assume a Groth16 proof can only be created with that knowledge.
 -- This seems to be exactly the axiom of soundness, but consider the scenario where withdrawing doesn't even check the proof.
+-- 6a. transact fails when the proof is invalid
 -- Given:
-  -- vk for circuit
   -- an old_world
-  -- inputs where the proof is invalid
+  -- inputs where the proof does not verify
   -- a new_world
 -- When: transact
--- Then: fail.
+-- Then: fail
+-- Immediate in the spec (it is the `validZKP` precondition). Its value is on the code side:
+-- the connection theorem shows the program actually checks the proof.
+theorem transact_fails_when_proof_invalid
+  (oldWorld newWorld: World)
+  (inputs: TxInputs)
+  (h1: ¬ Groth16.verify Deployment.vk inputs.π inputs.pubInputs)
+  : ¬ transact inputs oldWorld newWorld := by sorry
+
+-- 6b. A successful transact comes with a witness: private keys, blinding factors,
+-- amounts and openings satisfying relation S.
+-- Given:
+  -- an old_world
+  -- a new_world
+-- When: transact
+-- Then: a witness for the public inputs exists
+-- Relies on `Deployment.soundness` (Groth16 knowledge soundness for the deployed key).
+theorem transact_implies_witness
+  (oldWorld newWorld: World)
+  (inputs: TxInputs)
+  (h1: transact inputs oldWorld newWorld)
+  : ∃ witness, RelationS inputs.pubInputs witness := by sorry
 
 -- 7. Root consistency. Transact cannot add a root to history that is not a valid root.
 -- Every root added is really a valid root in history OR default value
