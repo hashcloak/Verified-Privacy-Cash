@@ -59,11 +59,30 @@ structure H4Collision (a b : F × F × F × F) : Prop where
   ne : a ≠ b
   eq : H4 a.1 a.2.1 a.2.2.1 a.2.2.2 = H4 b.1 b.2.1 b.2.2.1 b.2.2.2
 
+/-- Two different byte strings whose little-endian, mod-`p` reduced `sha256` digests
+    collide -- the actual hash used to bind external transaction data
+    (`externalDataHash`) into the circuit's public inputs. A weaker (hence easier to
+    obtain) break than a raw `sha256` collision, since it also holds when two distinct
+    digests happen to agree mod `p`. -/
+structure Sha256Collision (a b : Bytes) : Prop where
+  ne : a ≠ b
+  eq : (natOfLE (sha256 a) : F) = (natOfLE (sha256 b) : F)
+
 -- Keys, commitments, nullifiers
 def pubKey (sk: F): F := H1 sk
 def commit (amt pk r mint: F): F := H4 amt pk r mint
 def signature (sk c: F) (leafIndex: Fin (2^26)): F := H3 sk c leafIndex
 def nullifier (c sign: F) (leafIndex: Fin (2^26)): F := H3 c leafIndex sign
+
+-- Pure helper: a commitment determines the tuple that produced it, unless an H4 collision.
+lemma commitment_determines_value_or_collision
+  (amt pk r mint amt' pk' r' mint' : F)
+  (h : commit amt pk r mint = commit amt' pk' r' mint')
+  : (amt, pk, r, mint) = (amt', pk', r', mint')
+    ∨ H4Collision (amt, pk, r, mint) (amt', pk', r', mint') := by
+  by_cases heq : (amt, pk, r, mint) = (amt', pk', r', mint')
+  · exact Or.inl heq
+  · exact Or.inr ⟨heq, h⟩
 
 -- Merkle trees
 structure Opening where
@@ -191,11 +210,29 @@ def verify
     let vkX : G1 := vk.IC 0 + ∑ i : Fin 7, (pubInputsVec i) • vk.IC i.succ
     Pairing.e π.A π.B = Pairing.e vk.α vk.β * Pairing.e vkX vk.γ * Pairing.e π.C vk.δ
 
+/-- Two different public-input vectors whose `vk`-weighted `IC` combinations pair
+    identically against `γ`. This is the break needed to defeat binding of `vk` to its
+    public inputs -- deliberately stated at the `GT` level (what group cancellation on
+    two `verify` equations actually yields), not as `G1`-level equality of the `IC`
+    combinations themselves: concluding the latter would need the pairing to be
+    non-degenerate in its first argument, an injectivity assumption the `Pairing` class
+    does not make, for the same reason hash collision-freeness is never assumed. Under a
+    genuinely non-degenerate pairing this collapses to a real discrete-log relation among
+    `IC`, but nothing here assumes that. -/
+structure ICRelation (vk : VerificationKey) (x x' : PubInputs) : Prop where
+  ne : x ≠ x'
+  eq : Pairing.e (vk.IC 0 + ∑ i : Fin 7, (toVector x i) • vk.IC i.succ) vk.γ
+     = Pairing.e (vk.IC 0 + ∑ i : Fin 7, (toVector x' i) • vk.IC i.succ) vk.γ
+
 end Groth16
 
 class Deployment where
   vk: Groth16.VerificationKey -- a fixed circuit
   soundness: ∀ (π: Groth16.Proof) x, Groth16.verify vk π x → ∃ w, RelationS x w
+  -- Groth16 completeness for the deployed key: every valid witness has *some* proof
+  -- that verifies. The dual of `soundness`, needed for invariant 10 (a well-formed
+  -- spend is never blocked by an unobtainable proof, only by its other preconditions).
+  completeness: ∀ x w, RelationS x w → ∃ π, Groth16.verify vk π x
 
 variable [Deployment]
 
@@ -263,6 +300,17 @@ def appendEffects(c: F) (oldTree: Tree): Tree :=
     rootIndex := newRootIndex
   }
 
+/-- The tree obtained by appending a sequence of commitments, in order, to `t0`. -/
+def foldAppend (cs: List F) (t0: Tree): Tree :=
+  cs.foldl (fun t c => appendEffects c t) t0
+
+/-- `appendEffects`'s `history` is always the old `history`, updated at the new root
+    slot with the new root -- stated without unfolding how that new root is computed,
+    so it composes regardless of the Merkle internals. -/
+lemma appendEffects_history (c: F) (t: Tree) :
+    (appendEffects c t).history
+      = Function.update t.history (t.rootIndex + 1) (appendEffects c t).root := rfl
+
 structure TxInputs where
   R: F -- Merkle root
   pubAmt: F -- public amount
@@ -326,6 +374,13 @@ def transferEffects (inputs: TxInputs) (oldWorld: World): World :=
 
 
     }
+
+/-- `transferEffects` only ever touches `solBalance` and `balances`; the tree is
+    untouched either way. -/
+lemma transferEffects_tree (inputs: TxInputs) (oldWorld: World) :
+    (transferEffects inputs oldWorld).state.tree = oldWorld.state.tree := by
+  unfold transferEffects
+  split_ifs <;> rfl
 
 /-
 - **Transfer**([doc ref](https://privacy-cash-privacy-cash.mintlify.app/concepts/how-it-works#universal-joinsplit-transactions)):
@@ -475,6 +530,25 @@ def transact
 --/////////////////////////////////////////
 -- Properties that hold for all reachable states.
 
+def initTree : Tree := {
+  nextIndex := 0
+  subtrees := fun i => Z i.val
+  root:= Z 26
+  history := fun i => Z 26 -- TODO check is this correct
+  rootIndex := 0
+}
+
+def initWorld(config: config)(balances: Pubkey → ℕ)(rentExemptMin: ℕ) : World := {
+  state := {
+    tree := initTree
+    nullifiers := ∅
+    solBalance := 0
+    config := config
+  }
+  balances := balances
+  rentExemptMin := rentExemptMin
+}
+
 -- A claim about a pair of worlds; can we go from w1 to w2?
 --   This lets us reason about "in any number of steps"
 inductive ReachableWorld: World → World → Prop where
@@ -540,8 +614,8 @@ theorem nullifier_set_monotonicity
 -- Level 1: nullifier level
 -- Level 2: note level (the same note leads to the same nullifier)
 -- Level 3: commitment level (this uses hash collision resistance)
--- TODO: a spend claiming a different leaf index is ruled out by Merkle position
--- binding (Merkle tree section), which completes the double-spend result.
+-- TODO: a spend claiming a different leaf index isn't ruled out yet -- see the
+-- "GAP: Merkle position binding" note after invariant 7.
 
 -- 2a. After a transfer has been made with a nullifier
 -- A second transfer with the same nullifier should not be possible
@@ -552,7 +626,10 @@ theorem no_nullifier_reuse_possible_across_txs
   (txInputs1 txInputs2: TxInputs)
   (h1: (nullifierToReuse = txInputs1.k0 ∨ nullifierToReuse = txInputs1.k1) ∧ (nullifierToReuse = txInputs2.k0 ∨ nullifierToReuse = txInputs2.k1))
   (h2: transact txInputs1 w1 w2)
-  (h3: ReachableWorld w2 w2') -- Any amount of txs in between after the first txs
+  -- Zero or more further transactions (arbitrary inputs each), including zero -- see
+  -- `ReachableWorld`'s `noStep`/`extend` constructors. `w2' = w2` is allowed, so this
+  -- also covers an immediate replay right after `txInputs1`.
+  (h3: ReachableWorld w2 w2')
   : ¬ transact txInputs2 w2' w3 := by
   intro h4
   obtain ⟨_, heff2⟩ := h2
@@ -601,7 +678,16 @@ lemma same_note_same_nullifier
     ∧ witness1.inR i = witness2.inR i'
     ∧ witness1.mint = witness2.mint
     ∧ (witness1.openings i).index = (witness2.openings i').index)
-  : pubInput1.nullifiers i = pubInput2.nullifiers i' := by sorry
+  : pubInput1.nullifiers i = pubInput2.nullifiers i' := by
+  obtain ⟨hAmt, hSk, hR, hMint, hIdx⟩ := h3
+  have hPk : witness1.inPk i = witness2.inPk i' := by
+    simp only [Witness.inPk, hSk]
+  have hC : witness1.inC i = witness2.inC i' := by
+    simp only [Witness.inC, commit, hAmt, hPk, hR, hMint]
+  have hSign : witness1.sign i = witness2.sign i' := by
+    simp only [Witness.sign, signature, hSk, hC, hIdx]
+  rw [h1.nullifierCorrectness i, h2.nullifierCorrectness i']
+  simp only [nullifier, hC, hIdx, hSign]
 
 -- 2c. After a transfer has spent a note, a second transfer spending the same note
 -- is not possible (with any nr of txs in between).
@@ -619,7 +705,13 @@ theorem no_note_reuse_possible_across_txs
     ∧ (witness1.openings i).index = (witness2.openings i').index)
   (h4: transact txInputs1 w1 w2)
   (h5: ReachableWorld w2 w2') -- Any amount of txs in between after the first txs
-  : ¬ transact txInputs2 w2' w3 := by sorry
+  : ¬ transact txInputs2 w2' w3 := by
+  have hNullEq := same_note_same_nullifier witness1 witness2 txInputs1.pubInputs txInputs2.pubInputs
+    hRel1 hRel2 i i' h3
+  apply no_nullifier_reuse_possible_across_txs w1 w2 w2' w3 (txInputs1.pubInputs.nullifiers i)
+    txInputs1 txInputs2 ⟨?_, ?_⟩ h4 h5
+  · fin_cases i <;> simp [TxInputs.pubInputs]
+  · rw [hNullEq]; fin_cases i' <;> simp [TxInputs.pubInputs]
 
 -- 2d. A single txs can't spend the same note for both inputs:
 -- no valid witness exists for it.
@@ -630,7 +722,11 @@ theorem no_note_reuse_possible_within_txs
     ∧ witness.inSk 0 = witness.inSk 1
     ∧ witness.inR 0 = witness.inR 1
     ∧ (witness.openings 0).index = (witness.openings 1).index)
-  : ¬ RelationS txInputs.pubInputs witness := by sorry
+  : ¬ RelationS txInputs.pubInputs witness := by
+  intro hRel
+  have hNullEq := same_note_same_nullifier witness witness txInputs.pubInputs txInputs.pubInputs
+    hRel hRel 0 1 ⟨h1.1, h1.2.1, h1.2.2.1, rfl, h1.2.2.2⟩
+  exact hRel.noDuplicateNullifiers hNullEq
 
 
 -- HELPER (level 3)
@@ -649,7 +745,19 @@ lemma same_commitment_same_nullifier_or_collision
   : pubInput1.nullifiers i = pubInput2.nullifiers i'
     ∨ H1Collision (witness1.inSk i) (witness2.inSk i')
     ∨ H4Collision (witness1.inAmt i, witness1.inPk i, witness1.inR i, witness1.mint)
-                  (witness2.inAmt i', witness2.inPk i', witness2.inR i', witness2.mint) := by sorry
+                  (witness2.inAmt i', witness2.inPk i', witness2.inR i', witness2.mint) := by
+  have hCommitEq : commit (witness1.inAmt i) (witness1.inPk i) (witness1.inR i) witness1.mint
+      = commit (witness2.inAmt i') (witness2.inPk i') (witness2.inR i') witness2.mint :=
+    sameCommitment
+  rcases commitment_determines_value_or_collision _ _ _ _ _ _ _ _ hCommitEq with hTupleEq | hH4
+  · simp only [Prod.mk.injEq] at hTupleEq
+    obtain ⟨hAmt, hPk, hR, hMint⟩ := hTupleEq
+    by_cases hSk : witness1.inSk i = witness2.inSk i'
+    · exact Or.inl (same_note_same_nullifier witness1 witness2 pubInput1 pubInput2 h1 h2 i i'
+        ⟨hAmt, hSk, hR, hMint, sameIndex⟩)
+    · have hPkH1 : H1 (witness1.inSk i) = H1 (witness2.inSk i') := hPk
+      exact Or.inr (Or.inl ⟨hSk, hPkH1⟩)
+  · exact Or.inr (Or.inr hH4)
 
 -- 2e. After a transfer has spent a commitment, a second transfer spending the same
 -- commitment at the same leaf index is not possible (with any nr of txs in between),
@@ -668,7 +776,15 @@ theorem no_commitment_reuse_possible_across_txs_or_collision
   : ¬ transact txInputs2 w2' w3
     ∨ H1Collision (witness1.inSk i) (witness2.inSk i')
     ∨ H4Collision (witness1.inAmt i, witness1.inPk i, witness1.inR i, witness1.mint)
-                  (witness2.inAmt i', witness2.inPk i', witness2.inR i', witness2.mint) := by sorry
+                  (witness2.inAmt i', witness2.inPk i', witness2.inR i', witness2.mint) := by
+  rcases same_commitment_same_nullifier_or_collision witness1 witness2 txInputs1.pubInputs
+      txInputs2.pubInputs hRel1 hRel2 i i' sameIndex sameCommitment with hNullEq | hColl
+  · refine Or.inl ?_
+    apply no_nullifier_reuse_possible_across_txs w1 w2 w2' w3 (txInputs1.pubInputs.nullifiers i)
+      txInputs1 txInputs2 ⟨?_, ?_⟩ h4 h5
+    · fin_cases i <;> simp [TxInputs.pubInputs]
+    · rw [hNullEq]; fin_cases i' <;> simp [TxInputs.pubInputs]
+  · exact Or.inr hColl
 
 -- 2f. A single txs can't spend the same commitment at the same leaf index for both
 -- inputs, unless a hash collision was found.
@@ -680,7 +796,13 @@ theorem no_commitment_reuse_possible_within_txs_or_collision
   : ¬ RelationS txInputs.pubInputs witness
     ∨ H1Collision (witness.inSk 0) (witness.inSk 1)
     ∨ H4Collision (witness.inAmt 0, witness.inPk 0, witness.inR 0, witness.mint)
-                  (witness.inAmt 1, witness.inPk 1, witness.inR 1, witness.mint) := by sorry
+                  (witness.inAmt 1, witness.inPk 1, witness.inR 1, witness.mint) := by
+  by_cases hRel : RelationS txInputs.pubInputs witness
+  · rcases same_commitment_same_nullifier_or_collision witness witness txInputs.pubInputs
+        txInputs.pubInputs hRel hRel 0 1 sameIndex sameCommitment with hNullEq | hColl
+    · exact absurd hNullEq hRel.noDuplicateNullifiers
+    · exact Or.inr hColl
+  · exact Or.inl hRel
 
 -- 4. SOL balance correctness. The SOL balance equals deposits minus withdrawals and fees paid
 -- Given:
@@ -722,42 +844,10 @@ theorem sol_balance_correctness
     have habs : |inputs.extAmt| = (inputs.extAmt.natAbs : ℤ) := Int.abs_eq_natAbs inputs.extAmt
     omega
 
--- 5. Only deposited coins whose root is in the current history can be withdrawn: transact will fail for a coin that was not added to the tree
--- 5a. transact fails when the root used is not in the history (100 historic roots)
--- Given:
-  -- an old_world
-  -- inputs whose root is not in the old_world's root history
-  -- a new_world
--- When: transact
--- Then: fail
-theorem transact_fails_when_root_unknown
-  (oldWorld newWorld: World)
-  (inputs: TxInputs)
-  (h1: inputs.R ∉ Set.range oldWorld.state.tree.history)
-  : ¬ transact inputs oldWorld newWorld := by sorry
-
--- 5b. Every non-zero input spent by a successful transact has a valid Merkle opening
--- to a root in the history.
--- Given:
-  -- an old_world
-  -- a new_world
--- When: transact
--- Then: there is a witness whose non-zero inputs all have valid openings to a known root
--- Note: this shows the coin is in a tree with a known root. That it is at the claimed
--- position and was actually deposited needs Merkle position binding (TODO, Merkle section).
-theorem transact_implies_valid_openings
-  (oldWorld newWorld: World)
-  (inputs: TxInputs)
-  (h1: transact inputs oldWorld newWorld)
-  : ∃ witness, RelationS inputs.pubInputs witness
-    ∧ inputs.R ∈ Set.range oldWorld.state.tree.history
-    ∧ ∀ i, witness.inAmt i ≠ 0 → (witness.openings i).Valid (witness.inC i) inputs.R := by sorry
-
--- TODO theorem transact_fails_when_coin_not_added2
-
 -- 6. A note can only be withdrawn via transact with knowledge of k and r
 -- Because we assume a Groth16 proof can only be created with that knowledge.
 -- This seems to be exactly the axiom of soundness, but consider the scenario where withdrawing doesn't even check the proof.
+-- (Stated ahead of section 5, which relies on 6b for its witness.)
 -- 6a. transact fails when the proof is invalid
 -- Given:
   -- an old_world
@@ -771,7 +861,9 @@ theorem transact_fails_when_proof_invalid
   (oldWorld newWorld: World)
   (inputs: TxInputs)
   (h1: ¬ Groth16.verify Deployment.vk inputs.π inputs.pubInputs)
-  : ¬ transact inputs oldWorld newWorld := by sorry
+  : ¬ transact inputs oldWorld newWorld := by
+  intro h2
+  exact h1 h2.1.validZKP
 
 -- 6b. A successful transact comes with a witness: private keys, blinding factors,
 -- amounts and openings satisfying relation S.
@@ -785,14 +877,221 @@ theorem transact_implies_witness
   (oldWorld newWorld: World)
   (inputs: TxInputs)
   (h1: transact inputs oldWorld newWorld)
-  : ∃ witness, RelationS inputs.pubInputs witness := by sorry
+  : ∃ witness, RelationS inputs.pubInputs witness :=
+  Deployment.soundness inputs.π inputs.pubInputs h1.1.validZKP
+
+-- 5. Only deposited coins whose root is in the current history can be withdrawn: transact will fail for a coin that was not added to the tree
+-- 5a. transact fails when the root used is not in the history (100 historic roots)
+-- Given:
+  -- an old_world
+  -- inputs whose root is not in the old_world's root history
+  -- a new_world
+-- When: transact
+-- Then: fail
+theorem transact_fails_when_root_unknown
+  (oldWorld newWorld: World)
+  (inputs: TxInputs)
+  (h1: inputs.R ∉ Set.range oldWorld.state.tree.history)
+  : ¬ transact inputs oldWorld newWorld := by
+  intro h2
+  exact h1 h2.1.knownRoot.1
+
+-- 5b. Every non-zero input spent by a successful transact has a valid Merkle opening
+-- to a root in the history.
+-- Given:
+  -- an old_world
+  -- a new_world
+-- When: transact
+-- Then: there is a witness whose non-zero inputs all have valid openings to a known root
+-- Note: doesn't show the coin was actually deposited at that position -- see the
+-- "GAP: Merkle position binding" note after invariant 7.
+theorem transact_implies_valid_openings
+  (oldWorld newWorld: World)
+  (inputs: TxInputs)
+  (h1: transact inputs oldWorld newWorld)
+  : ∃ witness, RelationS inputs.pubInputs witness
+    ∧ inputs.R ∈ Set.range oldWorld.state.tree.history
+    ∧ ∀ i, witness.inAmt i ≠ 0 → (witness.openings i).Valid (witness.inC i) inputs.R := by
+  obtain ⟨witness, hRel⟩ := transact_implies_witness oldWorld newWorld inputs h1
+  exact ⟨witness, hRel, h1.1.knownRoot.1, fun i hne => hRel.correctOpenings i hne⟩
 
 -- 7. Root consistency. Transact cannot add a root to history that is not a valid root.
 -- Every root added is really a valid root in history OR default value
 
+-- 7a. Every tree a reachable world can produce is built by a genuine sequence of
+-- `appendEffects` calls from `initTree`, not an arbitrary value: `transact` is the only
+-- way to change a `Tree`, and it always goes through `appendEffects`.
+theorem tree_well_formed
+  (cfg: config) (balances: Pubkey → ℕ) (rentExemptMin: ℕ) (w: World)
+  (h: ReachableWorld (initWorld cfg balances rentExemptMin) w)
+  : ∃ cs: List F, w.state.tree = foldAppend cs initTree := by
+  induction h with
+  | noStep => exact ⟨[], rfl⟩
+  | extend inputs _ transact_proof ih =>
+    obtain ⟨cs, hcs⟩ := ih
+    obtain ⟨_, hagree⟩ := transact_proof
+    refine ⟨cs ++ [inputs.outC0, inputs.outC1], ?_⟩
+    rw [hagree.tree]
+    simp only [transactEffects, transferEffects_tree, foldAppend, List.foldl_append,
+      List.foldl_cons, List.foldl_nil, hcs]
+
+/-- `y` is in the range of `Function.update f i v` only if it's the new value `v` or was
+    already in the range of `f`. The generic fact behind "updating the tree's root
+    history can only ever add the new root, never invent an unrelated one". -/
+lemma mem_range_update_or_mem_range {α β} [DecidableEq α] (f: α → β) (i: α) (v y: β)
+    (h: y ∈ Set.range (Function.update f i v)) : y = v ∨ y ∈ Set.range f := by
+  obtain ⟨x, hx⟩ := h
+  rw [Function.update_apply] at hx
+  split_ifs at hx with hxi
+  · exact Or.inl hx.symm
+  · exact Or.inr ⟨x, hx⟩
+
+-- 7b. Every root that ever lands in `history` is either the untouched default `Z 26` or
+-- is genuinely the root of some `appendEffects`-built tree -- never an arbitrary value.
+theorem history_entries_are_genuine_roots
+  (cfg: config) (balances: Pubkey → ℕ) (rentExemptMin: ℕ) (w: World)
+  (h: ReachableWorld (initWorld cfg balances rentExemptMin) w)
+  : ∀ R ∈ Set.range w.state.tree.history,
+      R = Z 26 ∨ ∃ cs: List F, R = (foldAppend cs initTree).root := by
+  induction h with
+  | noStep =>
+    intro R hR
+    obtain ⟨i, hi⟩ := hR
+    exact Or.inl (by simpa [initWorld, initTree] using hi.symm)
+  | extend inputs h2 transact_proof ih =>
+    intro R hR
+    obtain ⟨_, hagree⟩ := transact_proof
+    rw [hagree.tree] at hR
+    -- Expose the two nested `appendEffects` calls (`appendEffects` itself stays
+    -- opaque), then peel each one's `history` update off in turn via
+    -- `appendEffects_history`, never unfolding the Merkle computation itself.
+    simp only [transactEffects, transferEffects_tree] at hR
+    rw [appendEffects_history] at hR
+    rcases mem_range_update_or_mem_range _ _ _ _ hR with hEq | hR'
+    · obtain ⟨cs, hcs⟩ := tree_well_formed cfg balances rentExemptMin _ h2
+      refine Or.inr ⟨cs ++ [inputs.outC0, inputs.outC1], ?_⟩
+      have : foldAppend (cs ++ [inputs.outC0, inputs.outC1]) initTree
+          = appendEffects inputs.outC1 (appendEffects inputs.outC0 (foldAppend cs initTree)) := by
+        simp [foldAppend]
+      rw [this, ← hcs]
+      exact hEq
+    rw [appendEffects_history] at hR'
+    rcases mem_range_update_or_mem_range _ _ _ _ hR' with hEq | hR''
+    · obtain ⟨cs, hcs⟩ := tree_well_formed cfg balances rentExemptMin _ h2
+      refine Or.inr ⟨cs ++ [inputs.outC0], ?_⟩
+      have : foldAppend (cs ++ [inputs.outC0]) initTree
+          = appendEffects inputs.outC0 (foldAppend cs initTree) := by
+        simp [foldAppend]
+      rw [this, ← hcs]
+      exact hEq
+    · exact ih R hR''
+
+/-
+GAP: Merkle position binding. Missing: a valid `Opening` of `c` at index `k` against a
+reachable root implies some `appendEffects` call actually wrote `c` there (converse),
+and appending more commitments preserves earlier leaves' openings, just extending the
+sibling path (forward). Needed by: invariant 2 level 3 (different claimed index isn't
+ruled out, converse), invariant 5b (opening valid ⇏ actually deposited, converse), and
+invariant 10 (`witness` is a bare hypothesis rather than derived from a real deposit,
+forward). Not yet formalized.
+-/
 
 -- 8. Note value consistency. A deposited note's value cannot change
+-- Note value consistency: if a later input reuses an earlier output's commitment
+-- value, it was created with the same (amount, pubkey, blinding, mint), unless an H4
+-- collision was found.
+theorem note_value_consistency
+  (witness1 witness2 : Witness)
+  (pubInput1 : PubInputs)
+  (j i : Fin 2)
+  (h1 : RelationS pubInput1 witness1)
+  (hSameCommitment : pubInput1.outCommitments j = witness2.inC i)
+  : (witness2.inAmt i, witness2.inPk i, witness2.inR i, witness2.mint)
+      = (witness1.outAmt j, witness1.outPk j, witness1.outR j, witness1.mint)
+    ∨ H4Collision (witness2.inAmt i, witness2.inPk i, witness2.inR i, witness2.mint)
+                  (witness1.outAmt j, witness1.outPk j, witness1.outR j, witness1.mint) := by
+  have houtEq := h1.outputCommitmentIntegrity j
+  rw [houtEq] at hSameCommitment
+  exact commitment_determines_value_or_collision _ _ _ _ _ _ _ _ hSameCommitment.symm
 
--- 9. Proof binding. The same proof cannot be used for different txInputs
+-- 9. Proof binding. The same proof cannot be used for different txInputs.
+
+-- 9a. Groth16 level: the same (vk, π) cannot verify two different public-input
+-- vectors, unless an IC relation was found.
+theorem proof_binds_to_pubInputs_or_relation
+  (π : Groth16.Proof) (x x' : PubInputs)
+  (hx : Groth16.verify Deployment.vk π x)
+  (hx' : Groth16.verify Deployment.vk π x')
+  : x = x' ∨ Groth16.ICRelation Deployment.vk x x' := by
+  by_cases heq : x = x'
+  · exact Or.inl heq
+  · refine Or.inr ⟨heq, ?_⟩
+    -- Both equations share `e π.A π.B`; cancel the shared `e vk.α vk.β` and `e π.C vk.δ`
+    -- factors (pure group cancellation in `GT`, no bilinearity needed) to land on
+    -- `e vkX γ = e vkX' γ`, exactly `ICRelation`'s `eq` field.
+    simp only [Groth16.verify] at hx hx'
+    exact mul_left_cancel (mul_right_cancel (hx.symm.trans hx'))
+
+-- 9b. Protocol level: the same proof can't be replayed against different TxInputs
+-- (different recipient, fee, encrypted outputs, mint, ...) unless an IC relation or a
+-- sha256 collision was found.
+theorem proof_binds_to_txInputs_or_break
+  (inputs1 inputs2 : TxInputs)
+  (hSameProof : inputs1.π = inputs2.π)
+  (hv1 : proofValid inputs1) (hv2 : proofValid inputs2)
+  (hb1 : externalDataBound inputs1) (hb2 : externalDataBound inputs2)
+  (hDataDiff : serealizeExternalData inputs1 ≠ serealizeExternalData inputs2)
+  : Groth16.ICRelation Deployment.vk inputs1.pubInputs inputs2.pubInputs
+    ∨ Sha256Collision (serealizeExternalData inputs1) (serealizeExternalData inputs2) := by
+  have hv2' : Groth16.verify Deployment.vk inputs1.π inputs2.pubInputs := hSameProof ▸ hv2
+  rcases proof_binds_to_pubInputs_or_relation inputs1.π inputs1.pubInputs inputs2.pubInputs hv1 hv2'
+    with hEq | hRel
+  · -- Same `pubInputs` forces the same `extDataHash`, which with `externalDataBound` on
+    -- both sides forces the same sha256 digest; `hDataDiff` then makes that a collision.
+    refine Or.inr ⟨hDataDiff, ?_⟩
+    have hED : inputs1.extDataHash = inputs2.extDataHash := by
+      simpa [TxInputs.pubInputs] using congrArg PubInputs.extDataHash hEq
+    show externalDataHash inputs1 = externalDataHash inputs2
+    rw [hb1, hb2, hED]
+  · exact Or.inl hRel
 
 -- 10. Any unspent notes can always be spent
+--
+-- Taken literally this is false: a withdrawal can be genuinely blocked by pool
+-- insolvency (`poolSolvent`), a full tree (`treeHasRoom`), or a root that has rotated
+-- out of the 100-slot history (`rootKnown`) before a spend lands. Those aren't proof
+-- artifacts to route around -- they're real protocol constraints -- so the honest
+-- completeness statement takes every non-ZKP precondition as a hypothesis (in
+-- particular `poolSolvency`) and shows the *only* remaining obstacle, the ZK proof
+-- itself, is never one: given a witness, `Deployment.completeness` always produces a
+-- proof that makes `transact` go through.
+--
+-- GAP: `witness` is a bare hypothesis, not derived from an actual prior deposit -- see
+-- the "GAP: Merkle position binding" note after invariant 7.
+theorem unspent_note_is_spendable
+  (oldWorld: World) (inputs: TxInputs) (witness: Witness)
+  (hRel: RelationS inputs.pubInputs witness)
+  (hRoot: rootKnown oldWorld.state.tree inputs.R)
+  (hData: externalDataBound inputs)
+  (hFee: feeSufficient oldWorld.state.config inputs.extAmt inputs.f)
+  (hPubAmt: pubAmtConsistent inputs.extAmt inputs.f inputs.pubAmt)
+  (hFresh: nullifiersFresh oldWorld.state.nullifiers inputs.k0 inputs.k1)
+  (hDistinct: nullifiersDistinct inputs.k0 inputs.k1)
+  (hDeposit: depositWithinLimit oldWorld.state.config inputs.extAmt)
+  (hSolvent: poolSolvent oldWorld.state.solBalance oldWorld.rentExemptMin inputs.extAmt inputs.f)
+  (hRoom: treeHasRoom oldWorld.state.tree)
+  : ∃ π, transact { inputs with π := π } oldWorld (transactEffects { inputs with π := π } oldWorld) := by
+  obtain ⟨π, hπ⟩ := Deployment.completeness inputs.pubInputs witness hRel
+  refine ⟨π, ⟨?_, rfl, rfl, rfl, rfl, rfl, fun _ _ _ => rfl⟩⟩
+  exact {
+    knownRoot := hRoot
+    externalDataBinding := hData
+    minimumFee := hFee
+    pubAmtConsistency := hPubAmt
+    validZKP := hπ
+    newNullifiers := hFresh
+    distinctNullifiers := hDistinct
+    depositLimit := hDeposit
+    poolSolvency := hSolvent
+    treeNotFull := hRoom
+  }
