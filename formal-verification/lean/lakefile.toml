@@ -40,4 +40,5 @@ globs = ["Spec.privacy_cash_spec", "Spec.theorems"]
 # touched by extract.sh.
 [[lean_lib]]
 name = "proofs"
-globs = ["proofs.VerifyProof.CopyLoops", "proofs.VerifyProof.Accumulate", "proofs.VerifyProof.Main"]
+globs = ["proofs.VerifyProof.CopyLoops", "proofs.VerifyProof.Accumulate", "proofs.VerifyProof.Main",
+  "proofs.Transact.CheckPublicAmount"]
