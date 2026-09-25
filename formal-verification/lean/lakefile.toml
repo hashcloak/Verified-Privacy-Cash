@@ -41,4 +41,4 @@ globs = ["Spec.privacy_cash_spec", "Spec.theorems"]
 [[lean_lib]]
 name = "proofs"
 globs = ["proofs.VerifyProof.CopyLoops", "proofs.VerifyProof.Accumulate", "proofs.VerifyProof.Main",
-  "proofs.Transact.CheckPublicAmount"]
+  "proofs.Transact.CheckPublicAmount", "proofs.Transact.ValidateFee"]
