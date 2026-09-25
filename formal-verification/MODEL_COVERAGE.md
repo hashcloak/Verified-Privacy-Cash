@@ -207,6 +207,21 @@ shielded pool. Everything else is dischargeable engineering.
       about completeness, and does not mention the spec's groups. It is also not Groth16
       soundness, which stays an assumption in `Spec/`: it shows the program checks the equation
       that soundness is about.
+- [x] **Building blocks of `transact`, model-level** (`lean/proofs/Transact/`):
+      - `fv_check_public_amount_entry_spec`: it accepts exactly when `ext_amount ≠ i64::MIN`, a
+        deposit exceeds its fee, and the public amount read big-endian is `ext_amount − fee`
+        mod r. Never fails. No axioms.
+      - `validate_fee_ok_iff`: it returns `Ok(())` exactly when the fee rule `feeAccepted`
+        holds -- expected fee `amount · rate / 10000` truncated to 64 bits (Rust's `as u64`),
+        any fee if that is 0, else margin ≤ 10000 and fee ≥ `expected · (10000 − margin) / 10000`
+        -- on `ext_amount` for deposits and on `|ext_amount|` (≠ i64::MIN) for withdrawals.
+        Its axioms are only the error-formatting ones the function's error branches are built
+        from.
+      - `calculate_complete_ext_data_hash_spec`: it is SHA-256 of `extDataPreimage`, the
+        borsh layout 32 + 8 + 4 + n₁ + 4 + n₂ + 8 + 32 + 32 bytes, for outputs shorter than 2^32
+        bytes. SHA-256 stays abstract.
+      Proving the third exposed a fidelity gap in a DERIVED definition: the borsh `Vec` encoder
+      wrapped a length ≥ 2^32 mod 2^32 and succeeded, where borsh returns an error. It now fails.
 - [ ] **Prove one property end to end**, spec -> model. `check_public_amount` is the
       candidate: it is the only shim with zero axioms remaining, so nothing blocks it.
 
