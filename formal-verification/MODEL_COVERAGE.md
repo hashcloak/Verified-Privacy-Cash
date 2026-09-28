@@ -1,0 +1,234 @@
+# Model coverage checklist
+
+What is modelled, what is not, and what gates the rest. Companion to `MODEL_REPORT.md`
+(which describes the pipeline); this file tracks *how much is left*.
+
+Line counts are from `anchor/programs/zkcash/src/lib.rs`.
+
+---
+
+## 0. Prerequisites
+
+These gate everything below. Doing them after the per-instruction work costs
+significantly more.
+
+- [ ] **Seam refactor.** Split each handler into `unpack accounts -> core(plain data,
+      &mut state) -> apply effects`. The cut point already exists: the
+      `let tree_account = &mut ctx.accounts.tree_account.load_mut()?;` line at lib.rs
+      110 / 199 / 218 / 376.
+      Kills the `AccountLoader::load_mut()` blocker for all four instructions at once,
+      and removes the need to hand-write six more `fv_*` twins.
+      *Est. 1-2 days for the pattern + transact, then ~0.5 day per instruction.*
+
+- [x] **Shared trusted base (now `code_model/hand_written/`).** DONE. `bn254_r`, `fr_shim.FrShim` and the
+      whole BN254 curve surface (`G1Shim` + 6 ops + `fr_lt_modulus_be`) now live in
+      `lean/code_model/hand_written/{Bn254,FrShim,Curve}.lean` instead of once per model. The FrShim
+      bodies were byte-identical across models; `curve_shim.G1Shim` was worse -- a
+      separate `axiom : Type` per model, so genuinely different types that no proof
+      could transfer between. `lake build` passes.
+
+      NOTE: a regression guard (`Test/CommonBase.lean`) asserted that Common/ stays the single
+      declaration site, and that `from_le_bytes_mod_order` differs from `from_be_bytes_mod_order`.
+      The whole `lean/Test/` library was removed on 2026-09-11, so nothing now mechanically stops
+      the duplication coming back. Restore with:
+          git checkout 99803bd -- formal-verification/lean/Test/
+      and re-add the `Test` lean_lib plus its defaultTarget to lakefile.toml.
+      `code_model/hand_written/` is hand-owned and `extract.sh` never touches it.
+
+- [x] **Single-root extraction.** DONE. `charon rustc --start-from` IS repeatable -- verified
+      by running it, not by reading help text. `extract.sh` now makes ONE charon
+      run with all three entry points as roots, ONE aeneas run, and ONE Lean library,
+      `lean/code_model/generated`, so no function is emitted twice.
+
+      Why it was needed: `fv_transact_entry` calls `fv_verify_proof_full_entry` and
+      `fv_check_public_amount_entry`, so transact's closure already contained both smaller
+      models and aeneas emitted those functions again into each library. Importing two of
+      them failed with
+
+          environment already contains
+          'zkcash.utils.fv_verify_proof_full_entry_loop0_loop3.body.eq_1'
+
+      `code_model/hand_written/` could not fix that half: it is hand-owned and cannot deduplicate generated
+      code. Whole-contract theorems have to span instructions, so the union had to be one
+      library.
+
+      Follow-through, all done: the hand-filled trusted base was ported to the single model
+      (16 axioms / 17 definitions, wired to the hand-written base, identical to the old TransactShim
+      one because the generated surface is identical); the three per-entry-point libraries
+      TransactShim / VerifyProofShim / CheckPublicAmountShim were deleted;
+      `lake build` passes with 0 errors.
+
+      STILL OPEN: `extract.sh` regenerates the three deleted libraries and is now
+      inconsistent with the lakefile. Either retire it in favour of `extract.sh`
+      or keep it only for its `--diagnose-fr` probe mode. Its three `.llbc` inputs
+      (`transact_shim`, `verify_proof_shim`, `check_public_amount_shim`) are likewise orphaned.
+
+- [ ] **Retire the `fv_*` twins.** `fv_transact_entry` (lib.rs:584) is a ~150-line hand
+      transcription of `transact`, never called at runtime, with no test comparing them.
+      Its correspondence to the real code is the single largest assumption in the
+      project and appears on no trusted-base list. The seam refactor removes it.
+- [x] **Bind each paid account to its address in `fv_transact_entry`.** The twin took
+      `recipient: Pubkey` (hashed into ext_data_hash) and `recipient_lamports: &mut u64` (paid)
+      as unrelated parameters, likewise for the fee recipient, and `mint_address` as a free
+      parameter. So "the withdrawal goes to the recipient the proof committed to" could not
+      even be stated. Now each is an `FvAccount { key, lamports }`, `ext_data` is rebuilt by
+      `fv_ext_data_from_minified` (a transcription of `ExtData::from_minified`), and
+      `mint_address` is `utils::SOL_ADDRESS`, extracted with its real bytes.
+- [ ] **Distinct accounts.** Rust's `&mut` rules make the twin's signer, recipient, fee
+      recipient and tree token account four different accounts. The real instruction does
+      not require that (recipient and fee recipient are both `UncheckedAccount`), so the
+      model says nothing about transactions that reuse one account in two roles.
+
+---
+
+## 1. Instructions (7 total, 1 modelled)
+
+| # | instruction | lib.rs | lines | status | blocker |
+|---|---|---|---|---|---|
+| 1 | `transact` | 217 | ~158 | modelled via hand twin | twin drift (see 0) |
+| 2 | `transact_spl` | 375 | ~150 | not attempted | SPL CPI + `load_mut` |
+| 3 | `initialize` | 72 | ~37 | not attempted | none known |
+| 4 | `initialize_tree_account_for_spl_token` | 155 | ~40 | not attempted | none known |
+| 5 | `update_global_config` | 121 | ~34 | crashes Charon | `--exclude` follow-on |
+| 6 | `update_deposit_limit_for_spl_token` | 195 | ~22 | not attempted | `load_mut` |
+| 7 | `update_deposit_limit` | 109 | ~12 | crashes Charon | `load_mut` |
+
+Recommended order (not size order):
+
+- [ ] **`transact`** — re-extract through the refactored seam, drop the twin
+- [ ] **`initialize`** — small, but establishes the *initial state*. Without it, every
+      theorem is a claim about an arbitrary starting tree rather than a real one.
+      Higher value than its 37 lines suggest.
+- [ ] **`update_deposit_limit`** — 12 lines; first test that the seam refactor cleared
+      the `load_mut` blocker
+- [ ] **`update_global_config`** — separate blocker: rename the colliding `ErrorCode`
+      variant or narrow the `--exclude`. *Possibly 1 hour.*
+- [ ] **`initialize_tree_account_for_spl_token`**
+- [ ] **`update_deposit_limit_for_spl_token`**
+- [ ] **`transact_spl`** — last; brings a new trusted surface (below)
+
+*Est. 3-5 days for all six once prerequisites are done.*
+
+### New trusted surface from SPL
+
+- [ ] `token::transfer` CPI (3 call sites in `transact_spl`)
+- [ ] `TokenAccount`, `Mint` types
+- [ ] token-account / mint-address validation checks (these are **logic**, in the model —
+      not effects)
+
+*Est. 2-3 days.*
+
+---
+
+## 2. Trusted base: 14 -> 6
+
+Current: 31 DERIVED / 14 TRUSTED in `lean/code_model/hand_written/TrustedFuns.lean`.
+Target: only the assumptions that genuinely cannot be discharged.
+
+### DIAGNOSTIC — 5 axioms -> 0
+
+- [ ] Prove the claim the comments already assert: these values never reach state
+      (reached only on error paths, before any account is written)
+- [ ] Then define all five as total junk; the theorem is what licenses it
+- [ ] Decide consciously: junk definitions mean you can prove state-transition
+      theorems but not "fails with error code X"
+
+### CRYPTO — 6 axioms -> 3
+
+- [ ] `ID` -> `def`. It is `const ID: u8 = 0` (light-hasher `poseidon.rs:81`)
+- [ ] `zero_bytes` -> define as the ladder `Z(k+1) = hashv [Z k, Z k]`, **not** as 41
+      transcribed constants. Currently nothing connects those constants to Poseidon at
+      all, so the model cannot know the zero-subtree ladder uses the same hash as real
+      nodes. This is a real gap, not bookkeeping.
+- [ ] `zero_indexed_leaf` -> transcribe (base of the ladder)
+- [ ] **Keep abstract, permanently:** `hash`, `hashv`, `solana_sha256_hasher::hash`.
+      Two reasons: on-chain they are the `sol_poseidon` / `sol_sha256` syscalls; and
+      collision resistance is *false* of any concrete 32-byte-output function, so it
+      can only be stated about an abstract one. Defining them would make the model
+      strictly less useful.
+
+### CURVE — 3 axioms left (was 11) -> 3
+
+- [x] 5 verifying-key constants -> DONE, transcribed from `utils.rs:17-62` into
+      `hand_written/TrustedFuns.lean` (between the BEGIN/END VERIFYING KEY markers). Opaque only
+      because `curve_shim` is `--opaque`; no trust is involved. Production code untouched.
+      - [x] Drift guard: `check_vk_transcription.sh` parses `VERIFYING_KEY` and the Lean copy
+            independently and compares them field by field (alpha, beta, gamme, delta, ic;
+            960 bytes); `extract.sh` runs it. Verified to fail on a changed byte, on gamma and
+            delta swapped, and on a rotated key in `utils.rs`.
+- [x] `deserialize_uncompressed`, `negate`, `to_bytes` -> DONE, defined in
+      `hand_written/Curve.lean`. Not via Mathlib: they mirror arkworks 0.5.0 byte for byte
+      (little-endian coordinates, the two flag bits in y's top byte, the canonical `< q`
+      checks, the infinity path, y² = x³ + 3 with the trivially-true BN254 subgroup check).
+      That keeps them faithful to the deployed code, at the cost of not yet carrying
+      Mathlib's group-law theorems. Verified: `#print axioms fv_verify_proof_full_entry` went
+      from 7 to 3 (only the syscalls), and test vectors -- the generator (1, 2), its negation
+      to y = q - 2, the infinity flag, both-flags, off-curve, non-canonical x -- behave as the
+      arkworks source says. Not differential-tested against arkworks itself.
+- [x] **Syscall contracts: what a successful answer means.** `alt_bn128_addition`, `alt_bn128_multiplication`
+      and `alt_bn128_pairing` stay declarations -- genuine syscalls. What a successful answer
+      means is now stated in `hand_written/SyscallContracts.lean`: a class over the model's own
+      curve types, deliberately NOT borrowing `Spec/`'s `G1`/`G2`/`GT`/`Pairing`, since model and
+      spec must stay independent for a bridge theorem to mean anything. It assumes no
+      bilinearity, no group order and no reduction mod r.
+- [ ] **Syscall contracts: that valid inputs succeed** (completeness).
+- [ ] **Bridge to the spec** -- map the model's curve types onto `Spec/`'s, and rearrange the
+      pairing check into `Groth16.verify` (needs bilinearity). Blocked until `Spec/`'s top-level
+      `Tree` and `Byte` stop clashing with Mathlib's and Aeneas's.
+
+### Types — 2 axioms -> 0
+
+- [x] `curve_shim.G1Shim` -> DONE, defined as arkworks' `Affine`: x, y in 𝔽_q plus the infinity flag
+- [ ] `std.io.error.Error` -> `Unit` (never inspected; no constructor needed)
+
+### Endgame
+
+6 assumptions, of two kinds:
+
+- **3 hash functions** — cryptographic assumptions, correct to keep
+- **3 curve syscalls** — facts about the validator, unavoidable
+
+That is exactly the assumption list a cryptographer would write for a Groth16-based
+shielded pool. Everything else is dischargeable engineering.
+
+---
+
+## 3. First proof
+
+- [x] **First theorem about the model: accepting means the Groth16 equation holds.**
+      `lean/proofs/VerifyProof/Main.lean`, `fv_verify_proof_full_entry_checks_groth16_equation`:
+      if the verifier
+      returns `true`, all seven public inputs are below r, all IC entries decode, and
+      e(A, B) · e(vk_x, γ) · e(C, δ) · e(α, β) = 1 for the decoded key, proof B and C, some A,
+      and vk_x = IC₀ + Σ kᵢ · ICᵢ₊₁. Assumes only the syscall contracts; `#print axioms` adds
+      nothing beyond Lean's built-ins and the three syscall declarations. It is a model-level
+      theorem, not spec -> model: it does not tie A to `proof_a_raw` (the program decodes A with
+      its own arkworks code, and nothing relates that decoder to the syscall's), says nothing
+      about completeness, and does not mention the spec's groups. It is also not Groth16
+      soundness, which stays an assumption in `Spec/`: it shows the program checks the equation
+      that soundness is about.
+- [ ] **Prove one property end to end**, spec -> model. `check_public_amount` is the
+      candidate: it is the only shim with zero axioms remaining, so nothing blocks it.
+
+Until one such proof exists, the pipeline is known to reproduce but the model is not
+known to be the right one. `MODEL_REPORT.md` says this already:
+
+> "Reproducing the extraction cleanly shows the pipeline is stable, not that this is
+> the right model to prove theorems against."
+
+**Do this before scaling coverage.** Seven modelled instructions with zero theorems is
+seven times more unproven model.
+
+---
+
+## Rough totals
+
+| bucket | estimate |
+|---|---|
+| prerequisites (section 0) | 2-3 days |
+| remaining 6 instructions | 3-5 days |
+| SPL trusted surface | 2-3 days |
+| trusted base 14 -> 6 | a few days -- the heavy curve layer is done |
+| first proof | unknown — it is the experiment |
+
+Coverage alone: ~2 weeks. Coverage plus a trusted base worth trusting: ~4-5 weeks.

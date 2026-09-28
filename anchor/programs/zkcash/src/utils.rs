@@ -319,8 +319,8 @@ pub fn verify_proof(proof: Proof, verifying_key: Groth16Verifyingkey) -> bool {
 // extracted control flow in Lean. What it does NOT buy: any guarantee about the
 // group operations themselves -- those stay assumptions (see curve_shim.rs).
 //
-// `fv_transact_entry` in lib.rs calls this, so the TransactShim model contains all
-// of it; VerifyProofShim is the same code extracted on its own.
+// `fv_transact_entry` in lib.rs calls this, so the model already contains all of it;
+// it is also named as its own extraction root, so the single run covers it explicitly.
 //
 // Byte-copies are written as explicit index loops rather than `concat()`/
 // `copy_from_slice`, so the model stays on fixed-size arrays and out of `Vec`.
