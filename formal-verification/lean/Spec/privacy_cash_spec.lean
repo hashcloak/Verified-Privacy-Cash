@@ -52,12 +52,12 @@ values determined by the theorem's hypotheses". We never assume collision-freene
 /-- `a` and `b` are different inputs with the same `H1` output. -/
 structure H1Collision (a b : F) : Prop where
   ne : a ≠ b
-  eq : H1 a = H1 b
+  eq : H1 a = H1 b -- TODO should we rename this?
 
 /-- Two different argument tuples with the same `H4` output. -/
 structure H4Collision (a b : F × F × F × F) : Prop where
   ne : a ≠ b
-  eq : H4 a.1 a.2.1 a.2.2.1 a.2.2.2 = H4 b.1 b.2.1 b.2.2.1 b.2.2.2
+  eq : H4 a.1 a.2.1 a.2.2.1 a.2.2.2 = H4 b.1 b.2.1 b.2.2.1 b.2.2.2 -- TODO should we rename this?
 
 /-- Two different byte strings whose little-endian, mod-`p` reduced `sha256` digests
     collide -- the actual hash used to bind external transaction data
@@ -74,7 +74,8 @@ def commit (amt pk r mint: F): F := H4 amt pk r mint
 def signature (sk c: F) (leafIndex: Fin (2^26)): F := H3 sk c leafIndex
 def nullifier (c sign: F) (leafIndex: Fin (2^26)): F := H3 c leafIndex sign
 
--- Pure helper: a commitment determines the tuple that produced it, unless an H4 collision.
+-- If two commitments are equal, the (amount, pubkey, blinding, mint) tuples that
+-- produced them are equal too OR a hash collision occurred
 lemma commitment_determines_value_or_collision
   (amt pk r mint amt' pk' r' mint' : F)
   (h : commit amt pk r mint = commit amt' pk' r' mint')
@@ -147,6 +148,8 @@ structure RelationS (pubInputs: PubInputs) (w: Witness) : Prop where
   noDuplicateNullifiers: pubInputs.nullifiers 0 ≠ pubInputs.nullifiers 1
   correctOpenings: ∀ i ∈ {i | (w.inAmt i) ≠ 0}, (w.openings i).Valid (w.inC i) pubInputs.R
   amountConservation: (w.inAmt 0) + (w.inAmt 1) + pubInputs.pubAmt = (w.outAmt 0) + (w.outAmt 1)
+  -- The check is not needed on the input amounts, because they were checked when deposited into the pool
+  -- and because of note_value_consistency property, we know the value hasn't changed
   outputRangeChecks: ∀ j, (w.outAmt j).val < 2^248
 
 /-
@@ -211,14 +214,10 @@ def verify
     Pairing.e π.A π.B = Pairing.e vk.α vk.β * Pairing.e vkX vk.γ * Pairing.e π.C vk.δ
 
 /-- Two different public-input vectors whose `vk`-weighted `IC` combinations pair
-    identically against `γ`. This is the break needed to defeat binding of `vk` to its
-    public inputs -- deliberately stated at the `GT` level (what group cancellation on
-    two `verify` equations actually yields), not as `G1`-level equality of the `IC`
-    combinations themselves: concluding the latter would need the pairing to be
-    non-degenerate in its first argument, an injectivity assumption the `Pairing` class
-    does not make, for the same reason hash collision-freeness is never assumed. Under a
-    genuinely non-degenerate pairing this collapses to a real discrete-log relation among
-    `IC`, but nothing here assumes that. -/
+    identically against `γ` -- the break needed to defeat binding of `vk` to its public
+    inputs. Stated at the `GT` level, not `G1`, since concluding `G1`-equality would need
+    pairing non-degeneracy, an assumption `Pairing` doesn't make. -/
+-- TODO we could also add the definition of non-degeneracy to pairing and then this would be a discrete log break
 structure ICRelation (vk : VerificationKey) (x x' : PubInputs) : Prop where
   ne : x ≠ x'
   eq : Pairing.e (vk.IC 0 + ∑ i : Fin 7, (toVector x i) • vk.IC i.succ) vk.γ
@@ -228,10 +227,14 @@ end Groth16
 
 class Deployment where
   vk: Groth16.VerificationKey -- a fixed circuit
+  -- We assume soundness & completeness of Groth16
+  -- Unlike the hash primitives, no "OR here's the break" fallback: real soundness is
+  -- computational (fails if the trusted setup's toxic waste leaked), but reducing to
+  -- that would mean mechanizing Groth16's own security proof, out of scope here --
+  -- soundness is imported as a trusted primitive, not re-derived.
   soundness: ∀ (π: Groth16.Proof) x, Groth16.verify vk π x → ∃ w, RelationS x w
-  -- Groth16 completeness for the deployed key: every valid witness has *some* proof
-  -- that verifies. The dual of `soundness`, needed for invariant 10 (a well-formed
-  -- spend is never blocked by an unobtainable proof, only by its other preconditions).
+  -- Dual of `soundness`, needed for invariant 10. Not an idealization like soundness
+  -- is: Groth16 has *perfect* completeness, a proven property of the construction.
   completeness: ∀ x w, RelationS x w → ∃ π, Groth16.verify vk π x
 
 variable [Deployment]
@@ -243,6 +246,7 @@ structure config where
   withdrawalFeeRate: ℕ -- in basis points, default = 0.25%
   feeMarginError: ℕ -- in basis points, default = 500 (5% tolerance)
   -- NOTE: In solana code the max deposit limit in declared in the Merkle Tree but we have kept in here.
+  -- TODO should we move this
   maxDepositLimit: ℕ -- maximum deposit amount in lamports
 
 --/////////////////////////////////////////
@@ -261,10 +265,14 @@ structure State where
   solBalance: ℕ
   config: config
 
--- TODO do we need this? Depends on whether we want to include external balances
+-- Needed: `balances` is how deposits/withdrawals/fees actually move real SOL between
+-- accounts (`transferEffects`, `transactEffects`), how `AgreesOnProgramEffects.payees`
+-- states the recipient/fee-recipient are paid, and how `signerSolvent` checks a
+-- depositor can cover their deposit. Without it there'd be nothing to state those over.
 structure World where
   state: State
   balances: Pubkey → ℕ -- balances of (public) Solana accounts in lamports
+  -- the minimum lamport balance an account must have to keep existing without paying rent
   rentExemptMin: ℕ
 
 --/////////////////////////////////////////
@@ -278,6 +286,7 @@ def appendEffects(c: F) (oldTree: Tree): Tree :=
   let index := oldTree.nextIndex
   let newRootIndex := oldTree.rootIndex +1
   let (newRoot, newSubtrees) :=
+  -- Update the complete subtrees array and output the new root by folding.
   -- Fold left taking accumulator (current hash and subtrees values) and index (height)
   Fin.foldl 26 (fun (current, subtrees) height =>
       if Nat.testBit index height.val then
@@ -303,13 +312,6 @@ def appendEffects(c: F) (oldTree: Tree): Tree :=
 /-- The tree obtained by appending a sequence of commitments, in order, to `t0`. -/
 def foldAppend (cs: List F) (t0: Tree): Tree :=
   cs.foldl (fun t c => appendEffects c t) t0
-
-/-- `appendEffects`'s `history` is always the old `history`, updated at the new root
-    slot with the new root -- stated without unfolding how that new root is computed,
-    so it composes regardless of the Merkle internals. -/
-lemma appendEffects_history (c: F) (t: Tree) :
-    (appendEffects c t).history
-      = Function.update t.history (t.rootIndex + 1) (appendEffects c t).root := rfl
 
 structure TxInputs where
   R: F -- Merkle root
@@ -350,7 +352,12 @@ def serealizeExternalData (inputs: TxInputs): Bytes :=
 def externalDataHash (inputs : TxInputs) : F :=
   (natOfLE (sha256 (serealizeExternalData inputs)) : F)
 
--- The actual moving of funds
+/- The actual moving of funds (note that this does not pay fees)
+  **Transfer**([doc ref](https://privacy-cash-privacy-cash.mintlify.app/concepts/how-it-works#universal-joinsplit-transactions)):
+    - (deposit) if $extAmt>0;$ SOL balance' = SOL balance $+ extAmt$ and $balances(s)' = balances(s) - extAmt$
+    - (withdrawal) if $extAmt<0;$ SOL balance' = SOL balance $- |extAmt|$ and $balances(A)' = balances(A) + |extAmt|$
+    - (transfer) if $extAmt=0;$ no changes to balances
+-/
 def transferEffects (inputs: TxInputs) (oldWorld: World): World :=
   -- If the extAmt = 0, nothing changes. Otherwise return an updated version of the world.
   if inputs.extAmt = 0 then oldWorld else
@@ -359,35 +366,26 @@ def transferEffects (inputs: TxInputs) (oldWorld: World): World :=
       state := {
         oldWorld.state with
         solBalance :=
-          -- For a deposit, increase the solBalance in the state. For a withdrawal, lower it.
-          -- TODO do we need a guard for underflow/overflow?
+          -- For a deposit, increase the solBalance in the state. For a withdrawal, lower
+          -- it. No guard needed here: withdrawal underflow is exactly what
+          -- `poolSolvency` rules out (see `sol_balance_correctness`), and `ℕ` doesn't
+          -- overflow in this idealized model, matching the rest of the file's u64
+          -- abstraction (real overflow is out of scope, see the top-of-file TODO).
           if inputs.extAmt > 0 then oldWorld.state.solBalance + extAmtAbs
           else oldWorld.state.solBalance - extAmtAbs
       }
       balances :=  if inputs.extAmt > 0 then
-        -- For a deposit, decrease the signer's SOL balance (in Solana account)
-        -- TODO do we need a guard for underflow?
+        -- For a deposit, decrease the signer's SOL balance (in Solana account). No
+        -- guard needed here either: underflow is exactly what `signerSolvent` rules out
+        -- (mirrors `poolSolvent`; `signer_lamports.checked_sub` fails the real
+        -- transaction outright if the signer can't cover the deposit).
         Function.update oldWorld.balances inputs.s ((oldWorld.balances inputs.s) - extAmtAbs)
         else
         -- For a withdrawal, increase the SOL balance of the recipient (in Solana account)
         Function.update oldWorld.balances inputs.A ((oldWorld.balances inputs.A) + extAmtAbs)
-
-
     }
 
-/-- `transferEffects` only ever touches `solBalance` and `balances`; the tree is
-    untouched either way. -/
-lemma transferEffects_tree (inputs: TxInputs) (oldWorld: World) :
-    (transferEffects inputs oldWorld).state.tree = oldWorld.state.tree := by
-  unfold transferEffects
-  split_ifs <;> rfl
-
-/-
-- **Transfer**([doc ref](https://privacy-cash-privacy-cash.mintlify.app/concepts/how-it-works#universal-joinsplit-transactions)):
-    - (deposit) if $extAmt>0;$ SOL balance' = SOL balance $+ extAmt$ and $balances(s)' = balances(s) - extAmt$
-    - (withdrawal) if $extAmt<0;$ SOL balance' = SOL balance $- |extAmt|$ and $balances(A)' = balances(A) + |extAmt|$
-    - (transfer) if $extAmt=0;$ no changes to balances
--/
+-- Returns a new World after updating all necessary elements according to the txInputs
 def transactEffects (inputs: TxInputs)(oldWorld: World): World :=
   -- Move the actual funds. In a separate function for clarity
   let worldAfterTransfers := transferEffects inputs oldWorld
@@ -412,16 +410,16 @@ def transactEffects (inputs: TxInputs)(oldWorld: World): World :=
 --/////////////////////////////////////////
 
 -- R is a non-zero root in the tree's root history.
-abbrev rootKnown (T: Tree) (R: F): Prop :=
+def rootKnown (T: Tree) (R: F): Prop :=
   R ∈ Set.range T.history ∧ R ≠ 0
 
 -- The external data (recipient, amounts, fee, encrypted outputs, mint) hashes to the
 -- value the proof commits to.
-abbrev externalDataBound (inputs: TxInputs): Prop :=
+def externalDataBound (inputs: TxInputs): Prop :=
   externalDataHash inputs = inputs.extDataHash
 
 -- The fee is at least the configured rate, minus the allowed error margin.
-abbrev feeSufficient (cfg: config) (extAmt: ℤ) (f: ℕ): Prop :=
+def feeSufficient (cfg: config) (extAmt: ℤ) (f: ℕ): Prop :=
   let feeErrorMargin := cfg.feeMarginError
   let feeRate := if extAmt > 0 then cfg.depositFeeRate else cfg.withdrawalFeeRate
   let expectedFee := (extAmt.natAbs * feeRate) / 10000
@@ -429,36 +427,42 @@ abbrev feeSufficient (cfg: config) (extAmt: ℤ) (f: ℕ): Prop :=
   f ≥ minAcceptableFee
 
 -- The public amount the proof commits to is extAmt - fee, and extAmt is in range.
-abbrev pubAmtConsistent (extAmt: ℤ) (f: ℕ) (pubAmt: F): Prop :=
+def pubAmtConsistent (extAmt: ℤ) (f: ℕ) (pubAmt: F): Prop :=
   -- reference i64::MIN https://doc.rust-lang.org/std/i64/constant.MIN.html
   extAmt ≠ -9_223_372_036_854_775_808 ∧
   (extAmt > 0 → extAmt > f) ∧
   pubAmt = (extAmt: F) - f
 
 -- The Groth16 proof verifies for the deployed key and these public inputs.
-abbrev proofValid (inputs: TxInputs): Prop :=
+def proofValid (inputs: TxInputs): Prop :=
   Groth16.verify Deployment.vk inputs.π inputs.pubInputs
 
 -- Neither input nullifier has been spent before.
-abbrev nullifiersFresh (spent: Finset F) (k0 k1: F): Prop :=
+def nullifiersFresh (spent: Finset F) (k0 k1: F): Prop :=
   k0 ∉ spent ∧ k1 ∉ spent
 
 -- The two input nullifiers differ. Enforced by the circuit (`noDuplicateNullifiers`),
 -- not checked by the program itself.
-abbrev nullifiersDistinct (k0 k1: F): Prop :=
+def nullifiersDistinct (k0 k1: F): Prop :=
   k0 ≠ k1
 
 -- A deposit does not exceed the configured maximum.
-abbrev depositWithinLimit (cfg: config) (extAmt: ℤ): Prop :=
+def depositWithinLimit (cfg: config) (extAmt: ℤ): Prop :=
   extAmt > 0 → extAmt ≤ cfg.maxDepositLimit
 
 -- The pool can pay out the withdrawal and the fee and still keep its rent reserve.
-abbrev poolSolvent (solBalance rentExemptMin: ℕ) (extAmt: ℤ) (f: ℕ): Prop :=
+def poolSolvent (solBalance rentExemptMin: ℕ) (extAmt: ℤ) (f: ℕ): Prop :=
   (extAmt < 0 → solBalance ≥ |extAmt| + f + rentExemptMin) ∧
   (extAmt ≥ 0 ∧ f > 0 → solBalance ≥ f + rentExemptMin)
 
+-- The signer has enough SOL to cover a deposit. Mirrors `poolSolvent` for the other
+-- direction: `signer_lamports.checked_sub(deposit_amount)` (lib.rs) fails the
+-- transaction outright if this doesn't hold, it isn't a silent underflow on-chain.
+def signerSolvent (balances: Pubkey → ℕ) (s: Pubkey) (extAmt: ℤ): Prop :=
+  extAmt > 0 → balances s ≥ extAmt.natAbs
+
 -- There is room in the tree for the two output commitments.
-abbrev treeHasRoom (T: Tree): Prop :=
+def treeHasRoom (T: Tree): Prop :=
   T.nextIndex < (2^26-2)
 
 structure transactPreconditions
@@ -473,10 +477,14 @@ structure transactPreconditions
   distinctNullifiers: nullifiersDistinct inputs.k0 inputs.k1
   depositLimit: depositWithinLimit oldWorld.state.config inputs.extAmt
   poolSolvency: poolSolvent oldWorld.state.solBalance oldWorld.rentExemptMin inputs.extAmt inputs.f
+  signerSolvency: signerSolvent oldWorld.balances inputs.s inputs.extAmt
   -- The 2 output commitments are added to the tree; make sure there is space for both
   treeNotFull: treeHasRoom oldWorld.state.tree
 
-/-- The actual world agrees with the predicted one on everything Privacy Cash controls. -/
+/-- Temporary, field-by-field stand-in for `actual = predicted` (see "Future work"
+    note below `transact`). TODO(security gap): `payees` excludes the signer's own
+    balance entirely, so nothing here verifies that a deposit actually debited the
+    signer — decide how to close this before relying on `transact`. -/
 structure AgreesOnProgramEffects (inputs : TxInputs) (predicted actual : World) : Prop where
   tree          : actual.state.tree = predicted.state.tree
   nullifiers    : actual.state.nullifiers = predicted.state.nullifiers
@@ -486,26 +494,11 @@ structure AgreesOnProgramEffects (inputs : TxInputs) (predicted actual : World) 
   payees : ∀ k, (k = inputs.A ∨ k = inputs.t) → k ≠ inputs.s →
     actual.balances k = predicted.balances k
 
--- ∧ is written by "\" + "and"
 /-
 `transact` holds when a transaction from `oldWorld` to `newWorld` is allowed and has
-the effects the program is responsible for.
-
-The spec does not model rent or network fees. On chain, a transaction also makes the
-signer pay rent for the two new nullifier accounts and the network fee, and those
-nullifier accounts receive the rent. Because of that, we cannot require `newWorld` to
-be exactly `transactEffects inputs oldWorld`: that would be false for every real
-transaction, and the code model could never be connected to this spec.
-
-So we compare only the parts the program itself controls. `transact` requires:
-- the preconditions hold in `oldWorld`, and
-- `newWorld` agrees with `transactEffects inputs oldWorld` on the Merkle tree, the
-  nullifier set, the pool's SOL balance, the config, the rent-exempt minimum, and the
-  balances of the recipient and the fee recipient.
-
-Balances that rent or network fees also move are not compared: the signer's balance
-(including when the signer is also the recipient or fee recipient) and the nullifier
-accounts' balances.
+the effects the program is responsible for: the preconditions hold in `oldWorld`, and
+`newWorld` agrees with `transactEffects inputs oldWorld` per `AgreesOnProgramEffects`
+(see its doc comment for why this isn't exact equality).
 
 `transact` also does not state that all other balances are unchanged. No theorem here
 depends on it; the code-side connection theorem states it separately.
@@ -530,11 +523,17 @@ def transact
 --/////////////////////////////////////////
 -- Properties that hold for all reachable states.
 
+-- HELPER DEFINITIONS
+
 def initTree : Tree := {
   nextIndex := 0
   subtrees := fun i => Z i.val
   root:= Z 26
-  history := fun i => Z 26 -- TODO check is this correct
+  -- Matches `MerkleTree::initialize` (merkle_tree.rs): only slot 0 is set to the
+  -- zero-tree root; the rest are left at Solana's zero-initialized account bytes, i.e.
+  -- the field element `0`, never `Z 26`. `is_known_root` explicitly rejects `root = 0`
+  -- first, precisely because these untouched slots must not be mistaken for real roots.
+  history := fun i => if i = 0 then Z 26 else 0
   rootIndex := 0
 }
 
@@ -577,6 +576,8 @@ lemma nullifier_set_monotonicity_step
   (inputs: TxInputs)
   (h: transact inputs oldWorld newWorld)
   : oldWorld.state.nullifiers ⊂ newWorld.state.nullifiers := by
+  -- Direct proof: unfold `transact`, then hand back `inputs.k0` as the witness element that's
+  -- in `newWorld` but not `oldWorld`.
   -- `transact` gives us that `newWorld` is exactly `transactEffects inputs oldWorld`, and its
   -- preconditions guarantee `k0` is a fresh nullifier, absent from `oldWorld`.
   obtain ⟨hpre, hagree⟩ := h
@@ -594,7 +595,9 @@ lemma nullifier_set_monotonicity_step
 theorem nullifier_set_monotonicity
   (w1 w2: World)
   (h: ReachableWorld w1 w2)
-  : w1.state.nullifiers ⊆ w2.state.nullifiers := by induction h with
+  : w1.state.nullifiers ⊆ w2.state.nullifiers := by
+  -- Induction proof on `ReachableWorld`
+  induction h with
   -- For same world, it holds trivially
   | noStep => exact Finset.Subset.refl _
   -- For the induction step, we use the property that each transact step strictly grows the
@@ -614,11 +617,11 @@ theorem nullifier_set_monotonicity
 -- Level 1: nullifier level
 -- Level 2: note level (the same note leads to the same nullifier)
 -- Level 3: commitment level (this uses hash collision resistance)
--- TODO: a spend claiming a different leaf index isn't ruled out yet -- see the
+-- TODO: a spend claiming a different leaf index isn't ruled out yet see the
 -- "GAP: Merkle position binding" note after invariant 7.
 
--- 2a. After a transfer has been made with a nullifier
--- A second transfer with the same nullifier should not be possible
+-- 2a. After `transact` has been executed with a nullifier
+-- A second `transact` with the same nullifier should not be possible
 -- (with any nr of txs in between)
 theorem no_nullifier_reuse_possible_across_txs
   (w1 w2 w2' w3: World)
@@ -626,11 +629,12 @@ theorem no_nullifier_reuse_possible_across_txs
   (txInputs1 txInputs2: TxInputs)
   (h1: (nullifierToReuse = txInputs1.k0 ∨ nullifierToReuse = txInputs1.k1) ∧ (nullifierToReuse = txInputs2.k0 ∨ nullifierToReuse = txInputs2.k1))
   (h2: transact txInputs1 w1 w2)
-  -- Zero or more further transactions (arbitrary inputs each), including zero -- see
-  -- `ReachableWorld`'s `noStep`/`extend` constructors. `w2' = w2` is allowed, so this
-  -- also covers an immediate replay right after `txInputs1`.
+  -- Zero or more further transactions (arbitrary inputs each) between `txInputs1` and
+  -- `txInputs2` -- see `ReachableWorld`'s `noStep`/`extend` constructors. The zero-step case
+  -- (`w2' = w2`) covers an immediate replay of `txInputs1` with no intervening transactions.
   (h3: ReachableWorld w2 w2')
   : ¬ transact txInputs2 w2' w3 := by
+  -- Proof by contradiction: if such a nullifier exists, it is both present & excluded from the set of nullifiers ↯
   intro h4
   obtain ⟨_, heff2⟩ := h2
   obtain ⟨hpre4, _⟩ := h4
@@ -644,29 +648,53 @@ theorem no_nullifier_reuse_possible_across_txs
   have hmemW2' : nullifierToReuse ∈ w2'.state.nullifiers :=
     nullifier_set_monotonicity w2 w2' h3 hmemW2
   -- But `txInputs2`'s `newNullifiers` precondition requires both its input nullifiers to be
-  -- absent from `w2'`; `nullifierToReuse` being both present and equal to one of them
-  -- contradicts that.
-  rcases h1.2 with h | h
-  · exact hpre4.newNullifiers.1 (h ▸ hmemW2')
-  · exact hpre4.newNullifiers.2 (h ▸ hmemW2')
+  -- absent from `w2'`, and `nullifierToReuse` equals one of them.
+  have hnotmemW2' : nullifierToReuse ∉ w2'.state.nullifiers := by
+    rcases h1.2 with h | h
+    · exact h ▸ hpre4.newNullifiers.1
+    · exact h ▸ hpre4.newNullifiers.2
+  -- Contradiction: `nullifierToReuse` is both present and absent from `w2'.state.nullifiers`.
+  exact absurd hmemW2' hnotmemW2'
 
--- 2b. A single txs can't use the same nullifier for both inputs
+-- Corollary of 2a: given a nullifier equality between `txInputs1`'s input `i` and
+-- `txInputs2`'s input `i'`, the second transact can't happen either. Reused by 2c and 2e.
+lemma no_reuse_across_txs_from_nullifier_eq
+  (w1 w2 w2' w3: World)
+  (txInputs1 txInputs2: TxInputs)
+  (i i': Fin 2)
+  (hNullEq: txInputs1.pubInputs.nullifiers i = txInputs2.pubInputs.nullifiers i')
+  (h4: transact txInputs1 w1 w2)
+  (h5: ReachableWorld w2 w2')
+  : ¬ transact txInputs2 w2' w3 := by
+  apply no_nullifier_reuse_possible_across_txs w1 w2 w2' w3 (txInputs1.pubInputs.nullifiers i)
+    txInputs1 txInputs2 ⟨?_, ?_⟩ h4 h5
+  · fin_cases i <;> simp [TxInputs.pubInputs]
+  · rw [hNullEq]; fin_cases i' <;> simp [TxInputs.pubInputs]
+
+-- 2b. If txInputs has two equal nullifiers for inputs, transact shouldn't be possible.
 theorem no_nullifier_reuse_possible_within_txs
   (w1 w2: World)
   (nullifierToReuse: F)
   (txInputs: TxInputs)
   (h1: nullifierToReuse = txInputs.k0 ∧ nullifierToReuse = txInputs.k1):
   ¬ transact txInputs w1 w2 := by
+  -- Proof by contradiction: like above
   intro h2
   obtain ⟨hpre, _⟩ := h2
   -- `distinctNullifiers` requires k0 ≠ k1; but h1 identifies both with `nullifierToReuse`.
-  exact hpre.distinctNullifiers (h1.1.symm.trans h1.2)
+  have heq : txInputs.k0 = txInputs.k1 := h1.1.symm.trans h1.2
+  exact absurd heq hpre.distinctNullifiers
 
 -- HELPER (level 2)
 -- What is the note? https://privacy-cash-privacy-cash.mintlify.app/concepts/commitments-and-nullifiers#nullifiers
 -- amount, pubkey (from privkey), blinding, mint
--- plus: leafIndex
--- plus, but redundant: signature over commitment. This reuses privkey, commitment and leafIndex
+--  plus: leafIndex
+--  plus, but redundant: signature over commitment. This reuses privkey, commitment and leafIndex
+-- So a note is uniquely defined by: amount, pubkey (from privkey), blinding, mint, leafIndex of Merkle Proof
+-- The commitment only depends on pubkey, but the nullifier's signature is built straight from
+-- the privkey, not the pubkey. pk = H1(sk) is one-directional: unless H1 is collision-free
+-- (not assumed), two different privkeys could share a pubkey. So matching pubkeys wouldn't
+-- guarantee matching signatures. h3 compares inSk directly to avoid relying on that.
 lemma same_note_same_nullifier
   (witness1 witness2: Witness)
   (pubInput1 pubInput2: PubInputs)
@@ -689,8 +717,10 @@ lemma same_note_same_nullifier
   rw [h1.nullifierCorrectness i, h2.nullifierCorrectness i']
   simp only [nullifier, hC, hIdx, hSign]
 
--- 2c. After a transfer has spent a note, a second transfer spending the same note
--- is not possible (with any nr of txs in between).
+-- 2c. No same-note reuse across txs. `witness1` and `witness2` are the witnesses used for
+-- `txInputs1` and `txInputs2` (via `RelationS`). If `witness1`'s input `i` is the same note as
+-- `witness2`'s input `i'` (same amount, secret key, blinding, mint, and leaf index of opening)
+-- spending it again in a second transfer is not possible, with any number of txs in between.
 theorem no_note_reuse_possible_across_txs
   (w1 w2 w2' w3: World)
   (txInputs1 txInputs2: TxInputs)
@@ -706,12 +736,10 @@ theorem no_note_reuse_possible_across_txs
   (h4: transact txInputs1 w1 w2)
   (h5: ReachableWorld w2 w2') -- Any amount of txs in between after the first txs
   : ¬ transact txInputs2 w2' w3 := by
+  -- Reduction proof: same note gives same nullifier, then apply theorem 2a via the corollary.
   have hNullEq := same_note_same_nullifier witness1 witness2 txInputs1.pubInputs txInputs2.pubInputs
     hRel1 hRel2 i i' h3
-  apply no_nullifier_reuse_possible_across_txs w1 w2 w2' w3 (txInputs1.pubInputs.nullifiers i)
-    txInputs1 txInputs2 ⟨?_, ?_⟩ h4 h5
-  · fin_cases i <;> simp [TxInputs.pubInputs]
-  · rw [hNullEq]; fin_cases i' <;> simp [TxInputs.pubInputs]
+  exact no_reuse_across_txs_from_nullifier_eq w1 w2 w2' w3 txInputs1 txInputs2 i i' hNullEq h4 h5
 
 -- 2d. A single txs can't spend the same note for both inputs:
 -- no valid witness exists for it.
@@ -721,13 +749,15 @@ theorem no_note_reuse_possible_within_txs
   (h1: witness.inAmt 0 = witness.inAmt 1
     ∧ witness.inSk 0 = witness.inSk 1
     ∧ witness.inR 0 = witness.inR 1
+    -- mint is defined per witness, so can't be compared
     ∧ (witness.openings 0).index = (witness.openings 1).index)
   : ¬ RelationS txInputs.pubInputs witness := by
+  -- Proof by contradiction: if such a witness exists, they have the same nullifier,
+  -- contradicting `noDuplicateNullifiers` in RelationS ↯
   intro hRel
   have hNullEq := same_note_same_nullifier witness witness txInputs.pubInputs txInputs.pubInputs
     hRel hRel 0 1 ⟨h1.1, h1.2.1, h1.2.2.1, rfl, h1.2.2.2⟩
   exact hRel.noDuplicateNullifiers hNullEq
-
 
 -- HELPER (level 3)
 -- The same commitment at the same leaf index, possibly opened with different values,
@@ -759,9 +789,8 @@ lemma same_commitment_same_nullifier_or_collision
       exact Or.inr (Or.inl ⟨hSk, hPkH1⟩)
   · exact Or.inr (Or.inr hH4)
 
--- 2e. After a transfer has spent a commitment, a second transfer spending the same
--- commitment at the same leaf index is not possible (with any nr of txs in between),
--- unless a hash collision was found.
+-- 2e. No same-commitment reuse across txs, unless a hash collision was found.
+-- Like 2c, but we assume they use the same commitment + leaf index.
 theorem no_commitment_reuse_possible_across_txs_or_collision
   (w1 w2 w2' w3: World)
   (txInputs1 txInputs2: TxInputs)
@@ -777,13 +806,11 @@ theorem no_commitment_reuse_possible_across_txs_or_collision
     ∨ H1Collision (witness1.inSk i) (witness2.inSk i')
     ∨ H4Collision (witness1.inAmt i, witness1.inPk i, witness1.inR i, witness1.mint)
                   (witness2.inAmt i', witness2.inPk i', witness2.inR i', witness2.mint) := by
+  -- Case-split proof: the commitment match either really does mean the same nullifier,
+  -- which is blocked the same way as in 2c, or it doesn't, which can only be because of a hash collision
   rcases same_commitment_same_nullifier_or_collision witness1 witness2 txInputs1.pubInputs
       txInputs2.pubInputs hRel1 hRel2 i i' sameIndex sameCommitment with hNullEq | hColl
-  · refine Or.inl ?_
-    apply no_nullifier_reuse_possible_across_txs w1 w2 w2' w3 (txInputs1.pubInputs.nullifiers i)
-      txInputs1 txInputs2 ⟨?_, ?_⟩ h4 h5
-    · fin_cases i <;> simp [TxInputs.pubInputs]
-    · rw [hNullEq]; fin_cases i' <;> simp [TxInputs.pubInputs]
+  · exact Or.inl (no_reuse_across_txs_from_nullifier_eq w1 w2 w2' w3 txInputs1 txInputs2 i i' hNullEq h4 h5)
   · exact Or.inr hColl
 
 -- 2f. A single txs can't spend the same commitment at the same leaf index for both
@@ -797,6 +824,9 @@ theorem no_commitment_reuse_possible_within_txs_or_collision
     ∨ H1Collision (witness.inSk 0) (witness.inSk 1)
     ∨ H4Collision (witness.inAmt 0, witness.inPk 0, witness.inR 0, witness.mint)
                   (witness.inAmt 1, witness.inPk 1, witness.inR 1, witness.mint) := by
+  -- Case-split proof: if the witness isn't even valid, we're done.
+  -- Otherwise, the commitment match either really does mean the same nullifier, blocked the
+  -- same way as in 2d, or it doesn't, which can only be because of a hash collision
   by_cases hRel : RelationS txInputs.pubInputs witness
   · rcases same_commitment_same_nullifier_or_collision witness witness txInputs.pubInputs
         txInputs.pubInputs hRel hRel 0 1 sameIndex sameCommitment with hNullEq | hColl
@@ -918,6 +948,13 @@ theorem transact_implies_valid_openings
 -- 7. Root consistency. Transact cannot add a root to history that is not a valid root.
 -- Every root added is really a valid root in history OR default value
 
+/-- HELPER `transferEffects` only ever touches `solBalance` and `balances`; the tree is
+    untouched either way. -/
+lemma transferEffects_tree (inputs: TxInputs) (oldWorld: World) :
+    (transferEffects inputs oldWorld).state.tree = oldWorld.state.tree := by
+  unfold transferEffects
+  split_ifs <;> rfl
+
 -- 7a. Every tree a reachable world can produce is built by a genuine sequence of
 -- `appendEffects` calls from `initTree`, not an arbitrary value: `transact` is the only
 -- way to change a `Tree`, and it always goes through `appendEffects`.
@@ -948,16 +985,28 @@ lemma mem_range_update_or_mem_range {α β} [DecidableEq α] (f: α → β) (i: 
 
 -- 7b. Every root that ever lands in `history` is either the untouched default `Z 26` or
 -- is genuinely the root of some `appendEffects`-built tree -- never an arbitrary value.
+
+/-- Helper: `appendEffects`'s `history` is always the old `history`, updated at the new root
+    slot with the new root -- stated without unfolding how that new root is computed,
+    so it composes regardless of the Merkle internals. -/
+lemma appendEffects_history (c: F) (t: Tree) :
+    (appendEffects c t).history
+      = Function.update t.history (t.rootIndex + 1) (appendEffects c t).root := rfl
+
+
 theorem history_entries_are_genuine_roots
   (cfg: config) (balances: Pubkey → ℕ) (rentExemptMin: ℕ) (w: World)
   (h: ReachableWorld (initWorld cfg balances rentExemptMin) w)
   : ∀ R ∈ Set.range w.state.tree.history,
-      R = Z 26 ∨ ∃ cs: List F, R = (foldAppend cs initTree).root := by
+      R = Z 26 ∨ R = 0 ∨ ∃ cs: List F, R = (foldAppend cs initTree).root := by
   induction h with
   | noStep =>
     intro R hR
     obtain ⟨i, hi⟩ := hR
-    exact Or.inl (by simpa [initWorld, initTree] using hi.symm)
+    simp only [initWorld, initTree] at hi
+    split_ifs at hi with hi0
+    · exact Or.inl hi.symm
+    · exact Or.inr (Or.inl hi.symm)
   | extend inputs h2 transact_proof ih =>
     intro R hR
     obtain ⟨_, hagree⟩ := transact_proof
@@ -969,7 +1018,7 @@ theorem history_entries_are_genuine_roots
     rw [appendEffects_history] at hR
     rcases mem_range_update_or_mem_range _ _ _ _ hR with hEq | hR'
     · obtain ⟨cs, hcs⟩ := tree_well_formed cfg balances rentExemptMin _ h2
-      refine Or.inr ⟨cs ++ [inputs.outC0, inputs.outC1], ?_⟩
+      refine Or.inr (Or.inr ⟨cs ++ [inputs.outC0, inputs.outC1], ?_⟩)
       have : foldAppend (cs ++ [inputs.outC0, inputs.outC1]) initTree
           = appendEffects inputs.outC1 (appendEffects inputs.outC0 (foldAppend cs initTree)) := by
         simp [foldAppend]
@@ -978,7 +1027,7 @@ theorem history_entries_are_genuine_roots
     rw [appendEffects_history] at hR'
     rcases mem_range_update_or_mem_range _ _ _ _ hR' with hEq | hR''
     · obtain ⟨cs, hcs⟩ := tree_well_formed cfg balances rentExemptMin _ h2
-      refine Or.inr ⟨cs ++ [inputs.outC0], ?_⟩
+      refine Or.inr (Or.inr ⟨cs ++ [inputs.outC0], ?_⟩)
       have : foldAppend (cs ++ [inputs.outC0]) initTree
           = appendEffects inputs.outC0 (foldAppend cs initTree) := by
         simp [foldAppend]
@@ -1058,13 +1107,13 @@ theorem proof_binds_to_txInputs_or_break
 -- 10. Any unspent notes can always be spent
 --
 -- Taken literally this is false: a withdrawal can be genuinely blocked by pool
--- insolvency (`poolSolvent`), a full tree (`treeHasRoom`), or a root that has rotated
--- out of the 100-slot history (`rootKnown`) before a spend lands. Those aren't proof
--- artifacts to route around -- they're real protocol constraints -- so the honest
--- completeness statement takes every non-ZKP precondition as a hypothesis (in
--- particular `poolSolvency`) and shows the *only* remaining obstacle, the ZK proof
--- itself, is never one: given a witness, `Deployment.completeness` always produces a
--- proof that makes `transact` go through.
+-- insolvency (`poolSolvent`), a deposit by signer insolvency (`signerSolvent`), a full
+-- tree (`treeHasRoom`), or a root that has rotated out of the 100-slot history
+-- (`rootKnown`) before a spend lands. Those aren't proof artifacts to route around --
+-- they're real protocol constraints -- so the honest completeness statement takes every
+-- non-ZKP precondition as a hypothesis and shows the *only* remaining obstacle, the ZK
+-- proof itself, is never one: given a witness, `Deployment.completeness` always produces
+-- a proof that makes `transact` go through.
 --
 -- GAP: `witness` is a bare hypothesis, not derived from an actual prior deposit -- see
 -- the "GAP: Merkle position binding" note after invariant 7.
@@ -1079,6 +1128,7 @@ theorem unspent_note_is_spendable
   (hDistinct: nullifiersDistinct inputs.k0 inputs.k1)
   (hDeposit: depositWithinLimit oldWorld.state.config inputs.extAmt)
   (hSolvent: poolSolvent oldWorld.state.solBalance oldWorld.rentExemptMin inputs.extAmt inputs.f)
+  (hSignerSolvent: signerSolvent oldWorld.balances inputs.s inputs.extAmt)
   (hRoom: treeHasRoom oldWorld.state.tree)
   : ∃ π, transact { inputs with π := π } oldWorld (transactEffects { inputs with π := π } oldWorld) := by
   obtain ⟨π, hπ⟩ := Deployment.completeness inputs.pubInputs witness hRel
@@ -1091,6 +1141,7 @@ theorem unspent_note_is_spendable
     validZKP := hπ
     newNullifiers := hFresh
     distinctNullifiers := hDistinct
+    signerSolvency := hSignerSolvent
     depositLimit := hDeposit
     poolSolvency := hSolvent
     treeNotFull := hRoom
