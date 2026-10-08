@@ -19,13 +19,13 @@
             aeneas.packages.${system}.charon   # charon: Rust -> .llbc
             aeneas.packages.${system}.default  # aeneas: .llbc -> Lean
             pkgs.elan                          # lean/lake, per lean/lean-toolchain
-            pkgs.cargo                         # `charon cargo`, and setup-vendor.sh's `cargo vendor`
+            pkgs.cargo                         # `charon cargo`
             pkgs.rustc                         # cargo's dependency resolution queries it
             pkgs.git                           # lake fetches the Aeneas Lean backend over git
           ];
 
           shellHook = ''
-            echo "formal-verification dev shell. ./extract.sh regenerates the Lean model."
+            echo "formal-verification dev shell. core-model/scripts/extract.sh regenerates the model."
           '';
         };
       });
