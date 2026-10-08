@@ -5,6 +5,7 @@ import PrivacyCash.Model.Pda
 import PrivacyCash.Model.Accounts
 import PrivacyCash.Model.Runtime
 import PrivacyCash.Model.Bn254
+import PrivacyCash.Model.Field
 import PrivacyCash.Model.Crypto
 import PrivacyCash.Model.Program
 import PrivacyCash.Model.IdlCheck
