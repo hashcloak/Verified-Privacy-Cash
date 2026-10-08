@@ -27,13 +27,13 @@ structure Crypto where
   sha256 : zkcash_core.ext_data.Sha256 Unit
   /-- The `alt_bn128` syscalls and G1 negation, `SolanaBn254` in the program. -/
   bn254 : zkcash_core.groth16.Bn254 Unit
-  /-- The program's `VERIFYING_KEY`. -/
-  verifyingKey : zkcash_core.groth16.VerifyingKey
 
 /-- The program's `ProgramVerifier`: the extracted Groth16 verifier
-    (`zkcash_core::groth16::verify_proof`) with the program's key. -/
+    (`zkcash_core::groth16::verify_proof`) with the program's key, itself
+    extracted (`zkcash_core::verifying_key::VERIFYING_KEY`), so the model
+    verifies with exactly the bytes the program is compiled with. -/
 def Crypto.proofVerifier (c : Crypto) : zkcash_core.transact.ProofVerifier Unit where
-  verify p := zkcash_core.groth16.verify_proof c.bn254 p c.verifyingKey
+  verify p := zkcash_core.groth16.verify_proof c.bn254 p zkcash_core.verifying_key.VERIFYING_KEY
 
 /-! ## Hypotheses a theorem may take about the primitives
 
