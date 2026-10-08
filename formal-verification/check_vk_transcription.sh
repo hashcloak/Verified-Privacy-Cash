@@ -7,7 +7,7 @@
 # `curve_shim` is --opaque, so Aeneas never sees their bytes, and the Lean model gets them
 # from a HAND COPY in lean/code_model/hand_written/TrustedFuns.lean (between the
 # "BEGIN VERIFYING KEY" and "END VERIFYING KEY" markers). A hand copy can drift -- a key
-# rotation in utils.rs would leave the model silently proving things about the old key.
+# rotation in verifying_key.rs would leave the model silently proving things about the old key.
 # This script is the link: it reads both files and fails unless every field matches.
 #
 # It parses the Rust independently of however the Lean was produced, and compares field by
@@ -19,7 +19,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-RUST="${RUST:-../privacy-cash/anchor/programs/zkcash/src/utils.rs}"
+RUST="${RUST:-../privacy-cash/anchor/crates/zkcash_core/src/verifying_key.rs}"
 LEAN="${LEAN:-lean/code_model/hand_written/TrustedFuns.lean}"
 
 # One token per line: a field name when a field starts, then that field's bytes.
