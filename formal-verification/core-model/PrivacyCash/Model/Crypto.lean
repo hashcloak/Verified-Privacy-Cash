@@ -7,12 +7,14 @@ SHA-256 (`Sha256`) and the curve operations behind Groth16 (`Bn254`). The
 model keeps the ones it cannot define as parameters (`Crypto`), so every
 definition and theorem works for ANY implementation, and whatever a theorem
 needs from them is spelled out as a hypothesis it takes. None of these is an
-axiom. The curve operations are partly defined: G1 negation is arkworks code
-inside the program and is modelled in `Bn254.lean`; only the `alt_bn128`
-syscalls stay parameters.
+axiom. What is arkworks code inside the program is defined instead: the
+scalar field (`Field.lean`) and G1 negation (`Bn254.lean`). What stays a
+parameter is executed by the validator: Poseidon, SHA-256 and the
+`alt_bn128` syscalls.
 -/
 import PrivacyCash.Model.Basic
 import PrivacyCash.Model.Bn254
+import PrivacyCash.Model.Field
 import Mathlib.Data.ZMod.Basic
 open Aeneas Aeneas.Std Result
 
@@ -23,10 +25,6 @@ namespace PrivacyCash.Model
 structure Crypto where
   /-- Poseidon, `LightHasher<Poseidon>` in the program (`sol_poseidon` on-chain). -/
   hasher : zkcash_core.merkle_tree.Hasher Unit
-  /-- The type of BN254 scalar field elements (`ark_bn254::Fr` in the program). -/
-  Fr : Type
-  /-- Its arithmetic, `ArkFr` in the program. -/
-  field : zkcash_core.field.PrimeField Fr
   /-- SHA-256, `SolanaSha256` in the program (`sol_sha256` on-chain). -/
   sha256 : zkcash_core.ext_data.Sha256 Unit
   /-- The `alt_bn128` syscalls `SolanaBn254` calls (executed by the validator). -/
@@ -49,34 +47,6 @@ Each is a property of the real implementation (checked by tests where noted),
 stated only for the inputs an execution actually uses where the property
 cannot hold for all inputs. -/
 
-/-- The BN254 scalar field modulus r (`ark_bn254::Fr::MODULUS`). -/
-def bn254ScalarModulus : Nat :=
-  21888242871839275222246405745257275088548364400416034343698204186575808495617
-
-/-- A 32-byte array read as a big-endian number. -/
-def beNat (b : Std.Array U8 32#usize) : Nat := b.val.foldl (fun acc x => acc * 256 + x.val) 0
-
-/-- A 32-byte array read as a little-endian number. -/
-def leNat (b : Std.Array U8 32#usize) : Nat := b.val.foldr (fun x acc => acc * 256 + x.val) 0
-
-/-- **Hypothesis (arkworks is correct):** `c.Fr` is the field of integers mod r,
-    through `toZMod`, and each `PrimeField` operation computes what its doc
-    comment in `zkcash_core::field` says, without panicking. -/
-structure FieldCorrect (c : Crypto) where
-  toZMod : c.Fr → ZMod bn254ScalarModulus
-  injective : Function.Injective toZMod
-  from_u64 : ∀ x, ∃ y, c.field.from_u64 x = ok y ∧ toZMod y = (x.val : ZMod bn254ScalarModulus)
-  from_be_bytes_mod_order : ∀ b, ∃ y, c.field.from_be_bytes_mod_order b = ok y ∧
-    toZMod y = (beNat b : ZMod bn254ScalarModulus)
-  from_le_bytes_mod_order : ∀ b, ∃ y, c.field.from_le_bytes_mod_order b = ok y ∧
-    toZMod y = (leNat b : ZMod bn254ScalarModulus)
-  add : ∀ a b, ∃ y, c.field.add a b = ok y ∧ toZMod y = toZMod a + toZMod b
-  sub : ∀ a b, ∃ y, c.field.sub a b = ok y ∧ toZMod y = toZMod a - toZMod b
-  neg : ∀ a, ∃ y, c.field.neg a = ok y ∧ toZMod y = - toZMod a
-  /-- arkworks orders field elements by their canonical value in `0..r`. -/
-  le : ∀ a b, c.field.le a b = ok (decide ((toZMod a).val ≤ (toZMod b).val))
-  eq : ∀ a b, ∃ r, c.field.eq a b = ok r ∧ (r = true ↔ a = b)
-
 /-- **Hypothesis (Poseidon collision resistance, per execution):** no two of
     the node pairs in `inputs` hash to the same value. -/
 def PoseidonCollisionFree (c : Crypto) (inputs : Set (Pubkey × Pubkey)) : Prop :=
@@ -92,12 +62,12 @@ def ZeroBytesConsistent (c : Crypto) : Prop :=
 
 /-- **Hypothesis (SHA-256 collision resistance, per execution):** no two of the
     serialized ext data in `inputs` give the same field element after
-    `transact`'s `Fr::from_le_bytes_mod_order(sha256(..))`. -/
+    `transact`'s `Fr::from_le_bytes_mod_order(sha256(..))`, i.e. the digest
+    read little-endian and reduced mod r. -/
 def ExtDataHashCollisionFree (c : Crypto) (inputs : Set (Slice U8)) : Prop :=
-  ∀ x ∈ inputs, ∀ y ∈ inputs, ∀ hx hy fx fy,
+  ∀ x ∈ inputs, ∀ y ∈ inputs, ∀ hx hy,
     c.sha256.hash x = ok hx → c.sha256.hash y = ok hy →
-    c.field.from_le_bytes_mod_order hx = ok fx → c.field.from_le_bytes_mod_order hy = ok fy →
-    c.field.eq fx fy = ok true → x = y
+    (leNat hx : Fr) = (leNat hy : Fr) → x = y
 
 /-- A proof's 7 public inputs, in circuit order (as `verify_proof` passes them). -/
 def publicInputs (p : zkcash_core.transact.Proof) : List (Std.Array U8 32#usize) :=
@@ -113,35 +83,5 @@ def publicInputs (p : zkcash_core.transact.Proof) : List (Std.Array U8 32#usize)
 def Groth16Sound (c : Crypto) (stmt : List (Std.Array U8 32#usize) → Prop)
     (proofs : Set zkcash_core.transact.Proof) : Prop :=
   ∀ p ∈ proofs, c.proofVerifier.verify p = ok true → stmt (publicInputs p)
-
-/-! ## The field hypothesis can be met
-
-A hypothesis no implementation satisfies would make every theorem assuming it
-vacuous. `FieldCorrect` is met by the integers mod r themselves. -/
-
-/-- The integers mod r, with the `PrimeField` operations computed exactly. -/
-def zmodField : zkcash_core.field.PrimeField (ZMod bn254ScalarModulus) where
-  coremarkerCopyInst := ⟨⟨fun a => ok a, fun _ b => ok b⟩⟩
-  from_u64 x := ok (x.val : ZMod bn254ScalarModulus)
-  from_be_bytes_mod_order b := ok (beNat b : ZMod bn254ScalarModulus)
-  from_le_bytes_mod_order b := ok (leNat b : ZMod bn254ScalarModulus)
-  add a b := ok (a + b)
-  sub a b := ok (a - b)
-  neg a := ok (-a)
-  le a b := ok (decide (a.val ≤ b.val))
-  eq a b := ok (decide (a = b))
-
-theorem fieldCorrect_satisfiable (c : Crypto) :
-    Nonempty (FieldCorrect { c with Fr := ZMod bn254ScalarModulus, field := zmodField }) :=
-  ⟨{ toZMod := id
-     injective := Function.injective_id
-     from_u64 := fun x => ⟨_, rfl, rfl⟩
-     from_be_bytes_mod_order := fun b => ⟨_, rfl, rfl⟩
-     from_le_bytes_mod_order := fun b => ⟨_, rfl, rfl⟩
-     add := fun a b => ⟨_, rfl, rfl⟩
-     sub := fun a b => ⟨_, rfl, rfl⟩
-     neg := fun a => ⟨_, rfl, rfl⟩
-     le := fun a b => rfl
-     eq := fun a b => ⟨_, rfl, by simp⟩ }⟩
 
 end PrivacyCash.Model

@@ -201,7 +201,7 @@ noncomputable def execTransact (d : Deployment) (s : State) (tx : TxEnv) (a : Tr
           feeRecipient := a.feeRecipientAccount,
           rentExemptMinimum := some (mb treeTokenAccountSpace) }
       let (r, env', tree') ← ofResult (zkcash_core.transact.transact d.crypto.hasher
-        d.crypto.field d.crypto.sha256 d.crypto.proofVerifier solRuntime env tree config proof
+        arkFr d.crypto.sha256 d.crypto.proofVerifier solRuntime env tree config proof
         extAmount fee a.recipient a.feeRecipientAccount out1 out2)
       match r with
       | .Err e => .error (.transact e)
