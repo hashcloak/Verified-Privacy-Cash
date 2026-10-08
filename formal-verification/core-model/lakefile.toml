@@ -1,0 +1,13 @@
+name = "privacy_cash"
+  defaultTargets = ["PrivacyCash"]
+
+  [[require]]
+  name = "aeneas"
+  git = "https://github.com/AeneasVerif/aeneas.git"
+  rev = "86158eb2e18944c5225959712efb96bce188f40d"
+  subDir = "backends/lean"
+
+  [[lean_lib]]
+  name = "PrivacyCash"
+  # A misspelled name must be an error, not a silently added variable.
+  leanOptions = { autoImplicit = false }

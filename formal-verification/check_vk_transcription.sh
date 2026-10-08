@@ -19,7 +19,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-RUST="${RUST:-../anchor/programs/zkcash/src/utils.rs}"
+RUST="${RUST:-../privacy-cash/anchor/programs/zkcash/src/utils.rs}"
 LEAN="${LEAN:-lean/code_model/hand_written/TrustedFuns.lean}"
 
 # One token per line: a field name when a field starts, then that field's bytes.
