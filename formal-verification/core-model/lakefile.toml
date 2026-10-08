@@ -1,5 +1,5 @@
 name = "privacy_cash"
-  defaultTargets = ["PrivacyCash"]
+  defaultTargets = ["PrivacyCash", "Tests"]
 
   [[require]]
   name = "aeneas"
@@ -10,4 +10,11 @@ name = "privacy_cash"
   [[lean_lib]]
   name = "PrivacyCash"
   # A misspelled name must be an error, not a silently added variable.
+  leanOptions = { autoImplicit = false }
+
+  # Checks of the model against the program's Rust code on concrete inputs
+  # (`#guard`s, evaluated at build time). Never imported by PrivacyCash.
+  [[lean_lib]]
+  name = "Tests"
+  globs = ["Tests.+"]
   leanOptions = { autoImplicit = false }

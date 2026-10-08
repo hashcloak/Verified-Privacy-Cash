@@ -4,11 +4,15 @@ The cryptography the program relies on, left abstract.
 The extracted code already takes each primitive as a trait (a Lean record of
 functions): Poseidon (`Hasher`), the BN254 scalar field (`PrimeField`),
 SHA-256 (`Sha256`) and the curve operations behind Groth16 (`Bn254`). The
-model keeps them as parameters (`Crypto`), so every definition and theorem
-works for ANY implementation, and whatever a theorem needs from them is
-spelled out below as a hypothesis it takes. None of these is an axiom.
+model keeps the ones it cannot define as parameters (`Crypto`), so every
+definition and theorem works for ANY implementation, and whatever a theorem
+needs from them is spelled out as a hypothesis it takes. None of these is an
+axiom. The curve operations are partly defined: G1 negation is arkworks code
+inside the program and is modelled in `Bn254.lean`; only the `alt_bn128`
+syscalls stay parameters.
 -/
 import PrivacyCash.Model.Basic
+import PrivacyCash.Model.Bn254
 import Mathlib.Data.ZMod.Basic
 open Aeneas Aeneas.Std Result
 
@@ -25,8 +29,12 @@ structure Crypto where
   field : zkcash_core.field.PrimeField Fr
   /-- SHA-256, `SolanaSha256` in the program (`sol_sha256` on-chain). -/
   sha256 : zkcash_core.ext_data.Sha256 Unit
-  /-- The `alt_bn128` syscalls and G1 negation, `SolanaBn254` in the program. -/
-  bn254 : zkcash_core.groth16.Bn254 Unit
+  /-- The `alt_bn128` syscalls `SolanaBn254` calls (executed by the validator). -/
+  altBn128 : AltBn128
+
+/-- The program's `SolanaBn254`: the syscalls, plus G1 negation as defined in
+    `Bn254.lean`. -/
+def Crypto.bn254 (c : Crypto) : zkcash_core.groth16.Bn254 Unit := solanaBn254 c.altBn128
 
 /-- The program's `ProgramVerifier`: the extracted Groth16 verifier
     (`zkcash_core::groth16::verify_proof`) with the program's key, itself
