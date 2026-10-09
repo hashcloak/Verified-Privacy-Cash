@@ -87,8 +87,9 @@ def toArray64 (v : alloc.vec.Vec U8) : Option (Std.Array U8 64#usize) :=
 /-- `SolanaBn254::negate_g1`: reverse each 32-byte half (big-endian to
     arkworks' little-endian), decode and validate the point, negate it, encode
     it, and reverse the halves back. `change_endianness` is the extracted
-    `zkcash_core` one; the program's own copy is checked equal to it by the
-    differential tests. Serializing a coordinate into a 32-byte buffer cannot
+    `zkcash_core` one, which the program's `utils::change_endianness` calls
+    (checked against upstream by `tests/differential/byte_helpers.rs`; the
+    whole function by `Tests/Bn254Vectors.lean`). Serializing a coordinate into a 32-byte buffer cannot
     fail, so the two `is_err` branches are unreachable and not modelled. -/
 def negateG1 (proofA : Std.Array U8 64#usize) : Result (Option (Std.Array U8 64#usize)) := do
   let le ← zkcash_core.utils.change_endianness (Std.Array.to_slice proofA)

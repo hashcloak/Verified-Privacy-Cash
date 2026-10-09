@@ -53,9 +53,10 @@ def PoseidonCollisionFree (c : Crypto) (inputs : Set (Pubkey × Pubkey)) : Prop 
   ∀ x ∈ inputs, ∀ y ∈ inputs, ∀ h,
     c.hasher.hash_pair x.1 x.2 = ok h → c.hasher.hash_pair y.1 y.2 = ok h → x = y
 
-/-- **Hypothesis (Poseidon's zero hashes, checked by a test against
-    light_hasher):** entry `i + 1` of `zero_bytes` is the hash of two copies of
-    entry `i`, so it is the root of an empty subtree of height `i + 1`. -/
+/-- **Hypothesis (Poseidon's zero hashes):** entry `i + 1` of `zero_bytes` is
+    the hash of two copies of entry `i`, so it is the root of an empty subtree
+    of height `i + 1`. True of the program's `LightHasher<Poseidon>`: checked
+    for every entry by the fork's `zero_bytes_are_empty_subtree_roots` test. -/
 def ZeroBytesConsistent (c : Crypto) : Prop :=
   ∃ z, c.hasher.zero_bytes = ok z ∧
     ∀ i, i + 1 < 41 → c.hasher.hash_pair (z.val[i]!) (z.val[i]!) = ok (z.val[i + 1]!)

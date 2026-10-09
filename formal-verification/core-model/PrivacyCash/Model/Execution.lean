@@ -33,7 +33,7 @@ def AccountData.isProgramData : AccountData → Bool
     owner and data and can only gain lamports; any other account may change
     arbitrarily, except that it cannot come to hold this program's account
     types (that would take this program's signature for a PDA, or its code). -/
-def EnvStep (s s' : State) : Prop :=
+def EnvStep (programId : Pubkey) (s s' : State) : Prop :=
   ∀ k,
     ((s k).owner = programId →
       (s' k).owner = programId ∧ (s' k).data = (s k).data ∧
@@ -41,7 +41,7 @@ def EnvStep (s s' : State) : Prop :=
     ((s k).owner ≠ programId → (s' k).data.isProgramData = false)
 
 /-- A state before the program is initialized: it owns no account. -/
-def Genesis (s : State) : Prop := ∀ k, (s k).owner ≠ programId
+def Genesis (programId : Pubkey) (s : State) : Prop := ∀ k, (s k).owner ≠ programId
 
 /-- One event of an execution. -/
 inductive Event where
@@ -60,11 +60,11 @@ inductive Run (d : Deployment) : State → List Event → State → Prop where
   | program {s s' s'' : State} {tx : TxEnv} {ix : Instruction} {events : List Event} :
       step d s tx ix = .ok s' → Run d s' events s'' → Run d s (.program tx ix :: events) s''
   | env {s s' s'' : State} {events : List Event} :
-      EnvStep s s' → Run d s' events s'' → Run d s (.env :: events) s''
+      EnvStep d.programId s s' → Run d s' events s'' → Run d s (.env :: events) s''
 
 /-- The states an execution can reach from a genesis state. -/
 def Reachable (d : Deployment) (s : State) : Prop :=
-  ∃ s₀ events, Genesis s₀ ∧ Run d s₀ events s
+  ∃ s₀ events, Genesis d.programId s₀ ∧ Run d s₀ events s
 
 /-! ## Basic facts -/
 
@@ -77,13 +77,13 @@ theorem Run.append {d : Deployment} {s₁ s₂ s₃ : State} {e₁ e₂ : List E
   | env henv _ ih => exact .env henv (ih h₂)
 
 /-- The rest of the world never changes the data of an account this program owns. -/
-theorem EnvStep.data_of_owned {s s' : State} (h : EnvStep s s') {k : Pubkey}
+theorem EnvStep.data_of_owned {programId : Pubkey} {s s' : State} (h : EnvStep programId s s') {k : Pubkey}
     (hk : (s k).owner = programId) : (s' k).owner = programId ∧ (s' k).data = (s k).data :=
   ⟨((h k).1 hk).1, ((h k).1 hk).2.1⟩
 
 /-- Doing nothing is a step of the rest of the world (so `EnvStep` is not vacuous). -/
-theorem EnvStep.refl_of_no_foreign_program_data (s : State)
-    (h : ∀ k, (s k).owner ≠ programId → (s k).data.isProgramData = false) : EnvStep s s :=
+theorem EnvStep.refl_of_no_foreign_program_data (programId : Pubkey) (s : State)
+    (h : ∀ k, (s k).owner ≠ programId → (s k).data.isProgramData = false) : EnvStep programId s s :=
   fun k => ⟨fun hk => ⟨hk, rfl, le_refl _⟩, h k⟩
 
 end PrivacyCash.Model

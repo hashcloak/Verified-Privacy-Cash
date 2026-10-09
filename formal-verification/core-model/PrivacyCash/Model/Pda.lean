@@ -22,25 +22,31 @@ namespace PrivacyCash.Model
 /-- The bytes of an ASCII seed such as `b"nullifier0"`. -/
 def ascii (s : String) : List U8 := s.toList.map (fun c => ⟨BitVec.ofNat 8 c.toNat⟩)
 
-/-- `Pubkey::create_program_address(seeds, program_id)` for this program, on the
-    joined seed bytes (bump included). Left abstract (it is a hash). Where it
-    fails (address on the curve) the real program fails too, so leaving that
-    out only lets the model accept more, never less. -/
-opaque createProgramAddress (seedBytes : List U8) : Pubkey
-
-/-- The bump `find_program_address(seeds, program_id)` picks. Left abstract. -/
-opaque canonicalBump (seeds : List U8) : U8
+/-- Where the program is deployed, and how Solana derives its addresses. These
+    are parameters (not constants), so every definition and theorem holds for
+    any deployment (localnet, devnet, mainnet), and a test can run the model
+    with the real values. -/
+structure Addresses where
+  /-- The address the zkcash program is deployed at. -/
+  programId : Pubkey
+  /-- `Pubkey::create_program_address(seeds, program_id)` for this program, on
+      the joined seed bytes (bump included). Any function: it is a hash. Where
+      it fails (address on the curve) the real program fails too, so leaving
+      that out only lets the model accept more, never less. -/
+  createProgramAddress : List U8 → Pubkey
+  /-- The bump `find_program_address(seeds, program_id)` picks. -/
+  canonicalBump : List U8 → U8
 
 /-- The input `find_program_address(seeds, ..)` hashes: the seeds and the canonical bump. -/
-def pdaInput (seeds : List U8) : List U8 := seeds ++ [canonicalBump seeds]
+def Addresses.pdaInput (A : Addresses) (seeds : List U8) : List U8 := seeds ++ [A.canonicalBump seeds]
 
 /-- `find_program_address(seeds, program_id).0`: the canonical PDA of `seeds`. -/
-def pda (seeds : List U8) : Pubkey := createProgramAddress (pdaInput seeds)
+def Addresses.pda (A : Addresses) (seeds : List U8) : Pubkey := A.createProgramAddress (A.pdaInput seeds)
 
 /-- **Hypothesis (SHA-256 collision resistance, per execution):** no two of the
     seed strings in `inputs` (bumps included) derive the same address. -/
-def PdaCollisionFree (inputs : Set (List U8)) : Prop :=
-  ∀ s₁ ∈ inputs, ∀ s₂ ∈ inputs, createProgramAddress s₁ = createProgramAddress s₂ → s₁ = s₂
+def PdaCollisionFree (A : Addresses) (inputs : Set (List U8)) : Prop :=
+  ∀ s₁ ∈ inputs, ∀ s₂ ∈ inputs, A.createProgramAddress s₁ = A.createProgramAddress s₂ → s₁ = s₂
 
 /-! ## The PDAs of Privacy Cash (seeds from `#[derive(Accounts)]` in lib.rs) -/
 
@@ -97,27 +103,29 @@ theorem seed_lengths (mint n : Pubkey) :
 
 /-! ## Distinct addresses, given collision-freedom of the inputs involved -/
 
+variable {A : Addresses}
+
 /-- Different inputs in a collision-free set derive different addresses. -/
-theorem createProgramAddress_ne {S : Set (List U8)} (hcf : PdaCollisionFree S)
+theorem createProgramAddress_ne {S : Set (List U8)} (hcf : PdaCollisionFree A S)
     {s₁ s₂ : List U8} (h₁ : s₁ ∈ S) (h₂ : s₂ ∈ S) (hne : s₁ ≠ s₂) :
-    createProgramAddress s₁ ≠ createProgramAddress s₂ :=
+    A.createProgramAddress s₁ ≠ A.createProgramAddress s₂ :=
   fun e => hne (hcf s₁ h₁ s₂ h₂ e)
 
 /-- Nullifier accounts of the same slot are equal only for the same nullifier. -/
 theorem nullifier0_pda_inj {n m : Pubkey}
-    (hcf : PdaCollisionFree {pdaInput (nullifier0Seeds n), pdaInput (nullifier0Seeds m)})
-    (h : pda (nullifier0Seeds n) = pda (nullifier0Seeds m)) : n = m :=
+    (hcf : PdaCollisionFree A {A.pdaInput (nullifier0Seeds n), A.pdaInput (nullifier0Seeds m)})
+    (h : A.pda (nullifier0Seeds n) = A.pda (nullifier0Seeds m)) : n = m :=
   nullifier0Seeds_inj (hcf _ (by simp) _ (by simp) h :)
 
 theorem nullifier1_pda_inj {n m : Pubkey}
-    (hcf : PdaCollisionFree {pdaInput (nullifier1Seeds n), pdaInput (nullifier1Seeds m)})
-    (h : pda (nullifier1Seeds n) = pda (nullifier1Seeds m)) : n = m :=
+    (hcf : PdaCollisionFree A {A.pdaInput (nullifier1Seeds n), A.pdaInput (nullifier1Seeds m)})
+    (h : A.pda (nullifier1Seeds n) = A.pda (nullifier1Seeds m)) : n = m :=
   nullifier1Seeds_inj (hcf _ (by simp) _ (by simp) h :)
 
 /-- A slot-0 nullifier account is never a slot-1 one. -/
 theorem nullifier0_ne_nullifier1 {n m : Pubkey}
-    (hcf : PdaCollisionFree {pdaInput (nullifier0Seeds n), pdaInput (nullifier1Seeds m)}) :
-    pda (nullifier0Seeds n) ≠ pda (nullifier1Seeds m) :=
+    (hcf : PdaCollisionFree A {A.pdaInput (nullifier0Seeds n), A.pdaInput (nullifier1Seeds m)}) :
+    A.pda (nullifier0Seeds n) ≠ A.pda (nullifier1Seeds m) :=
   createProgramAddress_ne hcf (by simp) (by simp) (nullifier0Seeds_ne_nullifier1Seeds n m _ _)
 
 /-- Inputs of different lengths are different inputs. -/
@@ -126,11 +134,11 @@ theorem ne_of_length_ne {s₁ s₂ : List U8} (h : s₁.length ≠ s₂.length) 
 
 /-- The SOL tree, pool and config (with any bumps) are three different accounts. -/
 theorem singleton_pdas_distinct (b₁ b₂ b₃ : U8)
-    (hcf : PdaCollisionFree
+    (hcf : PdaCollisionFree A
       {merkleTreeSeeds ++ [b₁], treeTokenSeeds ++ [b₂], globalConfigSeeds ++ [b₃]}) :
-    createProgramAddress (merkleTreeSeeds ++ [b₁]) ≠ createProgramAddress (treeTokenSeeds ++ [b₂]) ∧
-    createProgramAddress (merkleTreeSeeds ++ [b₁]) ≠ createProgramAddress (globalConfigSeeds ++ [b₃]) ∧
-    createProgramAddress (treeTokenSeeds ++ [b₂]) ≠ createProgramAddress (globalConfigSeeds ++ [b₃]) := by
+    A.createProgramAddress (merkleTreeSeeds ++ [b₁]) ≠ A.createProgramAddress (treeTokenSeeds ++ [b₂]) ∧
+    A.createProgramAddress (merkleTreeSeeds ++ [b₁]) ≠ A.createProgramAddress (globalConfigSeeds ++ [b₃]) ∧
+    A.createProgramAddress (treeTokenSeeds ++ [b₂]) ≠ A.createProgramAddress (globalConfigSeeds ++ [b₃]) := by
   obtain ⟨h1, -, h3, h4, -, -⟩ := seed_lengths default default
   refine ⟨createProgramAddress_ne hcf (by simp) (by simp) (ne_of_length_ne ?_),
     createProgramAddress_ne hcf (by simp) (by simp) (ne_of_length_ne ?_),
@@ -139,9 +147,9 @@ theorem singleton_pdas_distinct (b₁ b₂ b₃ : U8)
 /-- A nullifier account (any bump) is never the SOL tree, pool or config (any bumps). -/
 theorem nullifier_ne_singletons (n : Pubkey) (b : U8) (s : List U8)
     (hs : s ∈ [merkleTreeSeeds, treeTokenSeeds, globalConfigSeeds]) (c : U8)
-    (hcf : PdaCollisionFree {nullifier0Seeds n ++ [b], nullifier1Seeds n ++ [b], s ++ [c]}) :
-    createProgramAddress (nullifier0Seeds n ++ [b]) ≠ createProgramAddress (s ++ [c]) ∧
-    createProgramAddress (nullifier1Seeds n ++ [b]) ≠ createProgramAddress (s ++ [c]) := by
+    (hcf : PdaCollisionFree A {nullifier0Seeds n ++ [b], nullifier1Seeds n ++ [b], s ++ [c]}) :
+    A.createProgramAddress (nullifier0Seeds n ++ [b]) ≠ A.createProgramAddress (s ++ [c]) ∧
+    A.createProgramAddress (nullifier1Seeds n ++ [b]) ≠ A.createProgramAddress (s ++ [c]) := by
   obtain ⟨h1, -, h3, h4, h5, h6⟩ := seed_lengths default n
   simp only [List.mem_cons, List.not_mem_nil, or_false] at hs
   refine ⟨createProgramAddress_ne hcf (by simp) (by simp) (ne_of_length_ne ?_),

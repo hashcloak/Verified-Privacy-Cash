@@ -14,9 +14,9 @@ abbrev Pubkey := Std.Array U8 32#usize
 /-- The system program's address (all zero bytes). -/
 def systemProgram : Pubkey := Std.Array.repeat 32#usize 0#u8
 
-/-- The address the zkcash program is deployed at. Left abstract: every
-    theorem holds for any deployment (localnet, devnet, mainnet). -/
-opaque programId : Pubkey
+deriving instance DecidableEq for zkcash_core.merkle_tree.MerkleTreeAccount
+deriving instance DecidableEq for zkcash_core.admin.TreeTokenAccount
+deriving instance DecidableEq for zkcash_core.admin.GlobalConfig
 
 /-- An account's data, as the program sees it once Anchor has decoded it. -/
 inductive AccountData where
@@ -32,6 +32,7 @@ inductive AccountData where
   | nullifier (bump : U8)
   /-- Data this program does not interpret (owned by another program). -/
   | foreign
+  deriving DecidableEq
 
 structure Account where
   lamports : U64

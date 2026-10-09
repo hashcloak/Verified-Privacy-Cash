@@ -3,7 +3,7 @@ Checks the Lean `negateG1` (PrivacyCash/Model/Bn254.lean), which is written by
 hand to mirror arkworks, against the program's real `SolanaBn254::negate_g1`.
 
 The vectors between the GENERATED markers are printed by the fork's
-`programs/zkcash/tests/model_vectors.rs` (`print_negate_g1_vectors`): valid
+`programs/zkcash/tests/model_vectors/mod.rs` (`print_negate_g1_vectors`): valid
 points (the generator, the verifying key's points, multiples of the
 generator), the identity encodings, flag combinations, out-of-range and
 off-curve coordinates, and random bytes. `scripts/check_vectors.sh` regenerates
