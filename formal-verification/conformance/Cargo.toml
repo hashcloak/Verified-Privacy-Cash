@@ -1,0 +1,27 @@
+[package]
+name = "conformance"
+version = "0.1.0"
+edition = "2021"
+description = "Runs the compiled zkcash program in LiteSVM and prints the traces the Lean model is checked against"
+publish = false
+
+# Standalone: not part of the program's Anchor workspace.
+[workspace]
+
+[dependencies]
+litesvm = "=0.6.1"
+# No dependency on the program's crates: the harness talks to the compiled
+# program like a client, encoding instructions and decoding accounts itself
+# (checked against the IDL and by re-encoding every decoded account).
+sha2 = "0.10"
+solana-keypair = "2.2"
+solana-signer = "2.2"
+solana-transaction = "2.2"
+solana-message = "2.2"
+solana-instruction = "2.2"
+solana-pubkey = "2.2"
+solana-account = "2.2"
+solana-transaction-error = "2.2"
+solana-rent = "2.2"
+base64 = "0.22"
+serde_json = "1"
