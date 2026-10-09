@@ -74,6 +74,12 @@ structure CommitmentData where
   encryptedOutput : List U8
   deriving DecidableEq
 
+/-- The number a program error has on-chain: Anchor numbers the variants of
+    an `#[error_code]` enum from 6000 in declaration order (the extracted
+    `ErrorCode` keeps the program's order; checked against the IDL in
+    InterfaceCheck.lean). -/
+def anchorErrorCode (e : zkcash_core.error.ErrorCode) : Nat := 6000 + e.ctorIdx
+
 /-! ## Account sizes (`space = 8 + size_of::<T>()`)
 
 Checked against the program's `size_of` by `Tests/AccountSpaces.lean`. -/
