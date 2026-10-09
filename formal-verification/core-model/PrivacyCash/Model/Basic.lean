@@ -38,6 +38,7 @@ structure Account where
   lamports : U64
   owner : Pubkey
   data : AccountData
+  deriving DecidableEq
 
 /-- What an address holds before anything is created there: nothing, owned
     by the system program. -/
