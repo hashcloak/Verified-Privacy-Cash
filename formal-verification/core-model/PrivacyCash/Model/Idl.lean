@@ -131,6 +131,84 @@ def ixTransact : List AccountSpec := [
       relations := [] }
 ]
 
+/-- The arguments of `initialize`, in order. -/
+def argsInitialize : List (String × TypeSpec) :=
+[]
+
+/-- The arguments of `update_deposit_limit`, in order. -/
+def argsUpdateDepositLimit : List (String × TypeSpec) :=
+[    ("new_limit", (.prim "u64"))]
+
+/-- The arguments of `update_global_config`, in order. -/
+def argsUpdateGlobalConfig : List (String × TypeSpec) :=
+[    ("deposit_fee_rate", (.option (.prim "u16"))),
+    ("withdrawal_fee_rate", (.option (.prim "u16"))),
+    ("fee_error_margin", (.option (.prim "u16")))]
+
+/-- The arguments of `transact`, in order. -/
+def argsTransact : List (String × TypeSpec) :=
+[    ("proof", (.defined "Proof")),
+    ("ext_data_minified", (.defined "ExtDataMinified")),
+    ("encrypted_output1", (.prim "bytes")),
+    ("encrypted_output2", (.prim "bytes"))]
+
+/-- The fields of the account data and argument types, in order. -/
+def types : List (String × List (String × TypeSpec)) := [
+  ("Proof", [    ("proof_a", (.array (.prim "u8") 64)),
+    ("proof_b", (.array (.prim "u8") 128)),
+    ("proof_c", (.array (.prim "u8") 64)),
+    ("root", (.array (.prim "u8") 32)),
+    ("public_amount", (.array (.prim "u8") 32)),
+    ("ext_data_hash", (.array (.prim "u8") 32)),
+    ("input_nullifiers", (.array (.array (.prim "u8") 32) 2)),
+    ("output_commitments", (.array (.array (.prim "u8") 32) 2))]),
+  ("ExtDataMinified", [    ("ext_amount", (.prim "i64")),
+    ("fee", (.prim "u64"))]),
+  ("GlobalConfig", [    ("authority", (.prim "pubkey")),
+    ("deposit_fee_rate", (.prim "u16")),
+    ("withdrawal_fee_rate", (.prim "u16")),
+    ("fee_error_margin", (.prim "u16")),
+    ("bump", (.prim "u8"))]),
+  ("TreeTokenAccount", [    ("authority", (.prim "pubkey")),
+    ("bump", (.prim "u8"))]),
+  ("MerkleTreeAccount", [    ("authority", (.prim "pubkey")),
+    ("next_index", (.prim "u64")),
+    ("subtrees", (.array (.array (.prim "u8") 32) 26)),
+    ("root", (.array (.prim "u8") 32)),
+    ("root_history", (.array (.array (.prim "u8") 32) 100)),
+    ("root_index", (.prim "u64")),
+    ("max_deposit_amount", (.prim "u64")),
+    ("height", (.prim "u8")),
+    ("root_history_size", (.prim "u8")),
+    ("bump", (.prim "u8")),
+    ("_padding", (.array (.prim "u8") 5))]),
+  ("NullifierAccount", [    ("bump", (.prim "u8"))])
+]
+
+/-- The program's error codes and names, in order. -/
+def errors : List (Nat × String) := [
+  (6000, "Unauthorized"),
+  (6001, "ExtDataHashMismatch"),
+  (6002, "UnknownRoot"),
+  (6003, "InvalidPublicAmountData"),
+  (6004, "InsufficientFundsForWithdrawal"),
+  (6005, "InsufficientFundsForFee"),
+  (6006, "InvalidProof"),
+  (6007, "InvalidFee"),
+  (6008, "InvalidExtAmount"),
+  (6009, "PublicAmountCalculationError"),
+  (6010, "ArithmeticOverflow"),
+  (6011, "DepositLimitExceeded"),
+  (6012, "InvalidFeeRate"),
+  (6013, "InvalidFeeRecipient"),
+  (6014, "InvalidFeeAmount"),
+  (6015, "RecipientMismatch"),
+  (6016, "MerkleTreeFull"),
+  (6017, "InvalidTokenAccount"),
+  (6018, "InvalidMintAddress"),
+  (6019, "InvalidTokenAccountMintAddress")
+]
+
 /-- The event `CommitmentData`. -/
 def eventCommitmentData : EventSpec := EventSpec.mk "CommitmentData" [
     ("index", (.prim "u64")),

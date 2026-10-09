@@ -9,5 +9,6 @@ import PrivacyCash.Model.Field
 import PrivacyCash.Model.Crypto
 import PrivacyCash.Model.Program
 import PrivacyCash.Model.IdlCheck
+import PrivacyCash.Model.InterfaceCheck
 import PrivacyCash.Model.Execution
 import PrivacyCash.Proofs.Ownership

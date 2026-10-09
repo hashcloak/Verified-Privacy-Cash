@@ -2,9 +2,11 @@
 """Generates PrivacyCash/Model/Idl.lean from the program's Anchor IDL.
 
 The IDL is what Anchor derives from the program's source, so the generated
-file is an independent record of each instruction's accounts (order, signer
-flags, fixed addresses, PDA seeds and `has_one` relations) and of the events
-the program emits (their fields and types).
+file is an independent record of the program's interface: each instruction's
+accounts (order, signer flags, fixed addresses, PDA seeds and `has_one`
+relations) and arguments, the events it emits, the layout of the account data
+and argument types it uses, and its error codes. IdlCheck.lean and
+InterfaceCheck.lean check the model against it.
 PrivacyCash/Model/IdlCheck.lean proves the hand-written model agrees with it,
 so if the program's accounts change, `lake build` fails until the model is
 updated.
@@ -25,6 +27,9 @@ OUT = Path(sys.argv[2]) if len(sys.argv) > 2 else ROOT / "PrivacyCash/Model/Idl.
 INSTRUCTIONS = ["initialize", "update_deposit_limit", "update_global_config", "transact"]
 # The events those instructions emit.
 EVENTS = ["CommitmentData"]
+# The account data and argument types they use.
+TYPES = ["Proof", "ExtDataMinified", "GlobalConfig", "TreeTokenAccount", "MerkleTreeAccount",
+         "NullifierAccount"]
 
 B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
@@ -132,6 +137,32 @@ def main() -> None:
         parts.append("]")
         parts.append("")
     types = {t["name"]: t for t in idl["types"]}
+
+    def field_list(fields: list) -> str:
+        return "[" + ",\n".join(f"    ({lean_str(f['name'])}, {type_spec(f['type'])})" for f in fields) + "]"
+
+    for name in INSTRUCTIONS:
+        lean_name = "args" + "".join(w.capitalize() for w in name.split("_"))
+        parts.append(f"/-- The arguments of `{name}`, in order. -/")
+        parts.append(f"def {lean_name} : List (String × TypeSpec) :=")
+        parts.append(field_list(by_name[name]["args"]))
+        parts.append("")
+    parts.append("/-- The fields of the account data and argument types, in order. -/")
+    parts.append("def types : List (String × List (String × TypeSpec)) := [")
+    entries = []
+    for name in TYPES:
+        t = types[name]["type"]
+        if t["kind"] != "struct":
+            raise SystemExit(f"{name} is not a struct")
+        entries.append(f"  ({lean_str(name)}, {field_list(t['fields'])})")
+    parts.append(",\n".join(entries))
+    parts.append("]")
+    parts.append("")
+    parts.append("/-- The program's error codes and names, in order. -/")
+    parts.append("def errors : List (Nat × String) := [")
+    parts.append(",\n".join(f"  ({e['code']}, {lean_str(e['name'])})" for e in idl["errors"]))
+    parts.append("]")
+    parts.append("")
     event_names = {e["name"] for e in idl.get("events", [])}
     for name in EVENTS:
         if name not in event_names:
