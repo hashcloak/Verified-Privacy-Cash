@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """Generates PrivacyCash/Model/Idl.lean from the program's Anchor IDL.
 
-The IDL is what Anchor derives from the `#[derive(Accounts)]` structs, so the
-generated file is an independent record of each instruction's accounts:
-order, signer flags, fixed addresses, PDA seeds and `has_one` relations.
+The IDL is what Anchor derives from the program's source, so the generated
+file is an independent record of each instruction's accounts (order, signer
+flags, fixed addresses, PDA seeds and `has_one` relations) and of the events
+the program emits (their fields and types).
 PrivacyCash/Model/IdlCheck.lean proves the hand-written model agrees with it,
 so if the program's accounts change, `lake build` fails until the model is
 updated.
 
-Usage: scripts/gen_idl_lean.py [IDL_JSON]   (default: target/idl-check/fork.json,
-       written by scripts/check_idl.sh)
+Usage: scripts/gen_idl_lean.py [IDL_JSON] [OUT]
+       (defaults: target/idl-check/fork.json, written by scripts/check_idl.sh;
+        PrivacyCash/Model/Idl.lean)
 """
 import json
 import sys
@@ -17,10 +19,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 IDL = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "target/idl-check/fork.json"
-OUT = ROOT / "PrivacyCash/Model/Idl.lean"
+OUT = Path(sys.argv[2]) if len(sys.argv) > 2 else ROOT / "PrivacyCash/Model/Idl.lean"
 
 # The instructions the model covers (SOL). SPL instructions come later.
 INSTRUCTIONS = ["initialize", "update_deposit_limit", "update_global_config", "transact"]
+# The events those instructions emit.
+EVENTS = ["CommitmentData"]
 
 B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
@@ -62,6 +66,21 @@ def account(a: dict) -> str:
             f"      relations := {relations} }}")
 
 
+def type_spec(t) -> str:
+    if isinstance(t, str):
+        return f"(.prim {lean_str(t)})"
+    if "array" in t:
+        elem, n = t["array"]
+        return f"(.array {type_spec(elem)} {n})"
+    if "vec" in t:
+        return f"(.vec {type_spec(t['vec'])})"
+    if "option" in t:
+        return f"(.option {type_spec(t['option'])})"
+    if "defined" in t:
+        return f"(.defined {lean_str(t['defined']['name'])})"
+    raise SystemExit(f"unsupported type: {t}")
+
+
 def main() -> None:
     idl = json.loads(IDL.read_text())
     by_name = {ix["name"]: ix for ix in idl["instructions"]}
@@ -88,6 +107,21 @@ def main() -> None:
         "  relations : List String",
         "  deriving DecidableEq",
         "",
+        "/-- A field type, as the IDL writes it (`prim` is e.g. \"u64\" or \"bytes\"). -/",
+        "inductive TypeSpec where",
+        "  | prim (name : String)",
+        "  | array (elem : TypeSpec) (len : Nat)",
+        "  | vec (elem : TypeSpec)",
+        "  | option (elem : TypeSpec)",
+        "  | defined (name : String)",
+        "  deriving DecidableEq",
+        "",
+        "/-- An event: its name and its fields, in order. -/",
+        "structure EventSpec where",
+        "  name : String",
+        "  fields : List (String × TypeSpec)",
+        "  deriving DecidableEq",
+        "",
     ]
     for name in INSTRUCTIONS:
         accounts = by_name[name]["accounts"]
@@ -97,9 +131,20 @@ def main() -> None:
         parts.append(",\n".join(account(a) for a in accounts))
         parts.append("]")
         parts.append("")
+    types = {t["name"]: t for t in idl["types"]}
+    event_names = {e["name"] for e in idl.get("events", [])}
+    for name in EVENTS:
+        if name not in event_names:
+            raise SystemExit(f"{name} is not an event in the IDL")
+        fields = types[name]["type"]["fields"]
+        parts.append(f"/-- The event `{name}`. -/")
+        parts.append(f"def event{name} : EventSpec := EventSpec.mk {lean_str(name)} [")
+        parts.append(",\n".join(f"    ({lean_str(f['name'])}, {type_spec(f['type'])})" for f in fields))
+        parts.append("]")
+        parts.append("")
     parts.append("end PrivacyCash.Model.Idl")
     OUT.write_text("\n".join(parts) + "\n")
-    print(f"wrote {OUT.relative_to(ROOT)} from {IDL}")
+    print(f"wrote {OUT} from {IDL}")
 
 
 if __name__ == "__main__":

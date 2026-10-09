@@ -1,8 +1,9 @@
 /-
 The zkcash program (SOL instructions) as one function on the chain state:
 
-  step d s tx ix = .ok s'   -- the instruction succeeds and the chain becomes s'
-  step d s tx ix = .error e -- it fails; the transaction reverts and s is kept
+  step d s tx ix = .ok (s', evs) -- it succeeds: the chain becomes s' and the
+                                 -- program emitted the events evs, in order
+  step d s tx ix = .error e      -- it fails; the transaction reverts and s is kept
 
 Each instruction runs like on-chain:
   1. Anchor loads and checks the accounts (`Accounts.lean`), then creates the
@@ -61,6 +62,17 @@ inductive Error where
   | panic
   /-- The runtime's end-of-instruction check failed (lamports not conserved). -/
   | unbalanced
+
+/-- `#[event] CommitmentData` (lib.rs): `transact` emits one per new leaf, so
+    clients can find their notes (the leaf index, the commitment, and the
+    encrypted output for its owner). Anchor logs it as its discriminator
+    followed by the Borsh encoding of the fields. The fields are checked
+    against the IDL in IdlCheck.lean. -/
+structure CommitmentData where
+  index : U64
+  commitment : Std.Array U8 32#usize
+  encryptedOutput : List U8
+  deriving DecidableEq
 
 /-! ## Account sizes (`space = 8 + size_of::<T>()`)
 
@@ -178,7 +190,7 @@ def execUpdateGlobalConfig (d : Deployment) (s : State) (tx : TxEnv)
 /-- `transact`. -/
 def execTransact (d : Deployment) (s : State) (tx : TxEnv) (a : TransactAccounts)
     (proof : zkcash_core.transact.Proof) (extAmount : I64) (fee : U64)
-    (out1 out2 : Slice U8) : Except Error State :=
+    (out1 out2 : Slice U8) : Except Error (State × List CommitmentData) :=
   let n₀ := proof.input_nullifiers.val[0]!
   let n₁ := proof.input_nullifiers.val[1]!
   match (s a.treeAccount).data, (s a.treeTokenAccount).data, (s a.globalConfig).data with
@@ -203,20 +215,27 @@ def execTransact (d : Deployment) (s : State) (tx : TxEnv) (a : TransactAccounts
         extAmount fee a.recipient a.feeRecipientAccount out1 out2)
       match r with
       | .Err e => .error (.transact e)
-      | .Ok _ =>
+      | .Ok appended =>
         -- The runtime only changed balances: owners and data are those after `init`.
         let s₂ := s₁.withBalances env'.balances
         let s₃ := s₂.set a.treeAccount { s₂ a.treeAccount with data := .treeAccount tree' }
-        checkBalanced s s₃ [a.treeAccount, a.nullifier0, a.nullifier1, a.nullifier2, a.nullifier3,
-          a.treeTokenAccount, a.globalConfig, a.recipient, a.feeRecipientAccount, a.signer,
-          a.systemProgram]
+        let s' ← checkBalanced s s₃ [a.treeAccount, a.nullifier0, a.nullifier1, a.nullifier2,
+          a.nullifier3, a.treeTokenAccount, a.globalConfig, a.recipient, a.feeRecipientAccount,
+          a.signer, a.systemProgram]
+        -- The handler's two `emit!(CommitmentData { .. })`, in order.
+        .ok (s', [⟨appended.first_index, proof.output_commitments.val[0]!, out1.val⟩,
+                  ⟨appended.second_index, proof.output_commitments.val[1]!, out2.val⟩])
   | _, _, _ => .error .accounts
 
-/-- **The program**: one instruction on the chain. -/
-def step (d : Deployment) (s : State) (tx : TxEnv) : Instruction → Except Error State
-  | .initialize a => execInitialize d s tx a
-  | .updateDepositLimit a newLimit => execUpdateDepositLimit d s tx a newLimit
-  | .updateGlobalConfig a dep wd margin => execUpdateGlobalConfig d s tx a dep wd margin
+/-- **The program**: one instruction on the chain, with the events it emits
+    (only `transact` emits any). -/
+def step (d : Deployment) (s : State) (tx : TxEnv) :
+    Instruction → Except Error (State × List CommitmentData)
+  | .initialize a => do let s' ← execInitialize d s tx a; pure (s', [])
+  | .updateDepositLimit a newLimit => do
+    let s' ← execUpdateDepositLimit d s tx a newLimit; pure (s', [])
+  | .updateGlobalConfig a dep wd margin => do
+    let s' ← execUpdateGlobalConfig d s tx a dep wd margin; pure (s', [])
   | .transact a proof extAmount fee out1 out2 => execTransact d s tx a proof extAmount fee out1 out2
 
 /-! ## Sanity checks: the model enforces access control -/

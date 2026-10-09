@@ -45,8 +45,8 @@ def Genesis (programId : Pubkey) (s : State) : Prop := ∀ k, (s k).owner ≠ pr
 
 /-- One event of an execution. -/
 inductive Event where
-  /-- This program runs `ix` in transaction environment `tx`. -/
-  | program (tx : TxEnv) (ix : Instruction)
+  /-- This program runs `ix` in transaction environment `tx`, emitting `emitted`. -/
+  | program (tx : TxEnv) (ix : Instruction) (emitted : List CommitmentData)
   /-- The rest of the world acts (see `EnvStep`). -/
   | env
 
@@ -57,8 +57,10 @@ inductive Event where
     as collision-freedom of the nullifiers it spent. -/
 inductive Run (d : Deployment) : State → List Event → State → Prop where
   | nil (s : State) : Run d s [] s
-  | program {s s' s'' : State} {tx : TxEnv} {ix : Instruction} {events : List Event} :
-      step d s tx ix = .ok s' → Run d s' events s'' → Run d s (.program tx ix :: events) s''
+  | program {s s' s'' : State} {tx : TxEnv} {ix : Instruction} {emitted : List CommitmentData}
+      {events : List Event} :
+      step d s tx ix = .ok (s', emitted) → Run d s' events s'' →
+        Run d s (.program tx ix emitted :: events) s''
   | env {s s' s'' : State} {events : List Event} :
       EnvStep d.programId s s' → Run d s' events s'' → Run d s (.env :: events) s''
 

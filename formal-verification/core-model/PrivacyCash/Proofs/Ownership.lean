@@ -140,7 +140,9 @@ theorem execInitialize_keepsOwned {d : Deployment} {s s' : State} {tx : TxEnv}
 theorem execTransact_keepsOwned {d : Deployment} {s s' : State} {tx : TxEnv}
     {a : TransactAccounts} {proof : zkcash_core.transact.Proof} {extAmount : I64} {fee : U64}
     {out1 out2 : Slice U8}
-    (h : execTransact d s tx a proof extAmount fee out1 out2 = .ok s') : KeepsOwned d.programId s s' := by
+    {emitted : List CommitmentData}
+    (h : execTransact d s tx a proof extAmount fee out1 out2 = .ok (s', emitted)) :
+    KeepsOwned d.programId s s' := by
   unfold execTransact at h
   dsimp only at h
   split at h
@@ -160,7 +162,9 @@ theorem execTransact_keepsOwned {d : Deployment} {s s' : State} {tx : TxEnv}
     cases r with
     | Err e => cases h
     | Ok _ =>
-      rw [checkBalanced_ok h]
+      obtain ⟨s₄, hbal, h⟩ := Except.bind_ok h
+      cases h
+      rw [checkBalanced_ok hbal]
       exact hinit.trans ((KeepsOwned.withBalances _ _).trans (KeepsOwned.setData _ _ _))
   · cases h
 
@@ -168,11 +172,15 @@ theorem execTransact_keepsOwned {d : Deployment} {s s' : State} {tx : TxEnv}
 
 /-- Every instruction of the program keeps ownership. -/
 theorem step_keepsOwned {d : Deployment} {s s' : State} {tx : TxEnv} {ix : Instruction}
-    (h : step d s tx ix = .ok s') : KeepsOwned d.programId s s' := by
+    {emitted : List CommitmentData}
+    (h : step d s tx ix = .ok (s', emitted)) : KeepsOwned d.programId s s' := by
   cases ix with
-  | «initialize» a => exact execInitialize_keepsOwned h
-  | updateDepositLimit a l => exact execUpdateDepositLimit_keepsOwned h
-  | updateGlobalConfig a dep wd margin => exact execUpdateGlobalConfig_keepsOwned h
+  | «initialize» a =>
+    obtain ⟨_, h₁, h⟩ := Except.bind_ok h; cases h; exact execInitialize_keepsOwned h₁
+  | updateDepositLimit a l =>
+    obtain ⟨_, h₁, h⟩ := Except.bind_ok h; cases h; exact execUpdateDepositLimit_keepsOwned h₁
+  | updateGlobalConfig a dep wd margin =>
+    obtain ⟨_, h₁, h⟩ := Except.bind_ok h; cases h; exact execUpdateGlobalConfig_keepsOwned h₁
   | transact a proof e f o₁ o₂ => exact execTransact_keepsOwned h
 
 /-- Nothing the rest of the world does can take an account from this program. -/
