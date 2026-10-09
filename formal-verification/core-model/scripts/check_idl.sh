@@ -30,3 +30,14 @@ else
     diff "$OUT/upstream.json" "$OUT/fork.json" || true
     exit 1
 fi
+
+# The model is checked (IdlCheck.lean) against Idl.lean, which is generated from
+# this IDL: fail if it is stale, so the check never runs against an old IDL.
+python3 "$ROOT/scripts/gen_idl_lean.py" "$OUT/fork.json" "$OUT/Idl.lean" > /dev/null
+if cmp -s "$OUT/Idl.lean" "$ROOT/PrivacyCash/Model/Idl.lean"; then
+    echo "OK: PrivacyCash/Model/Idl.lean matches the IDL"
+else
+    echo "FAIL: PrivacyCash/Model/Idl.lean is stale; regenerate it with scripts/gen_idl_lean.py:"
+    diff "$OUT/Idl.lean" "$ROOT/PrivacyCash/Model/Idl.lean" | head -20 || true
+    exit 1
+fi

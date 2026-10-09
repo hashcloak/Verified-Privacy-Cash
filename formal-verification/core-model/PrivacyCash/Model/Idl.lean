@@ -20,6 +20,21 @@ structure AccountSpec where
   relations : List String
   deriving DecidableEq
 
+/-- A field type, as the IDL writes it (`prim` is e.g. "u64" or "bytes"). -/
+inductive TypeSpec where
+  | prim (name : String)
+  | array (elem : TypeSpec) (len : Nat)
+  | vec (elem : TypeSpec)
+  | option (elem : TypeSpec)
+  | defined (name : String)
+  deriving DecidableEq
+
+/-- An event: its name and its fields, in order. -/
+structure EventSpec where
+  name : String
+  fields : List (String × TypeSpec)
+  deriving DecidableEq
+
 /-- The accounts of `initialize`, in order. -/
 def ixInitialize : List AccountSpec := [
     { name := "tree_account", signer := false,
@@ -114,6 +129,13 @@ def ixTransact : List AccountSpec := [
       address := some [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
       seeds := none,
       relations := [] }
+]
+
+/-- The event `CommitmentData`. -/
+def eventCommitmentData : EventSpec := EventSpec.mk "CommitmentData" [
+    ("index", (.prim "u64")),
+    ("commitment", (.array (.prim "u8") 32)),
+    ("encrypted_output", (.prim "bytes"))
 ]
 
 end PrivacyCash.Model.Idl

@@ -1,5 +1,5 @@
 /-
-The hand-written account model agrees with the program's IDL.
+The hand-written account and event model agrees with the program's IDL.
 
 Each `model...` list below is what Accounts.lean / Pda.lean / Program.lean say
 about an instruction's accounts, written in the IDL's terms and built from the
@@ -7,6 +7,9 @@ model's own definitions (`merkleTreeSeeds`, `systemProgram`, ...). Each
 theorem proves it equal to the list generated from the IDL (Idl.lean). If the
 program's `#[derive(Accounts)]` changes, regenerating Idl.lean makes these
 theorems fail until the model is updated.
+
+The same holds for the events the model emits (`CommitmentData`): field
+names, order and types.
 
 What the IDL cannot check, and is kept right by hand (see the comments):
 which model field each IDL account is, and which instruction argument feeds
@@ -83,5 +86,31 @@ theorem initialize_matches_idl : modelInitialize = Idl.ixInitialize := by decide
 theorem updateDepositLimit_matches_idl : modelUpdateDepositLimit = Idl.ixUpdateDepositLimit := by decide
 theorem updateGlobalConfig_matches_idl : modelUpdateGlobalConfig = Idl.ixUpdateGlobalConfig := by decide
 theorem transact_matches_idl : modelTransact = Idl.ixTransact := by decide
+
+/-! ## Events -/
+
+/-- How each field type of the model's events appears in the IDL: `U64` is
+    `u64`, a 32-byte array is `[u8; 32]`, and a byte list is Borsh `bytes`
+    (`Vec<u8>`). -/
+def u64Type : TypeSpec := .prim "u64"
+def bytes32Type : TypeSpec := .array (.prim "u8") 32
+def byteListType : TypeSpec := .prim "bytes"
+
+/-- `CommitmentData` (Program.lean), field by field: `index : U64`,
+    `commitment : Std.Array U8 32#usize`, `encryptedOutput : List U8`. -/
+def modelCommitmentData : EventSpec :=
+  EventSpec.mk "CommitmentData"
+    [("index", u64Type), ("commitment", bytes32Type), ("encrypted_output", byteListType)]
+
+/-- The model's event has the program's fields, in the program's order (the
+    order is the Borsh encoding's, which the conformance tests decode). -/
+theorem commitmentData_matches_idl : modelCommitmentData = Idl.eventCommitmentData := by decide
+
+/-- The model's `CommitmentData` has exactly these three fields, of these
+    types: building one from them is a bijection. (If a field is added,
+    removed or retyped, this stops compiling, flagging `modelCommitmentData`
+    for review.) -/
+example : (CommitmentData.mk : U64 → Std.Array U8 32#usize → List U8 → CommitmentData) =
+    fun index commitment encryptedOutput => { index, commitment, encryptedOutput } := rfl
 
 end PrivacyCash.Model.IdlCheck
