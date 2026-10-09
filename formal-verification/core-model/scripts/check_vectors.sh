@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fails unless the test vectors in Tests/*.lean are exactly what the program's
 # Rust code produces now. The vectors are printed by the generators in the
-# fork's `programs/zkcash/tests/model_vectors.rs`; each Lean file's `#guard`s
+# fork's `programs/zkcash/tests/model_vectors/mod.rs`; each Lean file's `#guard`s
 # then check the Lean model against them (at `lake build`).
 #
 # Usage:  ./scripts/check_vectors.sh            (exit 0 = up to date)
@@ -19,6 +19,7 @@ END='-- END GENERATED'
 PAIRS=(
   "print_negate_g1_vectors Tests/Bn254Vectors.lean"
   "print_field_vectors Tests/FieldVectors.lean"
+  "print_account_spaces Tests/AccountSpaces.lean"
 )
 
 status=0

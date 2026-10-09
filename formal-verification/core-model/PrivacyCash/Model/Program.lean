@@ -27,8 +27,9 @@ open Aeneas Aeneas.Std Result
 
 namespace PrivacyCash.Model
 
-/-- What differs between deployments of the same program. -/
-structure Deployment where
+/-- What differs between deployments of the same program: where it lives and
+    how its addresses derive (`Addresses`), the crypto, and the admin key. -/
+structure Deployment extends Addresses where
   crypto : Crypto
   /-- `ADMIN_PUBKEY`: `none` on localnet (anyone may initialize), the admin key otherwise. -/
   adminPubkey : Option Pubkey
@@ -61,7 +62,9 @@ inductive Error where
   /-- The runtime's end-of-instruction check failed (lamports not conserved). -/
   | unbalanced
 
-/-! ## Account sizes (`space = 8 + size_of::<T>()`) -/
+/-! ## Account sizes (`space = 8 + size_of::<T>()`)
+
+Checked against the program's `size_of` by `Tests/AccountSpaces.lean`. -/
 
 def treeAccountSpace : Nat := 8 + 4128        -- MerkleTreeAccount
 def treeTokenAccountSpace : Nat := 8 + 33     -- TreeTokenAccount
@@ -76,7 +79,7 @@ def nullifierAccountSpace : Nat := 8 + 1      -- NullifierAccount
     account) tops it up to that minimum. Either way the account becomes owned
     by this program and holds `data`. `none` if a transfer fails. The
     "nothing created here yet" precondition is part of the account checks. -/
-def State.initAccount (s : State) (minimumBalance : Nat → U64) (payer key : Pubkey)
+def State.initAccount (programId : Pubkey) (s : State) (minimumBalance : Nat → U64) (payer key : Pubkey)
     (space : Nat) (data : AccountData) : Option State :=
   let required := minimumBalance space
   let funded :=
@@ -93,8 +96,7 @@ def State.totalLamports (s : State) (keys : List Pubkey) : Nat :=
   (keys.dedup.map fun k => (s k).lamports.val).sum
 
 /-- The runtime's end-of-instruction check over the instruction's accounts. -/
-noncomputable def checkBalanced (s s' : State) (keys : List Pubkey) : Except Error State :=
-  open Classical in
+def checkBalanced (s s' : State) (keys : List Pubkey) : Except Error State :=
   if s'.totalLamports keys = s.totalLamports keys then .ok s' else .error .unbalanced
 
 /-- The outcome of extracted code: its value, or a panic. -/
@@ -120,18 +122,17 @@ def zeroTree : zkcash_core.merkle_tree.MerkleTreeAccount where
 /-! ## The instructions -/
 
 /-- `initialize`. -/
-noncomputable def execInitialize (d : Deployment) (s : State) (tx : TxEnv)
+def execInitialize (d : Deployment) (s : State) (tx : TxEnv)
     (a : InitializeAccounts) : Except Error State :=
-  open Classical in
-  if ¬ InitializeAccountsValid s tx.toTxContext a then .error .accounts else
+  if ¬ InitializeAccountsValid d.toAddresses s tx.toTxContext a then .error .accounts else
   match tx.minimumBalance with
   | none => .error .accounts
   | some mb =>
   -- Anchor creates the three accounts, paid by the authority.
-  match (s.initAccount mb a.authority a.treeAccount treeAccountSpace (.treeAccount zeroTree)).bind
-      (·.initAccount mb a.authority a.treeTokenAccount treeTokenAccountSpace
+  match (s.initAccount d.programId mb a.authority a.treeAccount treeAccountSpace (.treeAccount zeroTree)).bind
+      (·.initAccount d.programId mb a.authority a.treeTokenAccount treeTokenAccountSpace
         (.treeToken ⟨Std.Array.repeat 32#usize 0#u8, 0#u8⟩)) |>.bind
-      (·.initAccount mb a.authority a.globalConfig globalConfigSpace
+      (·.initAccount d.programId mb a.authority a.globalConfig globalConfigSpace
         (.globalConfig ⟨Std.Array.repeat 32#usize 0#u8, 0#u16, 0#u16, 0#u16, 0#u8⟩)) with
   | none => .error .accounts
   | some s₁ => do
@@ -142,8 +143,8 @@ noncomputable def execInitialize (d : Deployment) (s : State) (tx : TxEnv)
       let (r, tree, token, config) ← ofResult (zkcash_core.admin.initialize d.crypto.hasher
         zeroTree ⟨Std.Array.repeat 32#usize 0#u8, 0#u8⟩
         ⟨Std.Array.repeat 32#usize 0#u8, 0#u16, 0#u16, 0#u16, 0#u8⟩ a.authority
-        (canonicalBump merkleTreeSeeds) (canonicalBump treeTokenSeeds)
-        (canonicalBump globalConfigSeeds))
+        (d.canonicalBump merkleTreeSeeds) (d.canonicalBump treeTokenSeeds)
+        (d.canonicalBump globalConfigSeeds))
       match r with
       | .Err e => .error (.program e)
       | .Ok () =>
@@ -153,23 +154,21 @@ noncomputable def execInitialize (d : Deployment) (s : State) (tx : TxEnv)
         checkBalanced s s₄ [a.treeAccount, a.treeTokenAccount, a.globalConfig, a.authority, a.systemProgram]
 
 /-- `update_deposit_limit`. -/
-noncomputable def execUpdateDepositLimit (s : State) (tx : TxEnv)
+def execUpdateDepositLimit (d : Deployment) (s : State) (tx : TxEnv)
     (a : UpdateDepositLimitAccounts) (newLimit : U64) : Except Error State :=
-  open Classical in
   match (s a.treeAccount).data with
   | .treeAccount tree =>
-    if ¬ UpdateDepositLimitAccountsValid s tx.toTxContext a tree then .error .accounts else do
+    if ¬ UpdateDepositLimitAccountsValid d.toAddresses s tx.toTxContext a tree then .error .accounts else do
     let tree' ← ofResult (zkcash_core.admin.update_deposit_limit tree newLimit)
     .ok (s.set a.treeAccount { s a.treeAccount with data := .treeAccount tree' })
   | _ => .error .accounts
 
 /-- `update_global_config`. -/
-noncomputable def execUpdateGlobalConfig (s : State) (tx : TxEnv)
+def execUpdateGlobalConfig (d : Deployment) (s : State) (tx : TxEnv)
     (a : UpdateGlobalConfigAccounts) (dep wd margin : Option U16) : Except Error State :=
-  open Classical in
   match (s a.globalConfig).data with
   | .globalConfig config =>
-    if ¬ UpdateGlobalConfigAccountsValid s tx.toTxContext a config then .error .accounts else do
+    if ¬ UpdateGlobalConfigAccountsValid d.toAddresses s tx.toTxContext a config then .error .accounts else do
     let (r, config') ← ofResult (zkcash_core.admin.update_global_config config dep wd margin)
     match r with
     | .Err e => .error (.program e)
@@ -177,21 +176,20 @@ noncomputable def execUpdateGlobalConfig (s : State) (tx : TxEnv)
   | _ => .error .accounts
 
 /-- `transact`. -/
-noncomputable def execTransact (d : Deployment) (s : State) (tx : TxEnv) (a : TransactAccounts)
+def execTransact (d : Deployment) (s : State) (tx : TxEnv) (a : TransactAccounts)
     (proof : zkcash_core.transact.Proof) (extAmount : I64) (fee : U64)
     (out1 out2 : Slice U8) : Except Error State :=
-  open Classical in
   let n₀ := proof.input_nullifiers.val[0]!
   let n₁ := proof.input_nullifiers.val[1]!
   match (s a.treeAccount).data, (s a.treeTokenAccount).data, (s a.globalConfig).data with
   | .treeAccount tree, .treeToken treeToken, .globalConfig config =>
-    if ¬ TransactAccountsValid s tx.toTxContext a n₀ n₁ tree treeToken config then .error .accounts else
+    if ¬ TransactAccountsValid d.toAddresses s tx.toTxContext a n₀ n₁ tree treeToken config then .error .accounts else
     match tx.minimumBalance with
     | none => .error .accounts
     | some mb =>
     -- Anchor creates the two nullifier accounts, paid by the signer.
-    match (s.initAccount mb a.signer a.nullifier0 nullifierAccountSpace (.nullifier 0#u8)).bind
-        (·.initAccount mb a.signer a.nullifier1 nullifierAccountSpace (.nullifier 0#u8)) with
+    match (s.initAccount d.programId mb a.signer a.nullifier0 nullifierAccountSpace (.nullifier 0#u8)).bind
+        (·.initAccount d.programId mb a.signer a.nullifier1 nullifierAccountSpace (.nullifier 0#u8)) with
     | none => .error .accounts
     | some s₁ => do
       -- The handler: the extracted `transact` with the model runtime.
@@ -215,18 +213,18 @@ noncomputable def execTransact (d : Deployment) (s : State) (tx : TxEnv) (a : Tr
   | _, _, _ => .error .accounts
 
 /-- **The program**: one instruction on the chain. -/
-noncomputable def step (d : Deployment) (s : State) (tx : TxEnv) : Instruction → Except Error State
+def step (d : Deployment) (s : State) (tx : TxEnv) : Instruction → Except Error State
   | .initialize a => execInitialize d s tx a
-  | .updateDepositLimit a newLimit => execUpdateDepositLimit s tx a newLimit
-  | .updateGlobalConfig a dep wd margin => execUpdateGlobalConfig s tx a dep wd margin
+  | .updateDepositLimit a newLimit => execUpdateDepositLimit d s tx a newLimit
+  | .updateGlobalConfig a dep wd margin => execUpdateGlobalConfig d s tx a dep wd margin
   | .transact a proof extAmount fee out1 out2 => execTransact d s tx a proof extAmount fee out1 out2
 
 /-! ## Sanity checks: the model enforces access control -/
 
 /-- If the authority did not sign, `update_deposit_limit` fails. -/
-theorem updateDepositLimit_requires_signature (s : State) (tx : TxEnv)
+theorem updateDepositLimit_requires_signature (d : Deployment) (s : State) (tx : TxEnv)
     (a : UpdateDepositLimitAccounts) (newLimit : U64) (h : a.authority ∉ tx.signers) :
-    execUpdateDepositLimit s tx a newLimit = .error .accounts := by
+    execUpdateDepositLimit d s tx a newLimit = .error .accounts := by
   unfold execUpdateDepositLimit
   split
   · rw [if_pos (fun hv => h hv.authority)]
@@ -234,15 +232,15 @@ theorem updateDepositLimit_requires_signature (s : State) (tx : TxEnv)
 
 /-- `update_deposit_limit` succeeds only if the signing authority is the one
     recorded in the tree it changes. -/
-theorem updateDepositLimit_only_by_tree_authority (s s' : State) (tx : TxEnv)
+theorem updateDepositLimit_only_by_tree_authority (d : Deployment) (s s' : State) (tx : TxEnv)
     (a : UpdateDepositLimitAccounts) (newLimit : U64)
-    (h : execUpdateDepositLimit s tx a newLimit = .ok s') :
+    (h : execUpdateDepositLimit d s tx a newLimit = .ok s') :
     a.authority ∈ tx.signers ∧
       ∃ tree, (s a.treeAccount).data = .treeAccount tree ∧ tree.authority = a.authority := by
   unfold execUpdateDepositLimit at h
   split at h
   · rename_i tree htree
-    by_cases hv : UpdateDepositLimitAccountsValid s tx.toTxContext a tree
+    by_cases hv : UpdateDepositLimitAccountsValid d.toAddresses s tx.toTxContext a tree
     · exact ⟨hv.authority, tree, htree, hv.treeAccount.2.2⟩
     · simp [hv] at h
   · cases h

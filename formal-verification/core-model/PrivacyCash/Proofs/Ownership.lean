@@ -8,19 +8,21 @@ open Aeneas Aeneas.Std
 
 namespace PrivacyCash.Model
 
+variable {programId : Pubkey}
+
 /-- Every account this program owns in `s`, it still owns in `s'`. -/
-def KeepsOwned (s s' : State) : Prop :=
+def KeepsOwned (programId : Pubkey) (s s' : State) : Prop :=
   ∀ k, (s k).owner = programId → (s' k).owner = programId
 
-theorem KeepsOwned.refl (s : State) : KeepsOwned s s := fun _ h => h
+theorem KeepsOwned.refl (s : State) : KeepsOwned programId s s := fun _ h => h
 
-theorem KeepsOwned.trans {s₁ s₂ s₃ : State} (h₁ : KeepsOwned s₁ s₂) (h₂ : KeepsOwned s₂ s₃) :
-    KeepsOwned s₁ s₃ := fun k hk => h₂ k (h₁ k hk)
+theorem KeepsOwned.trans {s₁ s₂ s₃ : State} (h₁ : KeepsOwned programId s₁ s₂) (h₂ : KeepsOwned programId s₂ s₃) :
+    KeepsOwned programId s₁ s₃ := fun k hk => h₂ k (h₁ k hk)
 
 /-- Replacing one account keeps ownership if the new account is owned by this
     program whenever the old one was. -/
 theorem KeepsOwned.set (s : State) (key : Pubkey) (a : Account)
-    (h : (s key).owner = programId → a.owner = programId) : KeepsOwned s (s.set key a) := by
+    (h : (s key).owner = programId → a.owner = programId) : KeepsOwned programId s (s.set key a) := by
   intro k hk
   by_cases hkey : k = key
   · subst hkey; simp [h hk]
@@ -28,33 +30,33 @@ theorem KeepsOwned.set (s : State) (key : Pubkey) (a : Account)
 
 /-- Changing an account's data or lamports (but not its owner) keeps ownership. -/
 theorem KeepsOwned.set_same_owner (s : State) (key : Pubkey) (a : Account)
-    (h : a.owner = (s key).owner) : KeepsOwned s (s.set key a) :=
+    (h : a.owner = (s key).owner) : KeepsOwned programId s (s.set key a) :=
   KeepsOwned.set s key a (fun hk => h.trans hk)
 
 /-- Rewriting one account's data keeps ownership. -/
 theorem KeepsOwned.setData (s : State) (key : Pubkey) (data : AccountData) :
-    KeepsOwned s (s.set key { s key with data := data }) :=
+    KeepsOwned programId s (s.set key { s key with data := data }) :=
   KeepsOwned.set_same_owner s key _ rfl
 
-theorem KeepsOwned.withBalances (s : State) (b : Pubkey → U64) : KeepsOwned s (s.withBalances b) :=
+theorem KeepsOwned.withBalances (s : State) (b : Pubkey → U64) : KeepsOwned programId s (s.withBalances b) :=
   fun k hk => by simpa using hk
 
 theorem KeepsOwned.systemTransfer {s s' : State} {src dst : Pubkey} {amount : U64}
-    (h : s.systemTransfer src dst amount = some s') : KeepsOwned s s' :=
+    (h : s.systemTransfer src dst amount = some s') : KeepsOwned programId s s' :=
   fun k hk => (State.systemTransfer_owner_data h k).1.trans hk
 
 /-- `init` keeps ownership: funding only moves lamports, and the created
     account becomes owned by this program. -/
 theorem KeepsOwned.initAccount {s s' : State} {mb : Nat → U64} {payer key : Pubkey}
     {space : Nat} {data : AccountData}
-    (h : s.initAccount mb payer key space data = some s') : KeepsOwned s s' := by
+    (h : s.initAccount programId mb payer key space data = some s') : KeepsOwned programId s s' := by
   unfold State.initAccount at h
   -- `funded` is `s` or a system transfer from `s`; then `key` is set to this program.
   have hfunded : ∀ s₁, (if (s key).lamports.val = 0 then s.systemTransfer payer key (mb space)
       else if payer = key then none
       else if max (mb space).val 1 - (s key).lamports.val = 0 then some s
       else s.systemTransfer payer key ⟨BitVec.ofNat 64 (max (mb space).val 1 - (s key).lamports.val)⟩)
-      = some s₁ → KeepsOwned s s₁ := by
+      = some s₁ → KeepsOwned programId s s₁ := by
     intro s₁ hs₁
     split at hs₁
     · exact KeepsOwned.systemTransfer hs₁
@@ -82,9 +84,9 @@ theorem checkBalanced_ok {s s₂ s' : State} {keys : List Pubkey}
   · exact (Except.ok.inj h).symm
   · cases h
 
-theorem execUpdateDepositLimit_keepsOwned {s s' : State} {tx : TxEnv}
+theorem execUpdateDepositLimit_keepsOwned {d : Deployment} {s s' : State} {tx : TxEnv}
     {a : UpdateDepositLimitAccounts} {newLimit : U64}
-    (h : execUpdateDepositLimit s tx a newLimit = .ok s') : KeepsOwned s s' := by
+    (h : execUpdateDepositLimit d s tx a newLimit = .ok s') : KeepsOwned d.programId s s' := by
   unfold execUpdateDepositLimit at h
   split at h
   · split at h
@@ -94,9 +96,9 @@ theorem execUpdateDepositLimit_keepsOwned {s s' : State} {tx : TxEnv}
       exact KeepsOwned.set_same_owner _ _ _ rfl
   · cases h
 
-theorem execUpdateGlobalConfig_keepsOwned {s s' : State} {tx : TxEnv}
+theorem execUpdateGlobalConfig_keepsOwned {d : Deployment} {s s' : State} {tx : TxEnv}
     {a : UpdateGlobalConfigAccounts} {dep wd margin : Option U16}
-    (h : execUpdateGlobalConfig s tx a dep wd margin = .ok s') : KeepsOwned s s' := by
+    (h : execUpdateGlobalConfig d s tx a dep wd margin = .ok s') : KeepsOwned d.programId s s' := by
   unfold execUpdateGlobalConfig at h
   split at h
   · split at h
@@ -108,7 +110,7 @@ theorem execUpdateGlobalConfig_keepsOwned {s s' : State} {tx : TxEnv}
   · cases h
 
 theorem execInitialize_keepsOwned {d : Deployment} {s s' : State} {tx : TxEnv}
-    {a : InitializeAccounts} (h : execInitialize d s tx a = .ok s') : KeepsOwned s s' := by
+    {a : InitializeAccounts} (h : execInitialize d s tx a = .ok s') : KeepsOwned d.programId s s' := by
   unfold execInitialize at h
   split at h
   · cases h
@@ -120,7 +122,7 @@ theorem execInitialize_keepsOwned {d : Deployment} {s s' : State} {tx : TxEnv}
   -- Anchor's three `init`s keep ownership.
   obtain ⟨s₀₂, h₀₂, h₃⟩ := Option.bind_eq_some_iff.mp hs₁
   obtain ⟨s₀₁, h₁, h₂⟩ := Option.bind_eq_some_iff.mp h₀₂
-  have hinit : KeepsOwned s s₁ :=
+  have hinit : KeepsOwned d.programId s s₁ :=
     ((KeepsOwned.initAccount h₁).trans (KeepsOwned.initAccount h₂)).trans (KeepsOwned.initAccount h₃)
   -- The handler only rewrites the data of those accounts.
   obtain ⟨r₀, -, h⟩ := Except.bind_ok h
@@ -138,7 +140,7 @@ theorem execInitialize_keepsOwned {d : Deployment} {s s' : State} {tx : TxEnv}
 theorem execTransact_keepsOwned {d : Deployment} {s s' : State} {tx : TxEnv}
     {a : TransactAccounts} {proof : zkcash_core.transact.Proof} {extAmount : I64} {fee : U64}
     {out1 out2 : Slice U8}
-    (h : execTransact d s tx a proof extAmount fee out1 out2 = .ok s') : KeepsOwned s s' := by
+    (h : execTransact d s tx a proof extAmount fee out1 out2 = .ok s') : KeepsOwned d.programId s s' := by
   unfold execTransact at h
   dsimp only at h
   split at h
@@ -151,7 +153,7 @@ theorem execTransact_keepsOwned {d : Deployment} {s s' : State} {tx : TxEnv}
     rename_i s₁ hs₁
     -- Anchor's two nullifier `init`s keep ownership.
     obtain ⟨s₀₁, h₁, h₂⟩ := Option.bind_eq_some_iff.mp hs₁
-    have hinit : KeepsOwned s s₁ := (KeepsOwned.initAccount h₁).trans (KeepsOwned.initAccount h₂)
+    have hinit : KeepsOwned d.programId s s₁ := (KeepsOwned.initAccount h₁).trans (KeepsOwned.initAccount h₂)
     -- The handler: the runtime changes only balances (by construction of
     -- `SolEnv`), then the tree's data is written back.
     obtain ⟨⟨r, env', tree'⟩, -, h⟩ := Except.bind_ok h
@@ -166,7 +168,7 @@ theorem execTransact_keepsOwned {d : Deployment} {s s' : State} {tx : TxEnv}
 
 /-- Every instruction of the program keeps ownership. -/
 theorem step_keepsOwned {d : Deployment} {s s' : State} {tx : TxEnv} {ix : Instruction}
-    (h : step d s tx ix = .ok s') : KeepsOwned s s' := by
+    (h : step d s tx ix = .ok s') : KeepsOwned d.programId s s' := by
   cases ix with
   | «initialize» a => exact execInitialize_keepsOwned h
   | updateDepositLimit a l => exact execUpdateDepositLimit_keepsOwned h
@@ -174,12 +176,12 @@ theorem step_keepsOwned {d : Deployment} {s s' : State} {tx : TxEnv} {ix : Instr
   | transact a proof e f o₁ o₂ => exact execTransact_keepsOwned h
 
 /-- Nothing the rest of the world does can take an account from this program. -/
-theorem EnvStep.keepsOwned {s s' : State} (h : EnvStep s s') : KeepsOwned s s' :=
+theorem EnvStep.keepsOwned {s s' : State} (h : EnvStep programId s s') : KeepsOwned programId s s' :=
   fun _ hk => (h.data_of_owned hk).1
 
 /-- **L1.** Along any run, an account this program owns stays owned by it. -/
 theorem Run.keepsOwned {d : Deployment} {s s' : State} {events : List Event}
-    (h : Run d s events s') : KeepsOwned s s' := by
+    (h : Run d s events s') : KeepsOwned d.programId s s' := by
   induction h with
   | nil s => exact KeepsOwned.refl s
   | program hstep _ ih => exact (step_keepsOwned hstep).trans ih

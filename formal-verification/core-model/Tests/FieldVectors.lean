@@ -3,7 +3,7 @@ Checks the Lean `arkFr` (PrivacyCash/Model/Field.lean), the field defined as
 the integers mod r, against the program's real `ArkFr` (arkworks).
 
 The vectors between the GENERATED markers are printed by the fork's
-`programs/zkcash/tests/model_vectors.rs` (`print_field_vectors`): `from_u64`
+`programs/zkcash/tests/model_vectors/mod.rs` (`print_field_vectors`): `from_u64`
 on small and extreme u64s; `from_be_bytes_mod_order` and
 `from_le_bytes_mod_order` on 0, 1, r - 1, r, r + 1, 2r, 5r, 2^255,
 2^256 - 1 and random bytes; and `add`, `sub`, `neg`, `le`, `eq` on every pair
