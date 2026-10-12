@@ -14,7 +14,13 @@
 //! accounts itself. Both are checked: the discriminators against the IDL, and
 //! every decoded account by re-encoding it to exactly its bytes.
 //!
-//! Usage: conformance <zkcash.so> <idl.json>
+//! `transact` scenarios submit real Groth16 proofs (proofs/proofs.json, made
+//! by proofs/gen_proofs.ts with the program's circuit). The crypto answers the
+//! model needs for them are recorded by `replay`.
+//!
+//! Usage: conformance <zkcash.so> <idl.json> <proofs.json>
+
+mod replay;
 
 use base64::Engine;
 use litesvm::LiteSVM;
@@ -292,10 +298,33 @@ struct Init {
     signs: bool,
 }
 
-/// The SOL admin instructions. `signs` is whether the authority signs.
+/// The accounts and arguments of `transact`, and whether the signer signs.
+#[derive(Clone)]
+struct Tx {
+    tree: Pubkey,
+    n0: Pubkey,
+    n1: Pubkey,
+    n2: Pubkey,
+    n3: Pubkey,
+    token: Pubkey,
+    config: Pubkey,
+    recipient: Pubkey,
+    fee_recipient: Pubkey,
+    signer: Pubkey,
+    system: Pubkey,
+    signs: bool,
+    proof: zkcash_core::transact::Proof,
+    ext_amount: i64,
+    fee: u64,
+    out1: Vec<u8>,
+    out2: Vec<u8>,
+}
+
+/// The SOL instructions. `signs` is whether the authority (or signer) signs.
 #[derive(Clone)]
 enum Ix {
     Initialize(Init),
+    Transact(Box<Tx>),
     UpdateDepositLimit { tree: Pubkey, authority: Pubkey, signs: bool, new_limit: u64 },
     UpdateGlobalConfig { config: Pubkey, authority: Pubkey, signs: bool, dep: Option<u16>, wd: Option<u16>, margin: Option<u16> },
 }
@@ -322,6 +351,28 @@ impl Ix {
                 borsh_option_u16(&mut d, *margin);
                 ("update_global_config", vec![w(*config, false), r(*authority, *signs)], d)
             }
+            Ix::Transact(t) => {
+                let p = &t.proof;
+                let mut d = Vec::new();
+                for part in [&p.proof_a[..], &p.proof_b[..], &p.proof_c[..], &p.root[..], &p.public_amount[..], &p.ext_data_hash[..]] {
+                    d.extend_from_slice(part);
+                }
+                p.input_nullifiers.iter().for_each(|n| d.extend_from_slice(n));
+                p.output_commitments.iter().for_each(|c| d.extend_from_slice(c));
+                d.extend_from_slice(&t.ext_amount.to_le_bytes());
+                d.extend_from_slice(&t.fee.to_le_bytes());
+                for out in [&t.out1, &t.out2] {
+                    d.extend_from_slice(&(out.len() as u32).to_le_bytes());
+                    d.extend_from_slice(out);
+                }
+                // Writable and signer flags as in the IDL.
+                let accounts = vec![
+                    w(t.tree, false), w(t.n0, false), w(t.n1, false), r(t.n2, false), r(t.n3, false),
+                    w(t.token, false), r(t.config, false), w(t.recipient, false), w(t.fee_recipient, false),
+                    w(t.signer, t.signs), r(t.system, false),
+                ];
+                ("transact", accounts, d)
+            }
         };
         let mut bytes = discriminator("global", name).to_vec();
         bytes.append(&mut data);
@@ -333,6 +384,7 @@ impl Ix {
             Ix::Initialize(Init { authority, signs, .. })
             | Ix::UpdateDepositLimit { authority, signs, .. }
             | Ix::UpdateGlobalConfig { authority, signs, .. } => signs.then_some(*authority),
+            Ix::Transact(t) => t.signs.then_some(t.signer),
         }
     }
 
@@ -351,6 +403,19 @@ impl Ix {
                 ".updateGlobalConfig {{ globalConfig := {}, authority := {} }} (ou16 {}) (ou16 {}) (ou16 {})",
                 k(config), k(authority), lean_opt_u16(*dep), lean_opt_u16(*wd), lean_opt_u16(*margin)
             ),
+            Ix::Transact(t) => {
+                let p = &t.proof;
+                format!(
+                    ".transact {{ treeAccount := {}, nullifier0 := {}, nullifier1 := {}, nullifier2 := {}, nullifier3 := {}, treeTokenAccount := {}, globalConfig := {}, recipient := {}, feeRecipientAccount := {}, signer := {}, systemProgram := {} }}\n      (proofOf {} {} {} {} {} {} {} {} {} {})\n      (i64 ({})) (u64 {}) (slice {}) (slice {})",
+                    k(&t.tree), k(&t.n0), k(&t.n1), k(&t.n2), k(&t.n3), k(&t.token), k(&t.config),
+                    k(&t.recipient), k(&t.fee_recipient), k(&t.signer), k(&t.system),
+                    lean_hex(&p.proof_a), lean_hex(&p.proof_b), lean_hex(&p.proof_c), lean_hex(&p.root),
+                    lean_hex(&p.public_amount), lean_hex(&p.ext_data_hash),
+                    lean_hex(&p.input_nullifiers[0]), lean_hex(&p.input_nullifiers[1]),
+                    lean_hex(&p.output_commitments[0]), lean_hex(&p.output_commitments[1]),
+                    t.ext_amount, t.fee, lean_hex(&t.out1), lean_hex(&t.out2)
+                )
+            }
         }
     }
 }
@@ -381,7 +446,14 @@ impl World {
     /// Sends `ix`; the fee payer signs, the other signatures are left empty
     /// (signature verification is off, so the authority need not be ours).
     fn send(&mut self, ix: &Ix) -> Result<litesvm::types::TransactionMetadata, litesvm::types::FailedTransactionMetadata> {
-        let msg = Message::new(&[ix.instruction()], Some(&self.payer.pubkey()));
+        // A compute budget instruction first (`transact` needs more than the
+        // default), so the program's instruction is instruction 1.
+        let budget = Instruction {
+            program_id: Pubkey::from_str("ComputeBudget111111111111111111111111111111").unwrap(),
+            accounts: vec![],
+            data: [&[2u8][..], &1_400_000u32.to_le_bytes()[..]].concat(),
+        };
+        let msg = Message::new(&[budget, ix.instruction()], Some(&self.payer.pubkey()));
         let mut tx = Transaction::new_unsigned(msg);
         tx.partial_sign(&[&self.payer], self.svm.latest_blockhash());
         self.svm.send_transaction(tx)
@@ -393,7 +465,7 @@ fn classify(f: &litesvm::types::FailedTransactionMetadata) -> String {
     use solana_instruction::error::InstructionError;
     let logs = f.meta.logs.join("\n");
     match &f.err {
-        TransactionError::InstructionError(0, InstructionError::Custom(c)) => {
+        TransactionError::InstructionError(1, InstructionError::Custom(c)) => {
             if logs.contains("AnchorError caused by account:") {
                 format!(".accounts {:?}", anchor_error_line(&logs))
             } else if (6000..6100).contains(c) {
@@ -404,7 +476,7 @@ fn classify(f: &litesvm::types::FailedTransactionMetadata) -> String {
                 format!(".system {c}")
             }
         }
-        TransactionError::InstructionError(0, e) => format!(".runtime {:?}", format!("{e:?}")),
+        TransactionError::InstructionError(1, e) => format!(".runtime {:?}", format!("{e:?}")),
         e => panic!("transaction-level error (a harness bug): {e:?}"),
     }
 }
@@ -446,6 +518,91 @@ struct Addrs {
     stranger: Pubkey,
     /// An address (no key) where copies of program accounts are placed.
     other_account: Pubkey,
+    /// The recipient and fee recipient the proofs' ext data name, and the
+    /// user who signs `transact`.
+    recipient: Pubkey,
+    fee_recipient: Pubkey,
+    user: Pubkey,
+    /// The proofs of proofs/proofs.json, by name.
+    proofs: std::collections::HashMap<String, Fixture>,
+}
+
+/// One proof of proofs/proofs.json, with the ext data it was made for.
+#[derive(Clone, serde::Deserialize)]
+struct Fixture {
+    proof_a: Vec<u8>,
+    proof_b: Vec<u8>,
+    proof_c: Vec<u8>,
+    root: Vec<u8>,
+    public_amount: Vec<u8>,
+    ext_data_hash: Vec<u8>,
+    input_nullifiers: Vec<Vec<u8>>,
+    output_commitments: Vec<Vec<u8>>,
+    ext_amount: String,
+    fee: String,
+    encrypted_output1: String,
+    encrypted_output2: String,
+}
+
+fn unhex(s: &str) -> Vec<u8> {
+    (0..s.len() / 2).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap()).collect()
+}
+
+impl Fixture {
+    fn proof(&self) -> zkcash_core::transact::Proof {
+        let a32 = |v: &[u8]| -> [u8; 32] { v.try_into().unwrap() };
+        zkcash_core::transact::Proof {
+            proof_a: self.proof_a.as_slice().try_into().unwrap(),
+            proof_b: self.proof_b.as_slice().try_into().unwrap(),
+            proof_c: self.proof_c.as_slice().try_into().unwrap(),
+            root: a32(&self.root),
+            public_amount: a32(&self.public_amount),
+            ext_data_hash: a32(&self.ext_data_hash),
+            input_nullifiers: [a32(&self.input_nullifiers[0]), a32(&self.input_nullifiers[1])],
+            output_commitments: [a32(&self.output_commitments[0]), a32(&self.output_commitments[1])],
+        }
+    }
+}
+
+/// `transact` with the proof `name`, its ext data, and the canonical accounts.
+fn tx(a: &Addrs, name: &str) -> Tx {
+    let f = &a.proofs[name];
+    let proof = f.proof();
+    let [n0, n1] = proof.input_nullifiers;
+    Tx {
+        tree: a.tree,
+        n0: pda(&[b"nullifier0", &n0]).0,
+        n1: pda(&[b"nullifier1", &n1]).0,
+        n2: pda(&[b"nullifier0", &n1]).0,
+        n3: pda(&[b"nullifier1", &n0]).0,
+        token: a.token,
+        config: a.config,
+        recipient: a.recipient,
+        fee_recipient: a.fee_recipient,
+        signer: a.user,
+        system: SYSTEM_PROGRAM,
+        signs: true,
+        proof,
+        ext_amount: f.ext_amount.parse().unwrap(),
+        fee: f.fee.parse().unwrap(),
+        out1: unhex(&f.encrypted_output1),
+        out2: unhex(&f.encrypted_output2),
+    }
+}
+
+fn tx_ix(a: &Addrs, name: &str) -> Ix {
+    Ix::Transact(Box::new(tx(a, name)))
+}
+
+fn deposited(w: &mut World, a: &Addrs) {
+    initialized(w, a);
+    w.fund(&a.user, 10 * SOL);
+    w.send(&tx_ix(a, "deposit")).expect("setup deposit failed");
+}
+
+fn withdrawn(w: &mut World, a: &Addrs) {
+    deposited(w, a);
+    w.send(&tx_ix(a, "withdraw")).expect("setup withdrawal failed");
 }
 
 fn pda(seeds: &[&[u8]]) -> (Pubkey, u8) {
@@ -512,7 +669,76 @@ fn copy_to(w: &mut World, from: Pubkey, to: Pubkey, owner: Pubkey) {
 fn scenarios() -> Vec<Scenario> {
     let mut v = fixed_scenarios();
     v.extend(random_scenarios(150));
+    v.extend(transact_scenarios());
     v
+}
+
+fn with(a: &Addrs, name: &str, f: impl FnOnce(&mut Tx)) -> Ix {
+    let mut t = tx(a, name);
+    f(&mut t);
+    Ix::Transact(Box::new(t))
+}
+
+fn funded_initialized(w: &mut World, a: &Addrs) {
+    initialized(w, a);
+    w.fund(&a.user, 10 * SOL);
+}
+
+fn transact_scenarios() -> Vec<Scenario> {
+    vec![
+        // the protocol's paths
+        s("transact: deposit", funded_initialized, |a| tx_ix(a, "deposit")),
+        s("transact: withdrawal", deposited, |a| tx_ix(a, "withdraw")),
+        // double spends
+        s("transact: the deposit replayed (its nullifiers are spent)", deposited, |a| tx_ix(a, "deposit")),
+        s("transact: the withdrawal replayed (note spent in slot 0)", withdrawn, |a| tx_ix(a, "withdraw")),
+        s("transact: the note spent in slot 0, then in slot 1", withdrawn, |a| tx_ix(a, "withdraw_slot1")),
+        // the handler's checks
+        s("transact: withdrawal before the deposit (unknown root)", funded_initialized, |a| tx_ix(a, "withdraw")),
+        s("transact: ext amount not the proof's", funded_initialized, |a| with(a, "deposit", |t| t.ext_amount += 1)),
+        s("transact: recipient not the proof's", funded_initialized, |a| with(a, "deposit", |t| t.recipient = a.other)),
+        s("transact: corrupted proof", funded_initialized, |a| with(a, "deposit", |t| t.proof.proof_c[5] ^= 1)),
+        s("transact: output commitment not the proof's", funded_initialized, |a| {
+            with(a, "deposit", |t| t.proof.output_commitments[1][31] ^= 1)
+        }),
+        s(
+            "transact: deposit above the limit",
+            |w, a| {
+                funded_initialized(w, a);
+                w.send(&Ix::UpdateDepositLimit { tree: a.tree, authority: a.admin, signs: true, new_limit: 999_999 })
+                    .expect("setup limit");
+            },
+            |a| tx_ix(a, "deposit"),
+        ),
+        s(
+            "transact: signer cannot pay the deposit",
+            |w, a| {
+                initialized(w, a);
+                let rent = w.svm.minimum_balance_for_rent_exemption(9);
+                w.fund(&a.user, 2 * rent + 500_000);
+            },
+            |a| tx_ix(a, "deposit"),
+        ),
+        s(
+            "transact: pool cannot pay the withdrawal",
+            |w, a| {
+                deposited(w, a);
+                let mut acc = w.svm.get_account(&a.token).unwrap();
+                acc.lamports = w.svm.minimum_balance_for_rent_exemption(41);
+                w.svm.set_account(a.token, acc).unwrap();
+            },
+            |a| tx_ix(a, "withdraw"),
+        ),
+        // the accounts
+        s("transact: before initialize", |w, a| w.fund(&a.user, 10 * SOL), |a| tx_ix(a, "deposit")),
+        s("transact: signer did not sign", funded_initialized, |a| with(a, "deposit", |t| t.signs = false)),
+        s("transact: nullifier0 not its PDA", funded_initialized, |a| with(a, "deposit", |t| t.n0 = a.stranger)),
+        s("transact: cross-check nullifiers swapped", funded_initialized, |a| {
+            with(a, "deposit", |t| std::mem::swap(&mut t.n2, &mut t.n3))
+        }),
+        s("transact: config passed as the tree", funded_initialized, |a| with(a, "deposit", |t| t.tree = a.config)),
+        s("transact: tree passed as the pool", funded_initialized, |a| with(a, "deposit", |t| t.token = a.tree)),
+    ]
 }
 
 fn fixed_scenarios() -> Vec<Scenario> {
@@ -850,9 +1076,52 @@ fn random_scenarios(n: usize) -> Vec<Scenario> {
         .collect()
 }
 
+/// The crypto answers of a `transact` scenario (see `replay`), as Lean; none
+/// if its tree or config is not one (it then fails before any crypto).
+fn crypto_tables(pre: &BTreeMap<usize, Option<Account>>, ks: &[Pubkey], t: &Tx) -> String {
+    let data = |k: &Pubkey| ks.iter().position(|x| x == k).and_then(|i| pre[&i].clone()).map(|a| decode(&a.owner, &a.data));
+    let (Some(Data::Tree(tr)), Some(Data::GlobalConfig { authority, deposit, withdrawal, margin, bump })) = (data(&t.tree), data(&t.config))
+    else {
+        return "{}".to_string();
+    };
+    let tree = zkcash_core::merkle_tree::MerkleTreeAccount {
+        authority: tr.authority,
+        next_index: tr.next_index,
+        subtrees: tr.subtrees.clone().try_into().unwrap(),
+        root: tr.root,
+        root_history: tr.root_history.clone().try_into().unwrap(),
+        root_index: tr.root_index,
+        max_deposit_amount: tr.max_deposit_amount,
+        height: tr.height,
+        root_history_size: tr.root_history_size,
+        bump: tr.bump,
+        _padding: tr.padding,
+    };
+    let config = zkcash_core::admin::GlobalConfig {
+        authority,
+        deposit_fee_rate: deposit,
+        withdrawal_fee_rate: withdrawal,
+        fee_error_margin: margin,
+        bump,
+    };
+    let tb = replay::tables(
+        tree, config, &t.proof, t.ext_amount, t.fee, t.recipient.to_bytes(), t.fee_recipient.to_bytes(), &t.out1, &t.out2,
+    );
+    let opt = |o: Option<String>| o.map_or("none".into(), |x| format!("(some {x})"));
+    let list = |v: Vec<String>| format!("[{}]", v.join(",\n          "));
+    format!(
+        "\n      {{ poseidon := {},\n        sha := {},\n        multiplication := {},\n        addition := {},\n        pairing := {} }}",
+        list(tb.poseidon.iter().map(|(l, r, o)| format!("({}, {}, {})", lean_hex(l), lean_hex(r), lean_hex(o))).collect()),
+        list(tb.sha256.iter().map(|(i, o)| format!("({}, {})", lean_hex(i), lean_hex(o))).collect()),
+        list(tb.multiplication.iter().map(|(i, o)| format!("({}, {})", lean_hex(i), opt(o.map(|x| lean_hex(&x))))).collect()),
+        list(tb.addition.iter().map(|(i, o)| format!("({}, {})", lean_hex(i), opt(o.map(|x| lean_hex(&x))))).collect()),
+        list(tb.pairing.iter().map(|(i, o)| format!("({}, {})", lean_hex(i), opt(o.map(|x| lean_hex(&x))))).collect()),
+    )
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    assert_eq!(args.len(), 3, "usage: conformance <zkcash.so> <idl.json>");
+    assert_eq!(args.len(), 4, "usage: conformance <zkcash.so> <idl.json> <proofs.json>");
     let so = std::fs::read(&args[1]).expect("read zkcash.so");
     let idl: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&args[2]).expect("read IDL")).unwrap();
 
@@ -881,6 +1150,10 @@ fn main() {
         config,
         stranger: Pubkey::new_from_array([0x0b; 32]),
         other_account: Pubkey::new_from_array([0x0c; 32]),
+        recipient: Pubkey::new_from_array([0x0d; 32]),
+        fee_recipient: Pubkey::new_from_array([0x0e; 32]),
+        user: Pubkey::new_from_array([0x0f; 32]),
+        proofs: serde_json::from_str(&std::fs::read_to_string(&args[3]).expect("read proofs.json")).unwrap(),
     };
     let probe = World::new(&so);
     let native_loader = probe.svm.get_account(&SYSTEM_PROGRAM).unwrap().owner;
@@ -900,6 +1173,9 @@ fn main() {
         ("keyOther".into(), addrs.other),
         ("keyStranger".into(), addrs.stranger),
         ("keyOtherAccount".into(), addrs.other_account),
+        ("keyRecipient".into(), addrs.recipient),
+        ("keyFeeRecipient".into(), addrs.fee_recipient),
+        ("keyUser".into(), addrs.user),
         ("keyTree".into(), tree),
         ("keyTreeToken".into(), token),
         ("keyGlobalConfig".into(), config),
@@ -912,9 +1188,26 @@ fn main() {
     println!();
     println!("/-- `find_program_address` on the seeds the scenarios use: (seeds, bump). -/");
     println!("def bumps : List (List Nat × Nat) := [");
-    let seeds: [(&[u8], u8, Pubkey); 3] =
-        [(b"merkle_tree", tree_bump, tree), (b"tree_token", token_bump, token), (b"global_config", config_bump, config)];
-    let lines: Vec<String> = seeds.iter().map(|(s, b, _)| format!("  ({:?}, {b})", s.to_vec())).collect();
+    let mut seeds: Vec<(Vec<u8>, u8, Pubkey)> = vec![
+        (b"merkle_tree".to_vec(), tree_bump, tree),
+        (b"tree_token".to_vec(), token_bump, token),
+        (b"global_config".to_vec(), config_bump, config),
+    ];
+    // Every nullifier of every proof, in both slots.
+    let mut names: Vec<&String> = addrs.proofs.keys().collect();
+    names.sort();
+    for name in names {
+        for n in &addrs.proofs[name].input_nullifiers {
+            for slot in [&b"nullifier0"[..], &b"nullifier1"[..]] {
+                let (p, b) = pda(&[slot, n]);
+                let sd = [slot, &n[..]].concat();
+                if !seeds.iter().any(|(s, _, _)| *s == sd) {
+                    seeds.push((sd, b, p));
+                }
+            }
+        }
+    }
+    let lines: Vec<String> = seeds.iter().map(|(s, b, _)| format!("  ({:?}, {b})", s)).collect();
     println!("{}\n]", lines.join(",\n"));
     println!();
     println!("/-- `create_program_address` on those seeds and bumps: (seeds ‖ bump, address). -/");
@@ -922,7 +1215,7 @@ fn main() {
     let lines: Vec<String> = seeds
         .iter()
         .map(|(s, b, p)| {
-            let mut v = s.to_vec();
+            let mut v = s.clone();
             v.push(*b);
             format!("  ({v:?}, {})", keys.name(p))
         })
@@ -939,10 +1232,11 @@ fn main() {
     println!();
     println!("/-- The program's `zero_bytes` (Poseidon empty-subtree roots), as written by `initialize`. -/");
     {
-        let mut zb = zero_subtrees.clone();
-        zb.push(zero_root);
-        println!("def zeroBytesPrefix : List String := {}", lean_hex_list(&zb));
-        println!("def zeroSubtrees : List String := zeroBytesPrefix.take 26");
+        let zb = replay::zero_bytes();
+        assert_eq!(&zb[..26], &zero_subtrees[..], "initialize did not write zero_bytes as the subtrees");
+        assert_eq!(zb[26], zero_root, "initialize did not write zero_bytes[26] as the root");
+        println!("def zeroBytesList : List String := {}", lean_hex_list(&zb));
+        println!("def zeroSubtrees : List String := zeroBytesList.take 26");
     }
     println!();
     println!("def scenarios : List Scenario := [");
@@ -975,6 +1269,10 @@ fn main() {
             }
             Err(f) => classify(f),
         };
+        let crypto = match &ix {
+            Ix::Transact(t) => crypto_tables(&pre, &ks, t),
+            _ => "{}".to_string(),
+        };
         let pre_s: Vec<String> =
             ks.iter().enumerate().map(|(i, k)| format!("({}, {})", keys.name(k), lean_account(&pre[&i], &keys))).collect();
         let signers: Vec<String> = ix.signer().iter().map(|k| keys.name(k)).collect();
@@ -983,7 +1281,8 @@ fn main() {
         println!("    pre := [{}],", pre_s.join(",\n      "));
         println!("    signers := [{}],", signers.join(", "));
         println!("    ix := {},", ix.lean(&keys));
-        println!("    expected := {} }}{sep}", outcome);
+        println!("    expected := {},", outcome);
+        println!("    crypto := {} }}{sep}", crypto);
     }
     println!("]");
     println!("-- END GENERATED");

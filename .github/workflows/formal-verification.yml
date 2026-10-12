@@ -1,0 +1,67 @@
+# Re-runs every check of the formal-verification work on each push and pull
+# request. See formal-verification/core-model/README.md for what each checks.
+name: formal-verification
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  # The Lean model, the proofs, and every check written as Lean: the IDL and
+  # interface checks, the vector checks and the conformance traces (their
+  # #guards run at build time).
+  lean:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal-verification/core-model
+          use-mathlib-cache: true
+          build: true
+
+  # The fork's Rust tests (unit, differential against upstream, the model's
+  # vector generators) and the check that the Lean vectors are up to date.
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: privacy-cash/anchor
+      - name: Rust tests (zkcash, zkcash_core)
+        run: cd privacy-cash/anchor && cargo test -p zkcash -p zkcash_core
+      - name: Lean vectors are the program's
+        run: formal-verification/core-model/scripts/check_vectors.sh
+
+  # The fork's IDL is upstream's, Idl.lean is current, and the conformance
+  # traces are what the compiled program does (mainnet build, in LiteSVM).
+  program:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Fetch upstream main into the fork (the IDL reference)
+        run: git -C privacy-cash fetch --depth=1 origin main:refs/remotes/origin/main
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            privacy-cash/anchor
+            formal-verification/conformance
+      - name: Install Solana 2.2.18
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v2.2.18/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+      - name: Install anchor-cli 0.32.1
+        run: cargo install --git https://github.com/coral-xyz/anchor --tag v0.32.1 anchor-cli --locked
+      - name: IDL identical to upstream, Idl.lean current
+        run: formal-verification/core-model/scripts/check_idl.sh
+      - name: Conformance traces are the program's
+        run: formal-verification/core-model/scripts/check_conformance.sh
