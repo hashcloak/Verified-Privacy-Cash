@@ -21,7 +21,7 @@ behaves exactly like upstream Privacy Cash (see [Checks](#checks)).
 | The program's logic | `PrivacyCash/Extracted/` | **extracted** from `zkcash_core` by Charon + Aeneas (`scripts/extract.sh`); never edited by hand |
 | What Solana and Anchor do around it | `PrivacyCash/Model/{Basic,Pda,Accounts,Runtime,Program,Execution}.lean` | **hand-written**: accounts, PDAs, Anchor's account checks and `init`, lamports and the system program, and executions (`step`, `Run`) |
 | Arkworks code inside the program | `PrivacyCash/Model/{Field,Bn254}.lean` | **hand-written definitions**: the scalar field as `ZMod r`, G1 negation |
-| What the validator computes | `PrivacyCash/Model/{Crypto,Bn254}.lean` | **parameters**: Poseidon, SHA-256 and the `alt_bn128` syscalls; what a theorem needs of them is a hypothesis it takes |
+| What the validator computes | `PrivacyCash/Model/{Crypto,Bn254}.lean` | **parameters**: Poseidon, SHA-256 and the `alt_bn128` syscalls; what a theorem needs of them is a hypothesis it takes. How the syscalls read a G1 point is defined (`syscallDecodeG1`) |
 | One Rust library function | `PrivacyCash/Extracted/FunsExternal.lean` | hand-written `i64::checked_neg`, **proven** to match Rust (`Proofs/FunsExternal.lean`) |
 
 `step d s tx ix` runs one instruction: `.ok (s', events)` or `.error e`.
@@ -42,6 +42,8 @@ planting bugs.
 | `scripts/check_idl.sh` | the fork's IDL is byte-identical to upstream's; `Model/Idl.lean` is generated from it and current | script |
 | `Tests/Conformance.lean` | **the model's `step` against the compiled program** (mainnet build, in LiteSVM): 209 scenarios: each Anchor check of each admin account, argument boundaries, `init` funding paths, 150 random admin scenarios, and `transact` deposits, withdrawals and double spends with real Groth16 proofs | `lake build`; traces from `scripts/check_conformance.sh` |
 | `Tests/FieldVectors.lean`, `Tests/Bn254Vectors.lean` | the field (`ZMod r`) and G1 negation against arkworks, on edge-case and random inputs | `lake build`; vectors from `scripts/check_vectors.sh` |
+| `Tests/G1DecodeVectors.lean` | how the syscalls read a G1 point (`syscallDecodeG1`) against solana-bn254 | same |
+| `scripts/check_vk_circuit.sh` | the program's verifying key is the key of the circuit's proving key (`artifacts/circuits/transaction2.zkey`), byte for byte | script (snarkjs) |
 | `Tests/AccountSpaces.lean` | the account sizes used for rent against `8 + size_of::<T>()` | same |
 | `Tests/Executable.lean` | the model runs (toy deployment) | `lake build` |
 | `Tests/Axioms.lean` | no theorem relies on an axiom beyond Lean's standard three | `lake build` |
@@ -68,11 +70,17 @@ Which Anchor check rejects an account is not modelled (`.accounts`).
 
 **Cryptography** (hypotheses a theorem takes, never axioms; see
 `Model/Crypto.lean`, `Model/Bn254.lean`, `Model/Pda.lean`):
-- `Groth16Sound`: a proof the program's verifier accepts proves the
-  circuit's statement;
+- Groth16 soundness for the program's key (`Groth16EquationSound`): a proof
+  whose points satisfy the Groth16 equation proves the circuit's statement.
+  The model's `Groth16Sound` ("the verifier accepts ⇒ the statement") is
+  derived from it, since the verifier is proven to check the equation;
+- the circuit (`circuits/transaction2.circom`) enforces the protocol's
+  relation. Nothing here checks the circuit itself;
 - `PoseidonCollisionFree`, `ExtDataHashCollisionFree`, `PdaCollisionFree`:
   no collisions among the inputs an execution uses;
-- `AltBn128Contracts`: what a successful `alt_bn128` syscall computes;
+- `AltBn128Contracts`: what a successful `alt_bn128` syscall computes (scalar
+  multiplication, addition, the four-pairing product), over abstract groups
+  that the syscall's concrete point decoding embeds into;
 - `ZeroBytesConsistent`: the empty-subtree roots chain (true of the program's
   Poseidon; checked by the fork's `zero_bytes_are_empty_subtree_roots`).
 
@@ -100,6 +108,13 @@ assume they are not called.
 - Access control (`Model/Program.lean`): `update_deposit_limit` and
   `update_global_config` succeed only when signed by the authority stored in
   the tree or config they change.
+- **The Groth16 verifier** (`Proofs/Groth16.lean`, adapted from
+  `../lean/proofs/VerifyProof`): if the program's verifier accepts a proof,
+  its public inputs are below r and `e(-A, B) · e(vk_x, γ) · e(C, δ) · e(α, β) = 1`
+  for the program's key, with A the point in `proof_a`. Along the way: the
+  field-size check is the numeric comparison with r, the key's modulus
+  constant is r, and decoding what `negate_g1` returns gives `-A`
+  (`Proofs/G1.lean`).
 - `checked_neg` matches Rust (`Proofs/FunsExternal.lean`).
 
 ## Building and checking
@@ -110,6 +125,7 @@ lake build                  # model, proofs, and the Lean checks
 ./scripts/check_idl.sh      # needs anchor-cli
 ./scripts/check_vectors.sh  # needs cargo
 ./scripts/check_conformance.sh   # needs cargo-build-sbf (Solana 2.2); after check_idl.sh
+./scripts/check_vk_circuit.sh    # needs snarkjs (the fork's, or npx)
 ```
 
 `scripts/gen_proofs.sh` regenerates the conformance proofs (only when the
@@ -119,5 +135,5 @@ circuit, the verifying key or the `transact` scenarios change).
 
 `../lean/` is an earlier model (`fv_*` transcriptions of a copy of the program
 that is no longer in this repository, on another Aeneas revision). Its
-protocol specification (`Spec/`) and its verifier proof (`proofs/VerifyProof`)
-are to be moved here; the rest is superseded.
+verifier proof (`proofs/VerifyProof`) is superseded by `Proofs/Groth16.lean`;
+its protocol specification (`Spec/`) is to be moved here.
