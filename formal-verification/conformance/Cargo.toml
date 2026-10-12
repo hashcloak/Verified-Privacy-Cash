@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Runs the compiled zkcash program in LiteSVM and prints the traces the Lean model is checked against"
 publish = false
+default-run = "conformance"
 
 # Standalone: not part of the program's Anchor workspace.
 [workspace]

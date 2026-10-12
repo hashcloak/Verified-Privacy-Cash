@@ -37,7 +37,7 @@ echo "==> Building zkcash.so from $FORK (mainnet build: no features)"
 echo "    SHA-256 $(shasum -a 256 "$OUT/deploy/zkcash.so" | cut -d' ' -f1)"
 
 echo "==> Running the scenarios in LiteSVM"
-NEW="$(cd "$HARNESS" && cargo run -q --release -- "$OUT/deploy/zkcash.so" "$IDL" "$PROOFS" \
+NEW="$(cd "$HARNESS" && cargo run -q --release --bin conformance -- "$OUT/deploy/zkcash.so" "$IDL" "$PROOFS" \
   | sed -n "/^$BEGIN\$/,/^$END\$/p")"
 if [ -z "$NEW" ]; then
   echo "FAIL: the harness printed no traces"

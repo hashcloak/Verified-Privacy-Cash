@@ -33,11 +33,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: privacy-cash/anchor
+          workspaces: |
+            privacy-cash/anchor
+            formal-verification/conformance
       - name: Rust tests (zkcash, zkcash_core)
         run: cd privacy-cash/anchor && cargo test -p zkcash -p zkcash_core
       - name: Lean vectors are the program's
         run: formal-verification/core-model/scripts/check_vectors.sh
+      - name: The program's verifying key is the circuit's
+        run: formal-verification/core-model/scripts/check_vk_circuit.sh
 
   # The fork's IDL is upstream's, Idl.lean is current, and the conformance
   # traces are what the compiled program does (mainnet build, in LiteSVM).

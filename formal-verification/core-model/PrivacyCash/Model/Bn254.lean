@@ -99,6 +99,22 @@ def negateG1 (proofA : Std.Array U8 64#usize) : Result (Option (Std.Array U8 64#
     let out ← zkcash_core.utils.change_endianness (Std.Array.to_slice p.neg.toBytes)
     ok (toArray64 out)
 
+/-! ## How the `alt_bn128` syscalls read a G1 point -/
+
+/-- `convert_endianness_64`: each 32-byte half reversed (big-endian ↔
+    arkworks' little-endian). -/
+def reverseHalves (l : List U8) : List U8 := (l.take 32).reverse ++ (l.drop 32).reverse
+
+theorem reverseHalves_length (b : Std.Array U8 64#usize) : (reverseHalves b.val).length = 64 := by
+  simp [reverseHalves]
+
+/-- How the syscalls decode a 64-byte big-endian G1 point (solana-bn254's
+    `TryFrom<PodG1> for G1`): all-zero bytes are the identity; otherwise the
+    halves are reversed and arkworks decodes and validates the point. -/
+def syscallDecodeG1 (b : Std.Array U8 64#usize) : Option G1Affine :=
+  if b.val = List.replicate 64 0#u8 then some ⟨0, 0, true⟩
+  else deserializeUncompressed (Std.Array.from (reverseHalves b.val) (reverseHalves_length b))
+
 /-! ## The `alt_bn128` syscalls -/
 
 /-- The three syscalls, as `SolanaBn254` calls them: the input bytes in, and
@@ -136,14 +152,23 @@ def beNatOf {n : Usize} (b : Std.Array U8 n) : Nat := b.val.foldl (fun acc x => 
     successful syscall answer means, for some groups `G1`, `G2`, `GT`, decoders
     and pairing. Only "if it answered, this is what it computed"; nothing about
     when it fails. Bilinearity is deliberately not assumed: the code only
-    checks that four pairings multiply to 1. (Source: solana-bn254's native
+    checks that four pairings multiply to 1. How a G1 point is read is not
+    left abstract: it is `syscallDecodeG1` (checked against solana-bn254 by
+    `Tests/G1DecodeVectors.lean`), followed by an embedding of arkworks' points
+    into the group that respects negation. (Source: solana-bn254's native
     implementation; which implementation the deployed validator runs is
     exactly what is trusted here.) -/
-structure AltBn128Contracts (s : AltBn128) (G1 G2 GT : Type) [AddCommMonoid G1] [CommMonoid GT] where
+structure AltBn128Contracts (s : AltBn128) (G1 G2 GT : Type) [AddCommGroup G1] [CommMonoid GT] where
   /-- The pairing the syscall computes. -/
   e : G1 → G2 → GT
+  /-- The group element an arkworks point stands for. -/
+  embed : G1Affine → G1
+  /-- Negating an arkworks point negates the group element. -/
+  embed_neg : ∀ p, embed p.neg = - embed p
   /-- How the syscalls read a 64-byte big-endian G1 point. -/
   decodeG1 : Std.Array U8 64#usize → Option G1
+  /-- ... which is the concrete decoding, then the embedding. -/
+  decodeG1_eq : ∀ b, decodeG1 b = (syscallDecodeG1 b).map embed
   /-- How the pairing syscall reads a 128-byte big-endian G2 point. -/
   decodeG2 : Std.Array U8 128#usize → Option G2
   /-- Multiplication returns k·P for the point P in bytes 0..63 and the
@@ -174,7 +199,8 @@ structure AltBn128Contracts (s : AltBn128) (G1 G2 GT : Type) [AddCommMonoid G1] 
     contradiction): syscalls that always fail satisfy them trivially. -/
 theorem altBn128Contracts_satisfiable :
     Nonempty (AltBn128Contracts ⟨fun _ => none, fun _ => none, fun _ => none⟩ Unit Unit Unit) :=
-  ⟨{ e := fun _ _ => (), decodeG1 := fun _ => none, decodeG2 := fun _ => none
-     mul := by simp, add := by simp, pairing := by simp }⟩
+  ⟨{ e := fun _ _ => (), embed := fun _ => (), embed_neg := fun _ => rfl,
+     decodeG1 := fun b => (syscallDecodeG1 b).map fun _ => (), decodeG1_eq := fun _ => rfl,
+     decodeG2 := fun _ => none, mul := by simp, add := by simp, pairing := by simp }⟩
 
 end PrivacyCash.Model

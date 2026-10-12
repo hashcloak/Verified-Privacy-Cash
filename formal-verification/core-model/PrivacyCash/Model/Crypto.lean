@@ -80,7 +80,10 @@ def publicInputs (p : zkcash_core.transact.Proof) : List (Std.Array U8 32#usize)
     that the program's verifier accepts proves the circuit statement `stmt`
     about its public inputs. `stmt` stands for the relation of
     `circuits/transaction.circom`; the properties of it that theorems use
-    (e.g. its two input nullifiers differ) are stated where they are used. -/
+    (e.g. its two input nullifiers differ) are stated where they are used.
+    It follows from Groth16 soundness for the program's key alone
+    (`Proofs/Groth16.lean`: `groth16Sound_of_equation`), since the program's
+    verifier is proven to check the Groth16 equation. -/
 def Groth16Sound (c : Crypto) (stmt : List (Std.Array U8 32#usize) → Prop)
     (proofs : Set zkcash_core.transact.Proof) : Prop :=
   ∀ p ∈ proofs, c.proofVerifier.verify p = ok true → stmt (publicInputs p)
