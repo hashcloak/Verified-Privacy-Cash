@@ -4,7 +4,9 @@
 # Tests/Conformance.lean holds exactly those traces. `lake build` then checks
 # the model's `step` against every trace.
 #
-# Needs the IDL from scripts/check_idl.sh (run it first).
+# Needs the IDL from scripts/check_idl.sh (run it first). The `transact`
+# scenarios submit the proofs in formal-verification/conformance/proofs/
+# (scripts/gen_proofs.sh makes them).
 #
 # Usage:  ./scripts/check_conformance.sh            (exit 0 = up to date)
 #         ./scripts/check_conformance.sh --write    (regenerate the traces)
@@ -17,6 +19,7 @@ FORK="${FORK:-$REPO/privacy-cash}"
 HARNESS="$REPO/formal-verification/conformance"
 OUT="$ROOT/target/conformance"
 IDL="$ROOT/target/idl-check/fork.json"
+PROOFS="$HARNESS/proofs/proofs.json"
 LEAN="$ROOT/Tests/Conformance.lean"
 BEGIN='-- BEGIN GENERATED'
 END='-- END GENERATED'
@@ -34,7 +37,7 @@ echo "==> Building zkcash.so from $FORK (mainnet build: no features)"
 echo "    SHA-256 $(shasum -a 256 "$OUT/deploy/zkcash.so" | cut -d' ' -f1)"
 
 echo "==> Running the scenarios in LiteSVM"
-NEW="$(cd "$HARNESS" && cargo run -q --release -- "$OUT/deploy/zkcash.so" "$IDL" \
+NEW="$(cd "$HARNESS" && cargo run -q --release -- "$OUT/deploy/zkcash.so" "$IDL" "$PROOFS" \
   | sed -n "/^$BEGIN\$/,/^$END\$/p")"
 if [ -z "$NEW" ]; then
   echo "FAIL: the harness printed no traces"

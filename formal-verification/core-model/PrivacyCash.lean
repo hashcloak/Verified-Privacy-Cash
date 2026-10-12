@@ -1,5 +1,6 @@
 import PrivacyCash.Extracted.Funs
 import PrivacyCash.Proofs.MerkleTree
+import PrivacyCash.Proofs.FunsExternal
 import PrivacyCash.Model.Basic
 import PrivacyCash.Model.Pda
 import PrivacyCash.Model.Accounts
