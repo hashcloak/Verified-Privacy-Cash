@@ -59,8 +59,8 @@ jobs:
         run: |
           sh -c "$(curl -sSfL https://release.anza.xyz/v2.2.18/install)"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
-      - name: Install anchor-cli 0.32.1
-        run: cargo install --git https://github.com/coral-xyz/anchor --tag v0.32.1 anchor-cli --locked
+      - name: Install anchor-cli 0.31.1 (the program's Anchor version; it only builds the IDL)
+        run: cargo install --git https://github.com/coral-xyz/anchor --tag v0.31.1 anchor-cli --locked
       - name: IDL identical to upstream, Idl.lean current
         run: formal-verification/core-model/scripts/check_idl.sh
       - name: Conformance traces are the program's
