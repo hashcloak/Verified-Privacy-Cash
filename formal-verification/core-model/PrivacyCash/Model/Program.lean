@@ -270,4 +270,31 @@ theorem updateDepositLimit_only_by_tree_authority (d : Deployment) (s s' : State
     · simp [hv] at h
   · cases h
 
+/-- If the authority did not sign, `update_global_config` fails. -/
+theorem updateGlobalConfig_requires_signature (d : Deployment) (s : State) (tx : TxEnv)
+    (a : UpdateGlobalConfigAccounts) (dep wd margin : Option U16) (h : a.authority ∉ tx.signers) :
+    execUpdateGlobalConfig d s tx a dep wd margin = .error .accounts := by
+  unfold execUpdateGlobalConfig
+  split
+  · rw [if_pos (fun hv => h hv.authority)]
+  · rfl
+
+/-- `update_global_config` succeeds only if the signing authority is the one
+    recorded in the config it changes, and that config is this program's
+    account at its canonical address (for its stored bump). -/
+theorem updateGlobalConfig_only_by_config_authority (d : Deployment) (s s' : State) (tx : TxEnv)
+    (a : UpdateGlobalConfigAccounts) (dep wd margin : Option U16)
+    (h : execUpdateGlobalConfig d s tx a dep wd margin = .ok s') :
+    a.authority ∈ tx.signers ∧
+      ∃ config, (s a.globalConfig).data = .globalConfig config ∧ config.authority = a.authority ∧
+        (s a.globalConfig).owner = d.programId ∧
+        a.globalConfig = d.createProgramAddress (globalConfigSeeds ++ [config.bump]) := by
+  unfold execUpdateGlobalConfig at h
+  split at h
+  · rename_i config hconfig
+    by_cases hv : UpdateGlobalConfigAccountsValid d.toAddresses s tx.toTxContext a config
+    · exact ⟨hv.authority, config, hconfig, hv.globalConfig.2.2, hv.globalConfig.1.1, hv.globalConfig.2.1⟩
+    · simp [hv] at h
+  · cases h
+
 end PrivacyCash.Model
