@@ -4,6 +4,11 @@
 //! failed. `core-model/Tests/Conformance.lean` runs the Lean model's `step` on
 //! the same inputs and checks it agrees (`scripts/check_conformance.sh`).
 //!
+//! The scenarios are a fixed list (each Anchor check of each account, the
+//! boundary values of each argument, the `init` funding paths) followed by a
+//! batch of random ones from a fixed seed (random account states, account
+//! choices, signers and arguments), so the traces are reproducible.
+//!
 //! The harness is a client of the program, independent of its Rust crates:
 //! it encodes instructions itself (Anchor discriminator + Borsh) and decodes
 //! accounts itself. Both are checked: the discriminators against the IDL, and
@@ -195,8 +200,9 @@ fn lean_hex_list(v: &[[u8; 32]]) -> String {
     format!("[{}]", items.join(", "))
 }
 
-/// Names for the keys a trace mentions (`keyName` in Lean).
-struct Keys(Vec<(String, Pubkey)>);
+/// Names for the keys a trace mentions (`keyName` in Lean), and the program's
+/// empty-tree subtrees (printed as `zeroSubtrees`, to keep the traces short).
+struct Keys(Vec<(String, Pubkey)>, Vec<[u8; 32]>);
 
 impl Keys {
     fn name(&self, k: &Pubkey) -> String {
@@ -207,6 +213,19 @@ impl Keys {
     }
 }
 
+/// A list of 32-byte entries as runs of equal entries: `rle [("hex", count), ..]`.
+fn lean_rle(v: &[[u8; 32]]) -> String {
+    let mut runs: Vec<([u8; 32], usize)> = Vec::new();
+    for x in v {
+        match runs.last_mut() {
+            Some((y, n)) if y == x => *n += 1,
+            _ => runs.push((*x, 1)),
+        }
+    }
+    let items: Vec<String> = runs.iter().map(|(x, n)| format!("({}, {n})", lean_hex(x))).collect();
+    format!("(rle [{}])", items.join(", "))
+}
+
 fn lean_data(d: &Data, keys: &Keys) -> String {
     match d {
         Data::Empty => ".empty".into(),
@@ -215,9 +234,9 @@ fn lean_data(d: &Data, keys: &Keys) -> String {
             "(.treeAccount (tree {} {} {} {} {} {} {} {} {} {} {}))",
             keys.name(&Pubkey::new_from_array(t.authority)),
             t.next_index,
-            lean_hex_list(&t.subtrees),
+            if t.subtrees == keys.1 { "zeroSubtrees".to_string() } else { lean_rle(&t.subtrees) },
             lean_hex(&t.root),
-            lean_hex_list(&t.root_history),
+            lean_rle(&t.root_history),
             t.root_index,
             t.max_deposit_amount,
             t.height,
@@ -412,7 +431,7 @@ fn events(logs: &[String]) -> Vec<(u64, [u8; 32], Vec<u8>)> {
 /// One scenario: a name, the setup (instructions or account writes run first),
 /// and the instruction whose step is traced.
 struct Scenario {
-    name: &'static str,
+    name: String,
     setup: Box<dyn Fn(&mut World, &Addrs)>,
     ix: Box<dyn Fn(&Addrs) -> Ix>,
 }
@@ -425,6 +444,8 @@ struct Addrs {
     token: Pubkey,
     config: Pubkey,
     stranger: Pubkey,
+    /// An address (no key) where copies of program accounts are placed.
+    other_account: Pubkey,
 }
 
 fn pda(seeds: &[&[u8]]) -> (Pubkey, u8) {
@@ -444,10 +465,57 @@ fn initialized(w: &mut World, a: &Addrs) {
     w.send(&init_ix(a, a.admin)).expect("setup initialize failed");
 }
 
-fn scenarios() -> Vec<Scenario> {
-    fn s(name: &'static str, setup: impl Fn(&mut World, &Addrs) + 'static, ix: impl Fn(&Addrs) -> Ix + 'static) -> Scenario {
-        Scenario { name, setup: Box::new(setup), ix: Box::new(ix) }
+fn s(name: impl Into<String>, setup: impl Fn(&mut World, &Addrs) + 'static, ix: impl Fn(&Addrs) -> Ix + 'static) -> Scenario {
+    Scenario { name: name.into(), setup: Box::new(setup), ix: Box::new(ix) }
+}
+
+/// The `space` of each account type (`8 + size_of::<T>()`).
+fn space(d: &Data) -> usize {
+    match d {
+        Data::Tree(_) => 4136,
+        Data::TreeToken { .. } => 41,
+        Data::GlobalConfig { .. } => 48,
+        Data::Nullifier { .. } => 9,
+        Data::Empty | Data::Foreign => 0,
     }
+}
+
+/// Writes an account directly (states the scenarios start from).
+fn put(w: &mut World, key: Pubkey, owner: Pubkey, data: &Data, lamports: u64) {
+    let bytes = if matches!(data, Data::Empty) { vec![] } else { encode(data, space(data)) };
+    w.svm.set_account(key, Account { lamports, data: bytes, owner, executable: false, rent_epoch: 0 }).unwrap();
+}
+
+/// An account's lamports and decoded data.
+fn read(w: &World, key: &Pubkey) -> (u64, Data) {
+    let a = w.svm.get_account(key).expect("account exists");
+    (a.lamports, decode(&a.owner, &a.data))
+}
+
+/// Rewrites the stored bump of the tree or config at `key`.
+fn set_bump(w: &mut World, key: Pubkey, bump: u8) {
+    let (lamports, mut d) = read(w, &key);
+    match &mut d {
+        Data::Tree(t) => t.bump = bump,
+        Data::GlobalConfig { bump: b, .. } => *b = bump,
+        _ => panic!("no bump to set"),
+    }
+    put(w, key, program_id(), &d, lamports);
+}
+
+/// Copies the account at `from` to `to`, owned by `owner`.
+fn copy_to(w: &mut World, from: Pubkey, to: Pubkey, owner: Pubkey) {
+    let (lamports, d) = read(w, &from);
+    put(w, to, owner, &d, lamports);
+}
+
+fn scenarios() -> Vec<Scenario> {
+    let mut v = fixed_scenarios();
+    v.extend(random_scenarios(150));
+    v
+}
+
+fn fixed_scenarios() -> Vec<Scenario> {
     vec![
         // initialize
         s("initialize by the admin", |w, a| w.fund(&a.admin, 10 * SOL), |a| init_ix(a, a.admin)),
@@ -512,7 +580,274 @@ fn scenarios() -> Vec<Scenario> {
         s("update_global_config, tree passed as the config", initialized, |a| {
             Ix::UpdateGlobalConfig { config: a.tree, authority: a.admin, signs: true, dep: Some(10), wd: None, margin: None }
         }),
+        // update_global_config: each account check, and the boundaries
+        s("update_global_config, authority did not sign", initialized, |a| {
+            Ix::UpdateGlobalConfig { config: a.config, authority: a.admin, signs: false, dep: Some(10), wd: None, margin: None }
+        }),
+        s(
+            "update_global_config, a copy of the config at another address",
+            |w, a| {
+                initialized(w, a);
+                copy_to(w, a.config, a.stranger, program_id());
+            },
+            |a| Ix::UpdateGlobalConfig { config: a.stranger, authority: a.admin, signs: true, dep: Some(10), wd: None, margin: None },
+        ),
+        s(
+            "update_global_config, config with a wrong stored bump",
+            |w, a| {
+                initialized(w, a);
+                set_bump(w, a.config, 7);
+            },
+            |a| Ix::UpdateGlobalConfig { config: a.config, authority: a.admin, signs: true, dep: Some(10), wd: None, margin: None },
+        ),
+        s(
+            "update_global_config, config owned by another program",
+            |w, a| {
+                initialized(w, a);
+                copy_to(w, a.config, a.config, a.stranger);
+            },
+            |a| Ix::UpdateGlobalConfig { config: a.config, authority: a.admin, signs: true, dep: Some(10), wd: None, margin: None },
+        ),
+        s("update_global_config, all rates zero", initialized, |a| {
+            Ix::UpdateGlobalConfig { config: a.config, authority: a.admin, signs: true, dep: Some(0), wd: Some(0), margin: Some(0) }
+        }),
+        s("update_global_config, withdrawal rate above 10000", initialized, |a| {
+            Ix::UpdateGlobalConfig { config: a.config, authority: a.admin, signs: true, dep: None, wd: Some(u16::MAX), margin: None }
+        }),
+        // update_deposit_limit: each account check, and the boundaries
+        s(
+            "update_deposit_limit, a copy of the tree at another address",
+            |w, a| {
+                initialized(w, a);
+                copy_to(w, a.tree, a.stranger, program_id());
+            },
+            |a| Ix::UpdateDepositLimit { tree: a.stranger, authority: a.admin, signs: true, new_limit: 5 * SOL },
+        ),
+        s(
+            "update_deposit_limit, tree with a wrong stored bump",
+            |w, a| {
+                initialized(w, a);
+                set_bump(w, a.tree, 7);
+            },
+            |a| Ix::UpdateDepositLimit { tree: a.tree, authority: a.admin, signs: true, new_limit: 5 * SOL },
+        ),
+        s(
+            "update_deposit_limit, tree owned by another program",
+            |w, a| {
+                initialized(w, a);
+                copy_to(w, a.tree, a.tree, a.stranger);
+            },
+            |a| Ix::UpdateDepositLimit { tree: a.tree, authority: a.admin, signs: true, new_limit: 5 * SOL },
+        ),
+        s("update_deposit_limit to 0", initialized, |a| {
+            Ix::UpdateDepositLimit { tree: a.tree, authority: a.admin, signs: true, new_limit: 0 }
+        }),
+        s("update_deposit_limit to u64::MAX", initialized, |a| {
+            Ix::UpdateDepositLimit { tree: a.tree, authority: a.admin, signs: true, new_limit: u64::MAX }
+        }),
+        s("update_deposit_limit, the pool passed as the tree", initialized, |a| {
+            Ix::UpdateDepositLimit { tree: a.token, authority: a.admin, signs: true, new_limit: 5 * SOL }
+        }),
+        // initialize: partial state, funding paths, duplicates
+        s(
+            "initialize, the config already exists",
+            |w, a| {
+                initialized(w, a);
+                put(w, a.tree, SYSTEM_PROGRAM, &Data::Empty, 0);
+                put(w, a.token, SYSTEM_PROGRAM, &Data::Empty, 0);
+            },
+            |a| init_ix(a, a.admin),
+        ),
+        s(
+            "initialize, pool and config already hold lamports",
+            |w, a| {
+                w.fund(&a.admin, 10 * SOL);
+                w.fund(&a.token, 500_000);
+                w.fund(&a.config, 2_000_000);
+            },
+            |a| init_ix(a, a.admin),
+        ),
+        s(
+            "initialize, admin can pay the tree but not the rest",
+            |w, a| w.fund(&a.admin, w.svm.minimum_balance_for_rent_exemption(4136) + 1),
+            |a| init_ix(a, a.admin),
+        ),
+        s("initialize, tree passed as the pool", |w, a| w.fund(&a.admin, 10 * SOL), |a| {
+            Ix::Initialize(Init { token: a.tree, ..init(a, a.admin) })
+        }),
+        s("initialize, the admin passed as the system program", |w, a| w.fund(&a.admin, 10 * SOL), |a| {
+            Ix::Initialize(Init { system: a.admin, ..init(a, a.admin) })
+        }),
+        s(
+            "initialize, tree address holds data of another program",
+            |w, a| {
+                w.fund(&a.admin, 10 * SOL);
+                w.svm
+                    .set_account(a.tree, Account { lamports: 1_000_000, data: vec![1, 2, 3], owner: a.stranger, executable: false, rent_epoch: 0 })
+                    .unwrap();
+            },
+            |a| init_ix(a, a.admin),
+        ),
     ]
+}
+
+/// Deterministic xorshift, so the random scenarios are the same on every run.
+struct Xorshift(u64);
+
+impl Xorshift {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0
+    }
+    fn below(&mut self, n: u64) -> u64 {
+        self.next() % n
+    }
+    fn chance(&mut self, percent: u64) -> bool {
+        self.below(100) < percent
+    }
+}
+
+/// The choices a random scenario makes.
+#[derive(Clone, Copy, Debug)]
+struct RandomCase {
+    kind: u64,
+    initialized: bool,
+    authority_funds: u64,
+    prefund: [u64; 3],
+    tamper_tree_bump: Option<u8>,
+    tamper_config_bump: Option<u8>,
+    tree_owned_by_stranger: bool,
+    config_owned_by_stranger: bool,
+    copy_tree_to_other: bool,
+    copy_config_to_other: bool,
+    slots: [u64; 3],
+    authority: u64,
+    signs: bool,
+    system_ok: bool,
+    new_limit: u64,
+    rates: [Option<u16>; 3],
+}
+
+fn random_option_u16(r: &mut Xorshift) -> Option<u16> {
+    match r.below(7) {
+        0 | 1 => None,
+        2 => Some(0),
+        3 => Some(10000),
+        4 => Some(10001),
+        5 => Some(u16::MAX),
+        _ => Some(r.below(20000) as u16),
+    }
+}
+
+fn random_case(r: &mut Xorshift) -> RandomCase {
+    let rent_total = 29_677_440 + 1_176_240 + 1_224_960;
+    RandomCase {
+        kind: r.below(3),
+        initialized: r.chance(70),
+        authority_funds: match r.below(4) {
+            0 => r.below(rent_total),
+            _ => 10 * SOL,
+        },
+        prefund: [0; 3].map(|_| if r.chance(15) { r.below(40_000_000) + 1 } else { 0 }),
+        tamper_tree_bump: r.chance(10).then(|| r.below(256) as u8),
+        tamper_config_bump: r.chance(10).then(|| r.below(256) as u8),
+        tree_owned_by_stranger: r.chance(5),
+        config_owned_by_stranger: r.chance(5),
+        copy_tree_to_other: r.chance(10),
+        copy_config_to_other: r.chance(10),
+        // which address goes in each account slot: mostly the right one
+        slots: [0; 3].map(|_| if r.chance(75) { 0 } else { r.below(5) }),
+        authority: if r.chance(70) { 0 } else { r.below(3) },
+        signs: r.chance(85),
+        system_ok: r.chance(90),
+        new_limit: match r.below(5) {
+            0 => 0,
+            1 => u64::MAX,
+            _ => r.next(),
+        },
+        rates: [0; 3].map(|_| random_option_u16(r)),
+    }
+}
+
+impl RandomCase {
+    fn setup(&self, w: &mut World, a: &Addrs) {
+        let authority = self.authority_key(a);
+        if self.initialized {
+            initialized(w, a);
+            if let Some(b) = self.tamper_tree_bump {
+                set_bump(w, a.tree, b);
+            }
+            if let Some(b) = self.tamper_config_bump {
+                set_bump(w, a.config, b);
+            }
+            if self.copy_tree_to_other {
+                copy_to(w, a.tree, a.other_account, program_id());
+            }
+            if self.copy_config_to_other {
+                copy_to(w, a.config, a.other_account, program_id());
+            }
+            if self.tree_owned_by_stranger {
+                copy_to(w, a.tree, a.tree, a.stranger);
+            }
+            if self.config_owned_by_stranger {
+                copy_to(w, a.config, a.config, a.stranger);
+            }
+        } else {
+            for (key, lamports) in [a.tree, a.token, a.config].iter().zip(self.prefund) {
+                if lamports > 0 {
+                    w.fund(key, lamports);
+                }
+            }
+        }
+        // The authority's lamports (on top of what setup left it).
+        let (have, _) = w.svm.get_account(&authority).map(|x| (x.lamports, ())).unwrap_or((0, ()));
+        w.fund(&authority, have.max(self.authority_funds));
+    }
+
+    fn authority_key(&self, a: &Addrs) -> Pubkey {
+        [a.admin, a.other, a.stranger][self.authority as usize]
+    }
+
+    /// The address put in an account slot whose right address is `right`.
+    fn slot(&self, i: usize, right: Pubkey, a: &Addrs) -> Pubkey {
+        [right, a.tree, a.token, a.config, a.other_account][self.slots[i] as usize]
+    }
+
+    fn ix(&self, a: &Addrs) -> Ix {
+        let authority = self.authority_key(a);
+        match self.kind {
+            0 => Ix::Initialize(Init {
+                tree: self.slot(0, a.tree, a),
+                token: self.slot(1, a.token, a),
+                config: self.slot(2, a.config, a),
+                authority,
+                system: if self.system_ok { SYSTEM_PROGRAM } else { a.stranger },
+                signs: self.signs,
+            }),
+            1 => Ix::UpdateDepositLimit { tree: self.slot(0, a.tree, a), authority, signs: self.signs, new_limit: self.new_limit },
+            _ => Ix::UpdateGlobalConfig {
+                config: self.slot(2, a.config, a),
+                authority,
+                signs: self.signs,
+                dep: self.rates[0],
+                wd: self.rates[1],
+                margin: self.rates[2],
+            },
+        }
+    }
+}
+
+fn random_scenarios(n: usize) -> Vec<Scenario> {
+    let mut r = Xorshift(0x5eed_0f_c0_f0_12_3456);
+    (0..n)
+        .map(|i| {
+            let c = random_case(&mut r);
+            let name = format!("random {i}: {c:?}");
+            s(name, move |w, a| c.setup(w, a), move |a| c.ix(a))
+        })
+        .collect()
 }
 
 fn main() {
@@ -545,9 +880,18 @@ fn main() {
         token,
         config,
         stranger: Pubkey::new_from_array([0x0b; 32]),
+        other_account: Pubkey::new_from_array([0x0c; 32]),
     };
     let probe = World::new(&so);
     let native_loader = probe.svm.get_account(&SYSTEM_PROGRAM).unwrap().owner;
+    // The empty tree's subtrees and root: `initialize` writes zero_bytes[0..26]
+    // as the subtrees and zero_bytes[26] as the root.
+    let (zero_subtrees, zero_root) = {
+        let mut w = World::new(&so);
+        initialized(&mut w, &addrs);
+        let Data::Tree(t) = read(&w, &tree).1 else { panic!("no tree") };
+        (t.subtrees.clone(), t.root)
+    };
     let keys = Keys(vec![
         ("keyProgram".into(), program_id()),
         ("keyNativeLoader".into(), native_loader),
@@ -555,10 +899,11 @@ fn main() {
         ("keyAdmin".into(), addrs.admin),
         ("keyOther".into(), addrs.other),
         ("keyStranger".into(), addrs.stranger),
+        ("keyOtherAccount".into(), addrs.other_account),
         ("keyTree".into(), tree),
         ("keyTreeToken".into(), token),
         ("keyGlobalConfig".into(), config),
-    ]);
+    ], zero_subtrees.clone());
 
     println!("-- BEGIN GENERATED");
     for (n, k) in &keys.0 {
@@ -594,14 +939,10 @@ fn main() {
     println!();
     println!("/-- The program's `zero_bytes` (Poseidon empty-subtree roots), as written by `initialize`. -/");
     {
-        let mut w = World::new(&so);
-        initialized(&mut w, &addrs);
-        let acc = w.svm.get_account(&tree).unwrap();
-        let Data::Tree(t) = decode(&acc.owner, &acc.data) else { panic!("no tree") };
-        // `initialize` writes zero_bytes[0..26] as the subtrees and zero_bytes[26] as the root.
-        let mut zb = t.subtrees.clone();
-        zb.push(t.root);
+        let mut zb = zero_subtrees.clone();
+        zb.push(zero_root);
         println!("def zeroBytesPrefix : List String := {}", lean_hex_list(&zb));
+        println!("def zeroSubtrees : List String := zeroBytesPrefix.take 26");
     }
     println!();
     println!("def scenarios : List Scenario := [");
