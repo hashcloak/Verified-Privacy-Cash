@@ -1,0 +1,4 @@
+[submodule "privacy-cash"]
+	path = privacy-cash
+	url = https://github.com/hashcloak/privacy-cash.git
+	branch = formal-verification
