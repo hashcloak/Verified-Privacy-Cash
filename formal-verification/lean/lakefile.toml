@@ -34,7 +34,8 @@ globs = [
 # Kept outside the aeneas-regenerated subdirs so `extract.sh` never touches it.
 [[lean_lib]]
 name = "Spec"
-globs = ["Spec.privacy_cash_spec", "Spec.theorems"]
+globs = ["Spec.Spec", "Spec.Vocabulary", "Spec.Proofs", "Spec.NonVacuity", "Spec.Statements",
+  "Spec.Axioms", "Spec.privacy_cash_spec", "Spec.theorems"]
 
 # Hand-written proofs ABOUT the model. Imports code_model; never imported by it, and never
 # touched by extract.sh.
