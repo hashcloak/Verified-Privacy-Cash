@@ -7,3 +7,5 @@ target/
 # Left over by the retired fv_* extraction pipeline (setup-vendor.sh); keep out of git
 formal-verification/vendor/
 formal-verification/target-patched/
+
+Cargo.lock
