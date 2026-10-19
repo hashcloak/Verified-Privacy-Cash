@@ -212,7 +212,7 @@ it. A check no theorem uses protects something not stated yet, or is redundant.
 namespace LeanSpec.Goals
 open LeanSpec PoseidonHashes Sha
 
-variable [PoseidonHashes] [Sha]
+variable [PoseidonHashes] [Sha] [Groups]
 variable [AddCommGroup G1] [Module F G1] [AddCommGroup G2] [Module F G2] [CommGroup GT]
 variable [Pairing] [Deployment]
 
@@ -538,7 +538,7 @@ pairing: `Groth16Complete` is a hypothesis of each statement below, not proved. 
 namespace LeanSpec.Goals.NonVacuous
 open LeanSpec
 
-variable [AddCommGroup G1] [Module F G1] [AddCommGroup G2] [Module F G2] [CommGroup GT]
+variable [Groups] [AddCommGroup G1] [Module F G1] [AddCommGroup G2] [Module F G2] [CommGroup GT]
 variable [Pairing] [Deployment]
 
 attribute [local instance] NonVacuity.toyHashes NonVacuity.toySha

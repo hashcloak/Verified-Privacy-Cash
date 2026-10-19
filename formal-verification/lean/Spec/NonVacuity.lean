@@ -16,7 +16,7 @@ open LeanSpec
 
 set_option linter.unusedSectionVars false
 
-variable [AddCommGroup G1] [Module F G1] [AddCommGroup G2] [Module F G2] [CommGroup GT]
+variable [Groups] [AddCommGroup G1] [Module F G1] [AddCommGroup G2] [Module F G2] [CommGroup GT]
   [Pairing] [Deployment]
 
 /-- Toy hashes. `H2` is constant, so every Merkle path reaches the root `1`; `H3` is linear,

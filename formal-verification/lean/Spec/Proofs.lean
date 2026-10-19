@@ -8,7 +8,7 @@ them; reviewers don't need to read this file. -/
 namespace LeanSpec
 open PoseidonHashes Sha
 
-variable [PoseidonHashes] [Sha]
+variable [PoseidonHashes] [Sha] [Groups]
 variable [AddCommGroup G1] [Module F G1] [AddCommGroup G2] [Module F G2] [CommGroup GT]
 variable [Pairing] [Deployment]
 

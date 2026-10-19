@@ -7,7 +7,7 @@ Part of the review surface (see `Spec/Statements.lean`). Only definitions, no pr
 namespace LeanSpec
 open PoseidonHashes Sha
 
-variable [PoseidonHashes] [Sha]
+variable [PoseidonHashes] [Sha] [Groups]
 variable [AddCommGroup G1] [Module F G1] [AddCommGroup G2] [Module F G2] [CommGroup GT]
 variable [Pairing] [Deployment]
 

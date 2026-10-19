@@ -209,9 +209,16 @@ Let Lean assume there is an AddCommGroup G1 instance available
 
 (We don't have to provide the actual types, but can use the abstraction)
 -/
-opaque G1: Type
-opaque G2: Type
-opaque GT: Type
+/-- The three groups of the pairing. A class rather than fixed `opaque` types, so that a
+    deployment (and the code connection) can instantiate them with the real BN254 groups. -/
+class Groups where
+  G1 : Type
+  G2 : Type
+  GT : Type
+variable [Groups]
+abbrev G1 : Type := Groups.G1
+abbrev G2 : Type := Groups.G2
+abbrev GT : Type := Groups.GT
 variable
   [AddCommGroup G1] [Module F G1]
   [AddCommGroup G2] [Module F G2]
