@@ -1,0 +1,38 @@
+[package]
+name = "conformance"
+version = "0.1.0"
+edition = "2021"
+description = "Runs the compiled zkcash program in LiteSVM and prints the traces the Lean model is checked against"
+publish = false
+default-run = "conformance"
+
+# Standalone: not part of the program's Anchor workspace.
+[workspace]
+
+[dependencies]
+litesvm = "=0.6.1"
+# No dependency on the program's crates: the harness talks to the compiled
+# program like a client, encoding instructions and decoding accounts itself
+# (checked against the IDL and by re-encoding every decoded account).
+sha2 = "0.10"
+# For the crypto answers the model is given in transact scenarios: the
+# extracted core run on the host with the same primitives the program uses
+# (Poseidon from light-hasher, the alt_bn128 operations, arkworks negation).
+zkcash_core = { path = "../../privacy-cash/anchor/crates/zkcash_core" }
+light-hasher = "4.0.0"
+solana-bn254 = "=2.2.1"
+ark-bn254 = "0.5.0"
+ark-ff = "0.5.0"
+ark-serialize = "0.5.0"
+solana-keypair = "2.2"
+solana-signer = "2.2"
+solana-transaction = "2.2"
+solana-message = "2.2"
+solana-instruction = "2.2"
+solana-pubkey = "2.2"
+solana-account = "2.2"
+solana-transaction-error = "2.2"
+solana-rent = "2.2"
+base64 = "0.22"
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
