@@ -116,7 +116,7 @@ lemma transferEffects_state (inputs: TxInputs) (w: World) :
 
 -- LEMMA (used by G1c, G3a, G4a, G4b): the predicted world moves every account by exactly
 -- `balanceDelta`. The solvency preconditions rule out ℕ underflow; `poolIsSeparate` keeps
--- the pool's role apart from the others.
+-- the pool's role apart from the paid roles.
 lemma transactEffects_balances (inputs : TxInputs) (old : World)
     (hSolv : signerSolvent old.balances inputs.s inputs.extAmt old.nullifierRent)
     (hPool : poolSolvent old.poolBalance old.rentExemptMin inputs.extAmt inputs.f)
@@ -172,22 +172,30 @@ lemma transactEffects_balances (inputs : TxInputs) (old : World)
           rw [abs_of_neg hneg] at h1
           omega
         simp only [hz, if_false, hpos]
-        rw [hw0P, moveLamports_apply _ _ _ _ (Ne.symm hAP) hcan, habs]
+        have hAP' := hAP hneg
+        rw [hw0P, moveLamports_apply _ _ _ _ (Ne.symm hAP') hcan, habs]
         by_cases hxA : x = inputs.A <;> by_cases hxP : x = P <;>
-          simp [hxA, hxP, hAP, hneg] <;> (try ring)
+          simp [hxA, hxP, hAP', hneg] <;> (try ring)
   -- the fee step
   have hfee : inputs.f ≤ w1.balances P := by
     have h1 := htr P
-    rw [if_neg (fun h => hAP (h.1.symm)), if_neg (fun h => hsP (h.1.symm)), if_pos rfl, hw0Pv] at h1
+    rw [if_neg (fun h => hAP h.2 h.1.symm), if_neg (fun h => hsP (h.1.symm)), if_pos rfl, hw0Pv] at h1
     by_cases hneg : inputs.extAmt < 0
     · have := hPw hneg; rw [abs_of_neg hneg] at this; omega
     · rcases Nat.eq_zero_or_pos inputs.f with hf0 | hfpos
       · omega
       · have := hPd ⟨by omega, hfpos⟩; omega
   show (moveLamports w1.balances w1.state.pool inputs.t inputs.f k : ℤ) = _
-  rw [hw1P, moveLamports_apply _ _ _ _ (Ne.symm htP) hfee, htr k, hrent k]
-  unfold balanceDelta
-  split_ifs <;> ring
+  rcases Nat.eq_zero_or_pos inputs.f with hf0 | hfpos
+  · -- no fee: nothing moves, whoever the fee recipient is
+    have hm : moveLamports w1.balances w1.state.pool inputs.t inputs.f k = w1.balances k := by
+      simp only [moveLamports, hf0, Nat.sub_zero, Nat.add_zero, Function.update_eq_self]
+    rw [hm, htr k, hrent k]
+    unfold balanceDelta
+    split_ifs <;> simp_all <;> ring
+  · rw [hw1P, moveLamports_apply _ _ _ _ (Ne.symm (htP hfpos)) hfee, htr k, hrent k]
+    unfold balanceDelta
+    split_ifs <;> ring
 
 -- LEMMA (used by G4a, G1c): one `transact` step moves the pool's SOL by exactly `extAmt − f`.
 lemma sol_balance_correctness_step
@@ -204,9 +212,13 @@ lemma sol_balance_correctness_step
   rw [hpool, heff.balances, transactEffects_balances inputs oldWorld hpre.signerSolvency
     hpre.poolSolvency hpre.poolSeparate]
   unfold balanceDelta
-  rw [if_neg (fun h => hAP (h.1.symm)), if_neg (fun h => htP h.symm),
-    if_neg (fun h => hsP (h.1.symm)), if_neg (fun h => hsP h.symm), if_pos rfl]
-  ring
+  have hA : ¬ (oldWorld.state.pool = inputs.A ∧ inputs.extAmt < 0) := fun h => hAP h.2 h.1.symm
+  have hs1 : ¬ (oldWorld.state.pool = inputs.s ∧ inputs.extAmt > 0) := fun h => hsP h.1.symm
+  have hs2 : ¬ (oldWorld.state.pool = inputs.s) := fun h => hsP h.symm
+  rw [if_neg hA, if_neg hs1, if_neg hs2, if_pos rfl]
+  rcases Nat.eq_zero_or_pos inputs.f with hf0 | hfpos
+  · simp [hf0]
+  · rw [if_neg (fun h => htP hfpos h.symm)]; ring
 
 /-- HELPER (used by `Connection/Reachable.lean`): trace-free form of `Run.poolBalance`.
     Weaker: `∃ txs` alone could be any list with the right sum. -/
@@ -860,7 +872,7 @@ lemma value_delta_eq_ext_sub_fee
   have hFeq : witness.inAmt 0 + witness.inAmt 1 + (extAmt : F)
       = witness.outAmt 0 + witness.outAmt 1 + (f : F) := by
     have hAC' := hAC
-    rw [hPubAmt.2.2] at hAC'
+    rw [hPubAmt.2] at hAC'
     linear_combination hAC'
   -- Lift both sides to their `ℤ` counterparts via `.val`, then to `F` again to match `hFeq`.
   set L : ℤ := (witness.inAmt 0).val + (witness.inAmt 1).val + extAmt with hLdef
@@ -1526,7 +1538,7 @@ lemma serealizeExternalData_inj (T T' : TxInputs)
   obtain ⟨ht, hM⟩ := List.append_inj h (by simp [PubkeyToBytes, natToBytesLE_length])
   obtain ⟨r1, r2, r3⟩ := hT
   obtain ⟨r1', r2', r3'⟩ := hT'
-  exact ⟨PubkeyToBytes_inj _ _ hA, i64LE_inj _ _ ⟨r1, r2⟩ ⟨r1', r2'⟩ hE, hE0, hE1,
+  exact ⟨PubkeyToBytes_inj _ _ hA, i64LE_inj _ _ ⟨r1.le, r2⟩ ⟨r1'.le, r2'⟩ hE, hE0, hE1,
     u64LE_inj _ _ r3 r3' hF, PubkeyToBytes_inj _ _ ht, PubkeyToBytes_inj _ _ hM⟩
 
 -- PROOF of G2a. Statement and explanation: `Spec/Statements.lean`.
@@ -1776,10 +1788,8 @@ lemma spendable_core
     -- policy checks
     (hFee: feeSufficient r.final.state.config inputs.extAmt inputs.f)
     (hDeposit: depositWithinLimit r.final.state.config inputs.extAmt)
-    -- not a policy check: the spec is stricter than the code here (`hDevPool`); it rejects
-    -- e.g. the first fee-paying deposit into an empty pool
     (hDepositFee: inputs.extAmt ≥ 0 ∧ inputs.f > 0 →
-        r.final.poolBalance ≥ inputs.f + r.final.rentExemptMin)
+        (r.final.poolBalance : ℤ) + inputs.extAmt ≥ inputs.f + r.final.rentExemptMin)
     (hSignerSolvent: signerSolvent r.final.balances inputs.s inputs.extAmt r.final.nullifierRent)
     (hRoom: treeHasRoom r.final.state.tree) :
     (∃ π, transact { inputs with π := π } r.final (transactEffects { inputs with π := π } r.final))

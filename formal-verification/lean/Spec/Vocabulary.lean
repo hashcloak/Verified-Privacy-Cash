@@ -257,9 +257,10 @@ structure PolicyChecksPass (w : World) (inputs : TxInputs) : Prop where
   fee : feeSufficient w.state.config inputs.extAmt inputs.f
   /-- [policy] -/
   depositLimit : depositWithinLimit w.state.config inputs.extAmt
-  /-- [policy] Stricter than the code (`hDevPool`): the spec checks the pool before the
-      deposit lands, so it rejects e.g. the first fee-paying deposit into an empty pool. -/
-  depositFee : inputs.extAmt ≥ 0 ∧ inputs.f > 0 → w.poolBalance ≥ inputs.f + w.rentExemptMin
+  /-- [policy] On a deposit with a fee, the pool (with the deposit) covers the fee and keeps
+      its rent reserve. -/
+  depositFee : inputs.extAmt ≥ 0 ∧ inputs.f > 0 →
+    (w.poolBalance : ℤ) + inputs.extAmt ≥ inputs.f + w.rentExemptMin
   /-- [limit] The tree is not full (G3c). -/
   treeRoom : treeHasRoom w.state.tree
 

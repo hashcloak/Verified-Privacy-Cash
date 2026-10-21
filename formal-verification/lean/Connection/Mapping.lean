@@ -177,6 +177,9 @@ instance (extAmt : ℤ) (f : ℕ) (pubAmt : LeanSpec.F) :
     Decidable (LeanSpec.pubAmtConsistent extAmt f pubAmt) := by
   unfold LeanSpec.pubAmtConsistent; infer_instance
 
+instance (extAmt : ℤ) (f : ℕ) : Decidable (LeanSpec.amountsInRange extAmt f) := by
+  unfold LeanSpec.amountsInRange; infer_instance
+
 instance (inputs : LeanSpec.TxInputs) : Decidable (LeanSpec.encOutsFit inputs) := by
   unfold LeanSpec.encOutsFit; infer_instance
 

@@ -13,7 +13,7 @@ path = "../core-model"
 [[lean_lib]]
 name = "Spec"
 globs = ["Spec.Spec", "Spec.Vocabulary", "Spec.Proofs", "Spec.NonVacuity", "Spec.Statements",
-  "Spec.Axioms", "Spec.privacy_cash_spec", "Spec.theorems"]
+  "Spec.Axioms"]
 
 # Connection theorems: the code model (core-model) satisfies the spec.
 [[lean_lib]]

@@ -81,8 +81,9 @@ theorem transact_refines_verified [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
     (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
     (hashes : HashesAgree d.crypto)
     (wf : WellFormed d spent s)
-    (trusted : Trusted d rent tx proof out1 out2)
-    (findings : Findings d rent s a proof extAmount fee) :
+    (solana : SolanaFacts rent out1 out2)
+    (crypto : CryptoFacts d proof)
+    (outside : OutsideSpecDetail d rent s tx a proof) :
     letI : LeanSpec.Groups := syscallGroups G1 G2 GT
     letI : LeanSpec.Pairing := syscallPairing C laws
     letI : LeanSpec.Deployment := ⟨programKey C⟩
@@ -93,7 +94,7 @@ theorem transact_refines_verified [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
   letI : LeanSpec.Groups := syscallGroups G1 G2 GT
   letI : LeanSpec.Pairing := syscallPairing C laws
   letI : LeanSpec.Deployment := ⟨programKey C⟩
-  exact transact_refines (proofPoints C proof) hstep hashes wf trusted findings
+  exact transact_refines (proofPoints C proof) hstep hashes wf solana crypto outside
     (fun hv => verifier_bridge d.crypto C laws proof hv a extAmount fee out1 out2)
 
 end

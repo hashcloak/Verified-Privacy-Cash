@@ -1,4 +1,4 @@
-import Connection.Assumptions
+import Connection.Hypotheses
 import Connection.Proofs.Handler
 import Connection.Proofs.ExtData
 open Aeneas Aeneas.Std Result PrivacyCash.Model
@@ -95,6 +95,84 @@ theorem publicBalance_of {s : State} {k : Pubkey} (h : ∀ b, (s k).data ≠ .nu
   · rename_i b hb; exact absurd hb (h b)
   · rfl
 
+/-! ## Lamport conservation: the runtime's check over the instruction's accounts -/
+
+/-- The total of `b` over the distinct addresses of `keys`. -/
+def TL (keys : List Pubkey) (b : Pubkey → ℕ) : ℤ := ∑ k ∈ keys.toFinset, (b k : ℤ)
+
+theorem totalLamports_eq (s : State) (keys : List Pubkey) :
+    (s.totalLamports keys : ℤ) = TL keys (fun k => (s k).lamports.val) := by
+  unfold State.totalLamports TL
+  have hfs : keys.dedup.toFinset = keys.toFinset := by
+    ext x; simp [List.mem_dedup]
+  rw [← hfs, List.sum_toFinset _ (List.nodup_dedup keys)]
+  push_cast; rw [List.map_map]; rfl
+
+theorem TL_update {keys : List Pubkey} {k : Pubkey} (hk : k ∈ keys) (b : Pubkey → ℕ) (v : ℕ) :
+    TL keys (Function.update b k v) = TL keys b - b k + v := by
+  unfold TL
+  have hmem : k ∈ keys.toFinset := List.mem_toFinset.mpr hk
+  rw [← Finset.add_sum_erase _ _ hmem, ← Finset.add_sum_erase _ (fun x => (b x : ℤ)) hmem]
+  have : ∑ x ∈ keys.toFinset.erase k, ((Function.update b k v x : ℕ) : ℤ)
+      = ∑ x ∈ keys.toFinset.erase k, (b x : ℤ) := by
+    apply Finset.sum_congr rfl
+    intro x hx
+    rw [Function.update_of_ne (Finset.ne_of_mem_erase hx)]
+  rw [this, Function.update_self]; ring
+
+/-- A real move (`moveN`, the system program's transfer) conserves lamports. -/
+theorem TL_moveN {keys : List Pubkey} {u v : Pubkey} (hu : u ∈ keys) (hv : v ∈ keys)
+    (b : Pubkey → ℕ) {x : ℕ} (hx : x ≤ b u) : TL keys (moveN b u v x) = TL keys b := by
+  simp only [moveN]
+  rw [TL_update hv, TL_update hu]
+  by_cases h : v = u
+  · subst h; simp; omega
+  · rw [Function.update_of_ne h]; push_cast; omega
+
+/-- The code's payment (`payN`) conserves lamports, except that paying an account from itself
+    creates `x` lamports. -/
+theorem TL_payN {keys : List Pubkey} {p t : Pubkey} (hp : p ∈ keys) (ht : t ∈ keys)
+    (b : Pubkey → ℕ) {x : ℕ} (hx : x ≤ b p) :
+    TL keys (payN b p t x) = TL keys b + (if t = p then (x : ℤ) else 0) := by
+  simp only [payN]
+  rw [TL_update ht, TL_update hp]
+  by_cases h : t = p
+  · subst h; simp; omega
+  · rw [Function.update_of_ne h, if_neg h]; push_cast; omega
+
+/-- Without a balance check, a move can only add lamports (natural subtraction truncates). -/
+theorem TL_moveN_ge {keys : List Pubkey} {u v : Pubkey} (hu : u ∈ keys) (hv : v ∈ keys)
+    (b : Pubkey → ℕ) (x : ℕ) : TL keys b ≤ TL keys (moveN b u v x) := by
+  simp only [moveN]
+  rw [TL_update hv, TL_update hu]
+  by_cases h : v = u
+  · subst h; simp; omega
+  · rw [Function.update_of_ne h]; omega
+
+/-- A payment adds at least `x` lamports when it pays an account from itself. -/
+theorem TL_payN_ge {keys : List Pubkey} {p t : Pubkey} (hp : p ∈ keys) (ht : t ∈ keys)
+    (b : Pubkey → ℕ) (x : ℕ) :
+    TL keys b + (if t = p then (x : ℤ) else 0) ≤ TL keys (payN b p t x) := by
+  simp only [payN]
+  rw [TL_update ht, TL_update hp]
+  by_cases h : t = p
+  · subst h; simp <;> omega
+  · rw [Function.update_of_ne h, if_neg h]; omega
+
+theorem payN_eq_moveN (b : Pubkey → ℕ) (p t : Pubkey) (x : ℕ) (h : t ≠ p ∨ x = 0) :
+    payN b p t x = moveN b p t x := by
+  rcases h with h | h
+  · rw [moveN_eq_updates _ _ _ h]; rfl
+  · subst h; rw [payN_zero, moveN_zero]
+
+theorem checkBalanced_spec {s s₂ s' : State} {keys : List Pubkey}
+    (h : checkBalanced s s₂ keys = .ok s') :
+    s' = s₂ ∧ s₂.totalLamports keys = s.totalLamports keys := by
+  unfold checkBalanced at h
+  split at h
+  · rename_i heq; exact ⟨(Except.ok.inj h).symm, heq⟩
+  · cases h
+
 theorem ofResult_ok {α : Type} {r : Result α} {x : α} (h : ofResult r = .ok x) : r = ok x := by
   unfold ofResult at h
   cases r with
@@ -128,6 +206,11 @@ theorem initAccount_empty {pid : Pubkey} {s s' : State} {mb : Nat → U64} {paye
   · subst hk; simp [State.set, State.withBalances]; exact this
   · simp [State.set, hk, State.withBalances]; exact this
 
+/-- The accounts of a `transact` instruction, over which the runtime checks conservation. -/
+def txKeys (a : TransactAccounts) : List Pubkey :=
+  [a.treeAccount, a.nullifier0, a.nullifier1, a.nullifier2, a.nullifier3, a.treeTokenAccount,
+   a.globalConfig, a.recipient, a.feeRecipientAccount, a.signer, a.systemProgram]
+
 /-- What a successful `execTransact` consists of. -/
 theorem execTransact_ok {d : Deployment} {s s' : State} {tx : TxEnv} {a : TransactAccounts}
     {proof : zkcash_core.transact.Proof} {ext : I64} {fee : U64} {out1 out2 : Slice U8}
@@ -147,7 +230,8 @@ theorem execTransact_ok {d : Deployment} {s s' : State} {tx : TxEnv} {a : Transa
           rentExemptMinimum := some (mb treeTokenAccountSpace) }
         tree config proof ext fee a.recipient a.feeRecipientAccount out1 out2 = ok (.Ok ap, env', tree') ∧
       s' = (s₁.withBalances env'.balances).set a.treeAccount
-        { (s₁.withBalances env'.balances) a.treeAccount with data := .treeAccount tree' } := by
+        { (s₁.withBalances env'.balances) a.treeAccount with data := .treeAccount tree' } ∧
+      s'.totalLamports (txKeys a) = s.totalLamports (txKeys a) := by
   unfold execTransact at h
   split at h
   swap; · simp at h
@@ -168,8 +252,9 @@ theorem execTransact_ok {d : Deployment} {s s' : State} {tx : TxEnv} {a : Transa
   | Ok ap =>
   obtain ⟨s₄, hbal, h⟩ := PrivacyCash.Model.Except.bind_ok h
   cases h
-  refine ⟨tree, tt, config, mb, s₁, env', tree', ap, not_not.mp hvalid, hmb, hs₁, ofResult_ok hres, ?_⟩
-  rw [PrivacyCash.Model.checkBalanced_ok hbal]
+  obtain ⟨e1, e2⟩ := checkBalanced_spec hbal
+  refine ⟨tree, tt, config, mb, s₁, env', tree', ap, not_not.mp hvalid, hmb, hs₁, ofResult_ok hres, e1, ?_⟩
+  rw [e1]; exact e2
 
 variable [LeanSpec.PoseidonHashes] [LeanSpec.Sha] [LeanSpec.Groups]
   [AddCommGroup LeanSpec.G1] [Module LeanSpec.F LeanSpec.G1] [AddCommGroup LeanSpec.G2]
@@ -182,8 +267,9 @@ theorem transact_refines
     (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
     (hashes : HashesAgree d.crypto)
     (wf : WellFormed d spent s)
-    (trusted : Trusted d rent tx proof out1 out2)
-    (findings : Findings d rent s a proof extAmount fee)
+    (solana : SolanaFacts rent out1 out2)
+    (crypto : CryptoFacts d proof)
+    (outside : OutsideSpecDetail d rent s tx a proof)
     (hProofValid : d.crypto.proofVerifier.verify proof = ok true →
       LeanSpec.proofValid (toInputs a proof extAmount fee out1 out2 π)) :
     let inputs := toInputs a proof extAmount fee out1 out2 π
@@ -192,8 +278,8 @@ theorem transact_refines
       WellFormed d spent' s' := by
   intro inputs spent'
   have hx : execTransact d s tx a proof extAmount fee out1 out2 = .ok (s', events) := hstep
-  obtain ⟨tree, tt, config, mb, s₁, env', tree', ap, hvalid, hmb, hs₁, hhandler, hs'⟩ := execTransact_ok hx
-  have hmbr : rent = mb := by rw [trusted.rentFixed] at hmb; exact Option.some.inj hmb
+  obtain ⟨tree, tt, config, mb, s₁, env', tree', ap, hvalid, hmb, hs₁, hhandler, hs', hcons⟩ := execTransact_ok hx
+  have hmbr : rent = mb := by rw [outside.rentFixed] at hmb; exact Option.some.inj hmb
   subst hmbr
   -- the program's accounts are the canonical ones
   obtain ⟨htreeAddr, hshape⟩ := wf.tree _ _ hvalid.treeAccount.1
@@ -205,10 +291,10 @@ theorem transact_refines
   have hnf0 : a.nullifier0 = d.pda (nullifier0Seeds n0) := hvalid.nullifier0.1
   have hnf1 : a.nullifier1 = d.pda (nullifier1Seeds n1) := hvalid.nullifier1.1
   have hnf01 : a.nullifier0 ≠ a.nullifier1 := by
-    rw [hnf0, hnf1]; exact nullifier0_ne_nullifier1 trusted.nullifierAddressesDiffer
-  have hz0 : (s a.nullifier0).lamports.val = 0 := by rw [hnf0]; exact findings.f2_nullifierAddressesEmpty.1
-  have hz1 : (s a.nullifier1).lamports.val = 0 := by rw [hnf1]; exact findings.f2_nullifierAddressesEmpty.2
-  have hnr := trusted.nullifierRentPositive
+    rw [hnf0, hnf1]; exact nullifier0_ne_nullifier1 crypto.nullifierAddressesDiffer
+  have hz0 : (s a.nullifier0).lamports.val = 0 := by rw [hnf0]; exact outside.nullifierAddressesEmpty.1
+  have hz1 : (s a.nullifier1).lamports.val = 0 := by rw [hnf1]; exact outside.nullifierAddressesEmpty.2
+  have hnr := solana.nullifierRentPositive
   set nr := (rent nullifierAccountSpace).val with hnrdef
   -- the two `init`s
   obtain ⟨sA, hA1, hA2⟩ := Option.bind_eq_some_iff.mp hs₁
@@ -236,10 +322,8 @@ theorem transact_refines
   have hnf1₁ : (s₁ a.nullifier1).owner = d.programId ∧ (s₁ a.nullifier1).data = .nullifier 0#u8 :=
     ⟨hown1, hdata1⟩
   -- the handler
-  have hArec : a.recipient ≠ a.treeTokenAccount := by rw [hpoolAddr]; exact findings.f3_payeesNotPool.1
-  have hTfee : a.feeRecipientAccount ≠ a.treeTokenAccount := by rw [hpoolAddr]; exact findings.f3_payeesNotPool.2
   have hok := handler_ok d.crypto _ tree config proof extAmount fee a.recipient a.feeRecipientAccount out1 out2
-    ap env' tree' hArec hTfee hhandler
+    ap env' tree' hhandler
   -- the verifier: canonical public inputs
   have hcan := verifyProof_canonical _ proof _ hok.verify
   have hcanR : Canonical proof.root := by simpa [publicInputs] using hcan 0 (by decide)
@@ -269,10 +353,75 @@ theorem transact_refines
   obtain ⟨v, hv, hdep, hwd⟩ := hok.rent
   have hvr : v = rent treeTokenAccountSpace := (Option.some.inj hv).symm
   subst hvr
-  have hpub : LeanSpec.pubAmtConsistent extAmount.val fee.val (toF proof.public_amount) := by
+  have hpub0 : LeanSpec.pubAmtConsistent extAmount.val fee.val (toF proof.public_amount) ∧
+      LeanSpec.amountsInRange extAmount.val fee.val ∧ extAmount.val ≠ 0 := by
     have := (checkPublicAmount_eq extAmount fee proof.public_amount).symm.trans hok.pubAmt
     simpa using this
-  have hext0 : extAmount.val ≠ 0 := fun h0 => by have := hpub.2.1 (by omega); omega
+  have hpub := hpub0.1
+  have hext0 : extAmount.val ≠ 0 := hpub0.2.2
+  -- the new state, account by account
+  have hs'k : ∀ k, (s' k).lamports = env'.balances k ∧ (s' k).owner = (s₁ k).owner ∧
+      (s' k).data = (if k = a.treeAccount then .treeAccount tree' else (s₁ k).data) := by
+    intro k; rw [hs']
+    by_cases hk : k = a.treeAccount
+    · subst hk; simp [State.set, State.withBalances]
+    · simp [State.set, hk, State.withBalances]
+  -- lamport conservation (the runtime's check) rules out paying the pool from itself
+  have mS : a.signer ∈ txKeys a := by simp [txKeys]
+  have m0 : a.nullifier0 ∈ txKeys a := by simp [txKeys]
+  have m1 : a.nullifier1 ∈ txKeys a := by simp [txKeys]
+  have mP : a.treeTokenAccount ∈ txKeys a := by simp [txKeys]
+  have mA : a.recipient ∈ txKeys a := by simp [txKeys]
+  have mT : a.feeRecipientAccount ∈ txKeys a := by simp [txKeys]
+  have hTLend : TL (txKeys a) (fun k => (env'.balances k).val)
+      = TL (txKeys a) (fun k => (s k).lamports.val) := by
+    have e1 : (fun k => (env'.balances k).val) = fun k => (s' k).lamports.val := by
+      funext k; rw [(hs'k k).1]
+    rw [e1, ← totalLamports_eq, ← totalLamports_eq, hcons]
+  have hTL₁ : TL (txKeys a) (fun k => (s k).lamports.val) ≤ TL (txKeys a) (fun k => (s₁ k).lamports.val) := by
+    rw [hW₁]; exact le_trans (TL_moveN_ge mS m0 _ _) (TL_moveN_ge mS m1 _ _)
+  have hnoself : (extAmount.val < 0 → a.recipient ≠ a.treeTokenAccount) ∧
+      (fee.val > 0 → a.feeRecipientAccount ≠ a.treeTokenAccount) := by
+    have hfin : TL (txKeys a) (fun k => (s₁ k).lamports.val)
+        + (if extAmount.val < 0 ∧ a.recipient = a.treeTokenAccount then (extAmount.val.natAbs : ℤ) else 0)
+        + (if a.feeRecipientAccount = a.treeTokenAccount then (fee.val : ℤ) else 0)
+        ≤ TL (txKeys a) (fun k => (env'.balances k).val) := by
+      by_cases hp : extAmount.val > 0
+      · have he : (fun k => (env'.balances k).val) = payN (moveN (fun k => (s₁ k).lamports.val)
+            a.signer a.treeTokenAccount extAmount.val.natAbs) a.treeTokenAccount a.feeRecipientAccount
+            fee.val := (hdep hp).2.2.2.2
+        rw [he, if_neg (fun h => by omega)]
+        have h1 := TL_moveN_ge mS mP (fun k => (s₁ k).lamports.val) extAmount.val.natAbs
+        have h2 := TL_payN_ge mP mT (moveN (fun k => (s₁ k).lamports.val) a.signer a.treeTokenAccount
+          extAmount.val.natAbs) fee.val
+        omega
+      · have hn : extAmount.val < 0 := by omega
+        have he : (fun k => (env'.balances k).val) = payN (payN (fun k => (s₁ k).lamports.val)
+            a.treeTokenAccount a.recipient extAmount.val.natAbs) a.treeTokenAccount a.feeRecipientAccount
+            fee.val := (hwd hn).2
+        rw [he]
+        have h1 := TL_payN_ge mP mA (fun k => (s₁ k).lamports.val) extAmount.val.natAbs
+        have h2 := TL_payN_ge mP mT (payN (fun k => (s₁ k).lamports.val) a.treeTokenAccount a.recipient
+          extAmount.val.natAbs) fee.val
+        by_cases hA : a.recipient = a.treeTokenAccount
+        · rw [if_pos ⟨hn, hA⟩]; rw [if_pos hA] at h1; omega
+        · rw [if_neg (fun h => hA h.2)]; rw [if_neg hA] at h1; omega
+    rw [hTLend] at hfin
+    have hA0 : (0 : ℤ) ≤ (if extAmount.val < 0 ∧ a.recipient = a.treeTokenAccount
+        then (extAmount.val.natAbs : ℤ) else 0) := by split <;> omega
+    have hT0 : (0 : ℤ) ≤ (if a.feeRecipientAccount = a.treeTokenAccount then (fee.val : ℤ) else 0) := by
+      split <;> omega
+    refine ⟨fun hn hA => ?_, fun hf hT => ?_⟩
+    · rw [if_pos ⟨hn, hA⟩] at hfin hA0
+      have : (0 : ℤ) < (extAmount.val.natAbs : ℤ) := by exact_mod_cast Int.natAbs_pos.mpr (by omega)
+      omega
+    · rw [if_pos hT] at hfin hT0
+      have : (0 : ℤ) < (fee.val : ℤ) := by exact_mod_cast hf
+      omega
+  have hfeeOk : a.feeRecipientAccount ≠ a.treeTokenAccount ∨ fee.val = 0 := by
+    by_cases hf : fee.val > 0
+    · exact Or.inl (hnoself.2 hf)
+    · exact Or.inr (by omega)
   -- the two appends
   obtain ⟨p1, p2, t1, hap1, hap2⟩ := hok.appends
   obtain ⟨hT1, hsh1, hroom1, hidx1, -, hmax1, -⟩ := append_ok' d.crypto hashes _ tree t1 p1 hshape hap1
@@ -281,7 +430,7 @@ theorem transact_refines
   obtain ⟨hsh, hcalc, hEq⟩ := hok.extHash
   have hcalc' := (extDataHash_eq d.crypto.sha256 a.recipient a.feeRecipientAccount
     zkcash_core.transact.SOL_ADDRESS extAmount out1 out2 fee inputs rfl rfl rfl rfl rfl rfl rfl
-    trusted.fitsInVector).symm.trans hcalc
+    solana.fitsInVector).symm.trans hcalc
   have hfits : LeanSpec.encOutsFit inputs := by
     by_contra hn; rw [if_neg hn] at hcalc'; have := Result.ok_injective hcalc'; simp at this
   rw [if_pos hfits] at hcalc'
@@ -294,7 +443,7 @@ theorem transact_refines
       rw [serLength]
       have : inputs.encOut0.length + inputs.encOut1.length = out1.length + out2.length := by
         simp [inputs, toInputs, toBytes, Slice.length]
-      have := trusted.fitsInVector; omega
+      have := solana.fitsInVector; omega
     rw [toBytes_toSlice _ hlen] at hb
     simp only [LeanSpec.externalDataHash, ← hb, natOfLE_toBytes]
     exact hEq
@@ -338,7 +487,7 @@ theorem transact_refines
       · rw [← hnf1]; exact sysNot _ hnf1Init.1
     case distinct =>
       show toF n0 ≠ toF n1
-      exact fun h => trusted.distinctNullifiers (toF_injOn hcan0 hcan1 h)
+      exact fun h => crypto.distinctNullifiers (toF_injOn hcan0 hcan1 h)
     case depositLimit =>
       show extAmount.val > 0 → extAmount.val ≤ ((toConfig (configAt s (configAddr d)) (treeAt s (treeAddr d))).maxDepositLimit : ℤ)
       rw [hcfgAt, htreeAt]; intro hp
@@ -355,8 +504,17 @@ theorem transact_refines
         omega
       · have hp' : extAmount.val ≥ 0 := hp
         have hpos : extAmount.val > 0 := by omega
-        have := findings.f1_poolCoversFeeBeforeDeposit hpos (by exact_mod_cast hf)
-        rw [hpoolAddr]; exact_mod_cast this
+        have hfv : fee.val > 0 := by exact_mod_cast hf
+        -- the code checks the pool after the deposit has arrived
+        have hm : moveN (fun k => (s₁ k).lamports.val) a.signer a.treeTokenAccount extAmount.val.natAbs
+            a.treeTokenAccount ≥ fee.val + (rent treeTokenAccountSpace).val := (hdep hpos).2.2.2.1 hfv
+        have e : moveN (fun k => (s₁ k).lamports.val) a.signer a.treeTokenAccount extAmount.val.natAbs
+            a.treeTokenAccount = (s₁ a.treeTokenAccount).lamports.val + extAmount.val.natAbs := by
+          simp only [moveN, Function.update_self, Function.update_of_ne (Ne.symm hsigNotPool)]
+        rw [e, hW₁pool] at hm
+        have hab : ((extAmount.val.natAbs : ℕ) : ℤ) = extAmount.val := Int.natAbs_of_nonneg (le_of_lt hpos)
+        show ((s a.treeTokenAccount).lamports.val : ℤ) + extAmount.val ≥ (fee.val : ℤ) + ((rent treeTokenAccountSpace).val : ℤ)
+        omega
     case signerSolvency =>
       show (toWorld d rent spent s).balances inputs.s ≥ 2 * nr + _
       rw [hbalSig]
@@ -375,18 +533,11 @@ theorem transact_refines
       show (toTree (treeAt s (treeAddr d))).nextIndex ≤ 2 ^ 26 - 2
       rw [htreeAt]; simp only [toTree]; omega
     case range =>
-      exact ⟨hbounds.1, hbounds.2, hfeeb⟩
+      exact hpub0.2.1
     case separate =>
-      refine ⟨fun e => hsigNotPool (by rw [hpoolAddr]; exact toPubkey_inj e), fun e => ?_, fun e => ?_⟩
-      · exact findings.f3_payeesNotPool.1 (toPubkey_inj e)
-      · exact findings.f3_payeesNotPool.2 (toPubkey_inj e)
-  -- the new state, account by account
-  have hs'k : ∀ k, (s' k).lamports = env'.balances k ∧ (s' k).owner = (s₁ k).owner ∧
-      (s' k).data = (if k = a.treeAccount then .treeAccount tree' else (s₁ k).data) := by
-    intro k; rw [hs']
-    by_cases hk : k = a.treeAccount
-    · subst hk; simp [State.set, State.withBalances]
-    · simp [State.set, hk, State.withBalances]
+      exact ⟨fun e => hsigNotPool (by rw [hpoolAddr]; exact toPubkey_inj e),
+        fun hn e => hnoself.1 hn (by rw [hpoolAddr]; exact toPubkey_inj e),
+        fun hf e => hnoself.2 hf (by rw [hpoolAddr]; exact toPubkey_inj e)⟩
   have htree_nf0 : a.treeAccount ≠ a.nullifier0 := fun e => wf.programNotSystem (by
     rw [← hvalid.treeAccount.1.1, e]; exact hnf0Init.1)
   have htree_nf1 : a.treeAccount ≠ a.nullifier1 := fun e => wf.programNotSystem (by
@@ -413,14 +564,21 @@ theorem transact_refines
   have hcode : (fun k => (env'.balances k).val)
       = moveN (Teff (fun k => (s₁ k).lamports.val)) a.treeTokenAccount a.feeRecipientAccount fee.val := by
     by_cases hp : extAmount.val > 0
-    · rw [(hdep hp).2.2.2.2]; simp only [hTdef, if_pos hp]; rfl
+    · have he : (fun k => (env'.balances k).val) = payN (moveN (fun k => (s₁ k).lamports.val)
+          a.signer a.treeTokenAccount extAmount.val.natAbs) a.treeTokenAccount a.feeRecipientAccount
+          fee.val := (hdep hp).2.2.2.2
+      rw [he, payN_eq_moveN _ _ _ _ hfeeOk]; simp only [hTdef, if_pos hp]
     · have hn : extAmount.val < 0 := by omega
-      rw [(hwd hn).2]; simp only [hTdef, if_neg hp]; rfl
+      have he : (fun k => (env'.balances k).val) = payN (payN (fun k => (s₁ k).lamports.val)
+          a.treeTokenAccount a.recipient extAmount.val.natAbs) a.treeTokenAccount a.feeRecipientAccount
+          fee.val := (hwd hn).2
+      rw [he, payN_eq_moveN _ _ _ _ hfeeOk, payN_eq_moveN _ _ _ _ (Or.inl (hnoself.1 hn))]
+      simp only [hTdef, if_neg hp]
   have hsigData : ∀ b, (s a.signer).data ≠ .nullifier b := fun b h => by
     have := hsd; rw [h] at this; simp [AccountData.isEmpty] at this
   have hpoolDataN : ∀ b, (s a.treeTokenAccount).data ≠ .nullifier b := by
     rw [hpoolData]; intro b h; cases h
-  obtain ⟨hrecN, hfeeN, hrec0', hrec1', hfee0', hfee1'⟩ := findings.f4_payeesNotNullifierAccounts
+  obtain ⟨hrecN, hfeeN, hrec0', hrec1', hfee0', hfee1'⟩ := outside.payeesNotNullifierAccounts
   have hrec0 : a.recipient ≠ a.nullifier0 := by rw [hnf0]; exact hrec0'
   have hrec1 : a.recipient ≠ a.nullifier1 := by rw [hnf1]; exact hrec1'
   have hfee0 : a.feeRecipientAccount ≠ a.nullifier0 := by rw [hnf0]; exact hfee0'

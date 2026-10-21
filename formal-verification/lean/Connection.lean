@@ -1,3 +1,3 @@
 import Connection.Mapping
-import Connection.Assumptions
+import Connection.Hypotheses
 import Connection.Statements

@@ -1,30 +1,36 @@
 import Connection.Mapping
 open Aeneas Aeneas.Std Result PrivacyCash.Model
 
-/-! # What the connection theorem assumes
+/-! # The hypotheses of the connection theorem for `transact`
 
-REVIEW SURFACE. Besides "the code model accepted the transaction", the connection theorem
-for `transact` (`Connection/Statements.lean`) takes four groups of hypotheses. They are of
-different kinds:
+REVIEW SURFACE. Besides "the code model accepted the transaction", the connection theorems
+(`Connection/Statements.lean`) take these hypotheses. They are of different kinds, and should
+be read differently:
 
-1. `HashesAgree` (TRUSTED, about the deployment): the code's Poseidon, zero hashes and SHA-256
-   compute the spec's `H2`, `Z` and `sha256`.
-2. `WellFormed` (NOT TRUSTED): facts about the program's own accounts that hold right after
-   `initialize` and that every instruction keeps. The theorem gives them back for the state
-   after the transaction. That `initialize` and the admin instructions establish and keep
-   them is still to be proved (TODO.md).
-3. `Trusted` (TRUSTED, per transaction): facts about Solana or the circuit that the code model
-   cannot see.
-4. `Findings` (NOT ASSUMPTIONS ABOUT THE WORLD): each field rules out one known difference
-   between the code and the spec, listed in CONNECTIONS.md. The theorem says nothing about
-   transactions in these cases; whether each difference is acceptable is a human decision.
+1. `HashesAgree` (ASSUMED, about the deployment's hash functions): the code's Poseidon, zero
+   hashes and SHA-256 compute the spec's `H2`, `Z` and `sha256`.
+2. `WellFormed` (INVARIANT, PROVED): facts about the program's own accounts. Proved for every
+   state an execution reaches from genesis (`wellFormed_reachable`), so the main result
+   (`transact_connection_main`) does not take it as a hypothesis; the per-step theorems do.
+3. `SolanaFacts` (ASSUMED, about the Solana runtime): the rent is positive, and the
+   transaction's data fits in memory.
+4. `CryptoFacts` (ASSUMED, about the circuit and SHA-256, for this transaction): the circuit
+   makes the two nullifiers differ; SHA-256 makes the two new nullifier accounts' addresses
+   differ.
+5. `PairingLaws` (ASSUMED, about the `alt_bn128` pairing), with core-model's syscall contracts
+   `AltBn128Contracts`: needed by the verifier bridge.
+6. `OutsideSpecDetail` (BY DESIGN): Solana details the spec deliberately does not model, as it
+   is written at the level of the documentation. Each field rules one out; the theorem does not
+   cover transactions where such a detail matters. Not a defect of the code or the spec.
+
+No code/spec difference is currently excluded: the main theorem has no `Findings` hypothesis.
 -/
 
 namespace Connection
 
 variable [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
 
-/-- **Trusted**: the code's hash functions compute the spec's. Each is stated as "if the code's
+/-- **Assumed**: the code's hash functions compute the spec's. Each is stated as "if the code's
     hash returns `h`, then `h` is the spec's hash", so nothing is claimed about inputs it rejects. -/
 structure HashesAgree (c : Crypto) : Prop where
   /-- Poseidon of two tree nodes is the spec's `H2`. -/
@@ -34,8 +40,9 @@ structure HashesAgree (c : Crypto) : Prop where
   /-- SHA-256 is the spec's `sha256` (used for the external data hash). -/
   sha256 : ∀ x h, c.sha256.hash x = ok h → toBytes h.val = LeanSpec.Sha.sha256 (toBytes x.val)
 
-/-- **Not trusted**: facts about the program's own accounts in a state reached from
-    `initialize`. -/
+/-- **Invariant, proved**: facts about the program's own accounts. They hold in every state an
+    execution reaches from genesis (`wellFormed_reachable`), with `spent` the nullifiers that
+    execution spent. -/
 structure WellFormed (d : Deployment) (spent : Finset LeanSpec.F) (s : State) : Prop where
   /-- The program is not the system program (so "owned by the program" and "not yet created"
       are different things). -/
@@ -57,20 +64,20 @@ structure WellFormed (d : Deployment) (spent : Finset LeanSpec.F) (s : State) : 
     ((s (d.pda (nullifier0Seeds n))).owner = d.programId ∨
       (s (d.pda (nullifier1Seeds n))).owner = d.programId)
 
-/-- **Trusted**, per transaction: facts about Solana and the circuit that the code model
-    cannot see. -/
-structure Trusted (d : Deployment) (rent : Nat → U64) (tx : TxEnv)
-    (proof : zkcash_core.transact.Proof) (out1 out2 : Slice U8) : Prop where
-  /-- The transaction sees the rent rate the spec's world uses. The spec fixes the two rent
-      amounts; the code reads Solana's `Rent` sysvar each time (TODO.md: "Solana details"). -/
-  rentFixed : tx.minimumBalance = some rent
+/-- **Assumed**, about the Solana runtime, for this transaction. -/
+structure SolanaFacts (rent : Nat → U64) (out1 out2 : Slice U8) : Prop where
   /-- A nullifier account's rent-exempt minimum is not zero (true on Solana). -/
   nullifierRentPositive : 0 < (rent nullifierAccountSpace).val
   /-- The serialized external data fits in a vector: 120 bytes plus the two encrypted outputs
       is at most the largest `usize`. True of every real transaction (at most 1232 bytes). -/
   fitsInVector : out1.length + out2.length + 120 ≤ Usize.max
+
+/-- **Assumed**, about the circuit and SHA-256, for this transaction. -/
+structure CryptoFacts (d : Deployment) (proof : zkcash_core.transact.Proof) : Prop where
   /-- The two input nullifiers differ. Only the circuit enforces this (spec
-      `nullifiersDistinct`); the program does not check it. -/
+      `nullifiersDistinct`, a case of the circuit-soundness assumption T1). Neither the program
+      nor Anchor checks it: Anchor checks `nullifier2` (the address of `nullifier0` when the two
+      are equal) before creating `nullifier0`. Informational finding I1. -/
   distinctNullifiers : proof.input_nullifiers.val[0]! ≠ proof.input_nullifiers.val[1]!
   /-- SHA-256 collision resistance for the addresses of the two new nullifier accounts (slot 0
       of nullifier 0, slot 1 of nullifier 1): they are different addresses. -/
@@ -82,9 +89,9 @@ section
 variable {G1 G2 GT : Type} [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGroup G2]
   [Module LeanSpec.F G2] [CommGroup GT]
 
-/-- **Trusted** (for the verifier bridge): what the bridge needs of the pairing the `alt_bn128` syscall computes: the spec's
-    bilinearity laws (`LeanSpec.Pairing` requires them) and that pairing with `-a` gives the
-    inverse. All true of the BN254 optimal ate pairing. -/
+/-- **Assumed**, about the `alt_bn128` pairing (for the verifier bridge): the spec's bilinearity
+    laws (`LeanSpec.Pairing` requires them) and that pairing with `-a` gives the inverse. All
+    true of the BN254 optimal ate pairing. -/
 structure PairingLaws (e : G1 → G2 → GT) : Prop where
   smul_left : ∀ (s : LeanSpec.F) (a : G1) (b : G2), e (s • a) b = (e a b) ^ s.val
   smul_right : ∀ (s : LeanSpec.F) (a : G1) (b : G2), e a (s • b) = (e a b) ^ s.val
@@ -99,31 +106,23 @@ variable {s : AltBn128}
 
 end
 
-/-- **Findings**: the known differences between the code and the spec. Each field rules one
-    out; transactions in these cases are not covered by the theorem. CONNECTIONS.md lists them
-    with their effect. -/
-structure Findings (d : Deployment) (rent : Nat → U64) (s : State) (a : TransactAccounts)
-    (proof : zkcash_core.transact.Proof) (extAmount : I64) (fee : U64) : Prop where
-  /-- F1, CODE DEVIATION. On a deposit with a fee, the code checks the pool's balance after the
-      deposit has arrived (`pool + extAmt ≥ fee + rent`); the spec's `poolSolvent` requires it
-      before (`pool ≥ fee + rent`). Ruled out: the pool covers fee plus rent before the deposit. -/
-  f1_poolCoversFeeBeforeDeposit : extAmount.val > 0 → fee.val > 0 →
-    (s (poolAddr d)).lamports.val ≥ fee.val + (rent treeTokenAccountSpace).val
-  /-- F2, SOLANA DETAIL. If the address of a new nullifier account already holds lamports
-      (anyone can send them), Anchor only tops it up, so the signer pays less than the spec's
-      `2 * nullifierRent`. Ruled out: both addresses are empty. -/
-  f2_nullifierAddressesEmpty :
+/-- **Outside the spec's level of detail (by design)**: Solana details the spec deliberately
+    does not model. Each field rules one out; transactions where it matters are not covered. -/
+structure OutsideSpecDetail (d : Deployment) (rent : Nat → U64) (s : State) (tx : TxEnv)
+    (a : TransactAccounts) (proof : zkcash_core.transact.Proof) : Prop where
+  /-- The rent is fixed. The spec fixes the two rent amounts; the code reads Solana's `Rent`
+      sysvar each time. Ruled out: the transaction sees a different rent rate. -/
+  rentFixed : tx.minimumBalance = some rent
+  /-- Pre-funded nullifier addresses. Anyone can send lamports to the address of a nullifier
+      account before it exists; Anchor then only tops it up, so the signer pays less than the
+      spec's `2 * nullifierRent`. Ruled out: both addresses hold nothing beforehand. -/
+  nullifierAddressesEmpty :
     (s (d.pda (nullifier0Seeds proof.input_nullifiers.val[0]!))).lamports.val = 0 ∧
     (s (d.pda (nullifier1Seeds proof.input_nullifiers.val[1]!))).lamports.val = 0
-  /-- F3, SPEC PRECONDITION. The spec's `poolIsSeparate` requires the recipient and the fee
-      recipient to differ from the pool; the code does not check it (in most such cases the
-      runtime's lamport check rejects the transaction). Ruled out: neither payee is the pool. -/
-  f3_payeesNotPool : a.recipient ≠ poolAddr d ∧ a.feeRecipientAccount ≠ poolAddr d
-  /-- F4, SOLANA DETAIL. If a payee is a nullifier account (an existing one, or one this
-      transaction creates), the payment is locked in it; the spec, which does not count
-      nullifier accounts, says the payee receives it. Ruled out: neither payee is a nullifier
-      account. -/
-  f4_payeesNotNullifierAccounts :
+  /-- Payees that are nullifier accounts. The spec does not count nullifier accounts as public
+      accounts; a payment to one (an existing one, or one this transaction creates) is locked
+      there. Ruled out: neither payee is a nullifier account. -/
+  payeesNotNullifierAccounts :
     (∀ b, (s a.recipient).data ≠ .nullifier b) ∧ (∀ b, (s a.feeRecipientAccount).data ≠ .nullifier b) ∧
     a.recipient ≠ d.pda (nullifier0Seeds proof.input_nullifiers.val[0]!) ∧
     a.recipient ≠ d.pda (nullifier1Seeds proof.input_nullifiers.val[1]!) ∧

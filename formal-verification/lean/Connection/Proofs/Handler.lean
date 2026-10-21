@@ -124,6 +124,14 @@ theorem setLamports_vals (e : SolEnv) (k : Pubkey) (v : U64) :
 theorem moveN_zero (b : Pubkey → ℕ) (src dst : Pubkey) : moveN b src dst 0 = b := by
   unfold moveN; simp
 
+/-- A payment as the code makes it: read both balances, then write both. Differs from `moveN`
+    only when `src = dst`, where it creates `x` lamports. -/
+def payN (b : Pubkey → ℕ) (src dst : Pubkey) (x : ℕ) : Pubkey → ℕ :=
+  Function.update (Function.update b src (b src - x)) dst (b dst + x)
+
+theorem payN_zero (b : Pubkey → ℕ) (src dst : Pubkey) : payN b src dst 0 = b := by
+  unfold payN; simp
+
 theorem moveN_eq_updates (W : Pubkey → ℕ) (p t : Pubkey) (hne : t ≠ p) (x : ℕ) :
     moveN W p t x = Function.update (Function.update W p (W p - x)) t (W t + x) := by
   simp only [moveN, Function.update_of_ne hne]
@@ -151,21 +159,19 @@ structure HandlerOk (c : Crypto) (env : SolEnv) (tree : merkle_tree.MerkleTreeAc
       ext.val ≤ (env.balances env.signer).val ∧
       (fee.val > 0 → moveN (fun k => (env.balances k).val) env.signer env.treeToken ext.val.natAbs env.treeToken
           ≥ fee.val + v.val) ∧
-      (fun k => (env'.balances k).val) = moveN (moveN (fun k => (env.balances k).val) env.signer
+      (fun k => (env'.balances k).val) = payN (moveN (fun k => (env.balances k).val) env.signer
           env.treeToken ext.val.natAbs) env.treeToken env.feeRecipient fee.val) ∧
     (ext.val < 0 →
       (env.balances env.treeToken).val ≥ ext.val.natAbs + fee.val + v.val ∧
-      (fun k => (env'.balances k).val) = moveN (moveN (fun k => (env.balances k).val) env.treeToken
+      (fun k => (env'.balances k).val) = payN (payN (fun k => (env.balances k).val) env.treeToken
           env.recipient ext.val.natAbs) env.treeToken env.feeRecipient fee.val)
 
-/-- **The handler, when it returns `Ok`.** The payees must not be the pool (otherwise the code
-    reads a balance before writing it through the other role; the runtime's lamport check then
-    rejects, and the spec's `poolIsSeparate` excludes it). -/
+/-- **The handler, when it returns `Ok`.** The balance equations are exactly the code's
+    read-before-write updates (`payN`), for any accounts, aliased or not. -/
 theorem handler_ok (c : Crypto) (env : SolEnv) (tree : merkle_tree.MerkleTreeAccount)
     (config : admin.GlobalConfig) (proof : transact.Proof) (ext : I64) (fee : U64)
     (recipient feeRecipient : Pubkey) (out1 out2 : Slice U8) (appended : transact.Appended)
     (env' : SolEnv) (tree' : merkle_tree.MerkleTreeAccount)
-    (hA : env.recipient ≠ env.treeToken) (hT : env.feeRecipient ≠ env.treeToken)
     (h : transact.transact c.hasher arkFr c.sha256 c.proofVerifier solRuntime env tree config proof
       ext fee recipient feeRecipient out1 out2 = ok (.Ok appended, env', tree')) :
     HandlerOk c env tree config proof ext fee recipient feeRecipient out1 out2 env' tree' := by
@@ -300,8 +306,7 @@ theorem handler_ok (c : Crypto) (env : SolEnv) (tree : merkle_tree.MerkleTreeAcc
         have : (b1 env.treeToken).val ≥ v1.val := hge
         show (b1 env.treeToken).val ≥ fee.val + v.val
         omega
-      · rw [setLamports_vals, setLamports_vals, ← hsb, moveN_eq_updates _ _ _ hT]
-        rw [hv2, hv3]; rfl
+      · rw [setLamports_vals, setLamports_vals, ← hsb, hv2, hv3]; rfl
     · have h := ite_neg' h hf
       have hf0 : fee.val = 0 := u64_not_pos hf
       appends_tail h hi0 hap1 hi1 hap2
@@ -312,9 +317,10 @@ theorem handler_ok (c : Crypto) (env : SolEnv) (tree : merkle_tree.MerkleTreeAcc
                  fun hfp => absurd hfp (by omega), ?_⟩, fun hn => absurd hn (by omega)⟩ }
       · have : (IScalar.hcast .U64 ext).val ≤ tree.max_deposit_amount.val := hlim
         omega
-      · rw [hf0, moveN_zero, ← hsb]
+      · rw [hf0, payN_zero, ← hsb]
   · have h := ite_neg' h hpos
-    have hpub : LeanSpec.pubAmtConsistent ext.val fee.val (toF proof.public_amount) := by
+    have hpub : LeanSpec.pubAmtConsistent ext.val fee.val (toF proof.public_amount) ∧
+        LeanSpec.amountsInRange ext.val fee.val ∧ ext.val ≠ 0 := by
       have := (checkPublicAmount_eq ext fee proof.public_amount).symm.trans hb2
       simpa using this
     by_cases hneg : ext < 0#i64
@@ -322,12 +328,12 @@ theorem handler_ok (c : Crypto) (env : SolEnv) (tree : merkle_tree.MerkleTreeAcc
     · -- ZERO: excluded by the public-amount check
       have h0 : ext.val = 0 := by have := i64_not_pos hpos; have := i64_not_neg hneg; omega
       exfalso
-      have := hpub.2.1 (by omega); omega
+      exact hpub.2.2 h0
     -- WITHDRAWAL
     have hnegv : ext.val < 0 := i64_neg hneg
     have hlo := (i64_bounds ext).1
     have h := ite_pos' h hneg
-    obtain ⟨y, hy, hyv⟩ := i64_neg_ok ext hpub.1
+    obtain ⟨y, hy, hyv⟩ := i64_neg_ok ext (by have := hpub.2.1.1; omega)
     obtain ⟨o1, ho1, h⟩ := bindOk h
     have ho1' : o1 = some y := by
       have := Result.ok_injective ho1
@@ -384,8 +390,8 @@ theorem handler_ok (c : Crypto) (env : SolEnv) (tree : merkle_tree.MerkleTreeAcc
     obtain ⟨rfl, rfl⟩ := Prod.mk.inj (Result.ok_injective hs4).symm
     -- the balances after paying the recipient
     have hW : (fun k => (((env.setLamports env.treeToken v4).setLamports env.recipient v5).balances k).val)
-        = moveN (fun k => (env.balances k).val) env.treeToken env.recipient ext.val.natAbs := by
-      rw [setLamports_vals, setLamports_vals, moveN_eq_updates _ _ _ hA, hv4, hv5]
+        = payN (fun k => (env.balances k).val) env.treeToken env.recipient ext.val.natAbs := by
+      rw [setLamports_vals, setLamports_vals, hv4, hv5]; rfl
     have hpoolv : (env.balances env.treeToken).val ≥ ext.val.natAbs + fee.val + v.val := by
       have : (env.balances env.treeToken).val ≥ v3.val := hge
       omega
@@ -419,7 +425,7 @@ theorem handler_ok (c : Crypto) (env : SolEnv) (tree : merkle_tree.MerkleTreeAcc
                appends := ⟨_, _, _, (idx2 _ _ _ (by decide) hi0) ▸ hap1, (idx2 _ _ _ (by decide) hi1) ▸ hap2⟩,
                sameEnv := ⟨rfl, rfl, rfl, rfl, rfl⟩,
                rent := ⟨v, hv, fun hp => absurd hp (by omega), fun _ => ⟨hpoolv, ?_⟩⟩ }
-      rw [setLamports_vals, setLamports_vals, ← hW, moveN_eq_updates _ _ _ hT, hv6, hv7]
+      rw [setLamports_vals, setLamports_vals, ← hW, hv6, hv7]
       rfl
     · have h := ite_neg' h hf
       have hf0 : fee.val = 0 := u64_not_pos hf
@@ -429,7 +435,7 @@ theorem handler_ok (c : Crypto) (env : SolEnv) (tree : merkle_tree.MerkleTreeAcc
                appends := ⟨_, _, _, (idx2 _ _ _ (by decide) hi0) ▸ hap1, (idx2 _ _ _ (by decide) hi1) ▸ hap2⟩,
                sameEnv := ⟨rfl, rfl, rfl, rfl, rfl⟩,
                rent := ⟨v, hv, fun hp => absurd hp (by omega), fun _ => ⟨hpoolv, ?_⟩⟩ }
-      rw [hf0, moveN_zero, ← hW]
+      rw [hf0, payN_zero, ← hW]
       rfl
 
 end Connection

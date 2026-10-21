@@ -151,7 +151,7 @@ lemma toy_deposit_step (hCompl : Groth16Complete) :
     treeNotFull := by simp [treeHasRoom, initWorld, initTree]
     amountRange := by simp [amountsInRange, toyInputs]
     encOutLength := by simp [encOutsFit, toyInputs]
-    poolSeparate := ⟨toyPool_ne, toyPool_ne, toyPool_ne⟩
+    poolSeparate := ⟨toyPool_ne, fun _ => toyPool_ne, fun _ => toyPool_ne⟩
   }
 
 /-- The run of the deposit alone. -/
@@ -321,7 +321,7 @@ theorem toy_G3a_hypotheses (hCompl : Groth16Complete) :
     · simp [pubAmtConsistent, wdInputs]
     · simp [amountsInRange, wdInputs]
     · simp [encOutsFit, wdInputs]
-    · rw [hfin, W1_pool]; exact ⟨toyPool_ne, toyPool_ne, toyPool_ne⟩
+    · rw [hfin, W1_pool]; exact ⟨toyPool_ne, fun _ => toyPool_ne, fun _ => toyPool_ne⟩
     · rw [hfin]; unfold signerSolvent; rw [(W1_rent hCompl).1]; simp [wdInputs]
   · refine { fee := ?_, depositLimit := ?_, depositFee := ?_, treeRoom := ?_ }
     · rw [hfin]; simp [feeSufficient, W1, transactEffects, transferEffects_state, initWorld, toyCfg, wdInputs]
@@ -370,7 +370,7 @@ lemma toy_withdrawal_step (hCompl : Groth16Complete) :
     treeNotFull := by unfold treeHasRoom; rw [W1_nextIndex]; norm_num
     amountRange := by simp [amountsInRange, wdInputs]
     encOutLength := by simp [encOutsFit, wdInputs]
-    poolSeparate := by rw [W1_pool]; exact ⟨toyPool_ne, toyPool_ne, toyPool_ne⟩
+    poolSeparate := by rw [W1_pool]; exact ⟨toyPool_ne, fun _ => toyPool_ne, fun _ => toyPool_ne⟩
   }
 
 /-- The run of the deposit followed by the withdrawal. -/

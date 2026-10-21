@@ -197,15 +197,12 @@ it. A check no theorem uses protects something not stated yet, or is redundant.
 
 ## Known gaps
 
-  - The program doesn't check that the recipient and fee recipient are not the pool; it
-    relies on Solana's runtime to reject those transactions (`poolIsSeparate`). A finding
-    to report.
+  - The program doesn't check that the pool is not paid as recipient or fee recipient; by
+    design it relies on Solana's runtime to reject those transactions (`poolIsSeparate`).
   - A root stays in the history for about 50 transactions (100 slots, two roots per
     transaction); G3a needs the spend's root to still be there.
   - G1e, G4a, G4b and G5 follow from how `transact` is defined. They say something about
     the code only through the connection.
-  - Deposits with a fee: the spec checks the pool balance before the deposit lands, the
-    code after (`hDevPool`, `CONNECTIONS.md`). G3a keeps this check as a hypothesis.
 
 -/
 
@@ -344,8 +341,11 @@ theorem transact_requires_valid_proof
     keeps the public inputs, and those include the hash of the external data. `T` is only
     observed, not accepted: once `T'` is accepted, `T` fails, since they share nullifiers.
     The amounts and lengths are in range (`amountsInRange`, `encOutsFit`), so the encoding
-    determines every field. Not bound: the signer `s`; replacing it only changes who pays
-    for a deposit. A proof for *new* public inputs is G2b. -/
+    determines every field. A proof for *new* public inputs is G2b.
+
+    Not covered: the signer `s`, which is not bound. Replacing it only changes who pays the
+    deposit and the rent for the two nullifier accounts; the notes, recipient and amounts
+    stay as the honest owner chose. This is intended: it lets relayers submit transactions. -/
 theorem same_public_inputs_same_external_data
     (T : TxInputs)                                         -- [premise] the honest transaction, seen
     (hT : externalDataBound T ∧ amountsInRange T.extAmt T.f ∧ encOutsFit T)
@@ -400,7 +400,7 @@ theorem shared_nullifier_requires_owner_key
     known" and "a proof exists" are derived (G3b, G1c, Groth16 completeness), not assumed.
     Every hypothesis is tagged with who controls it. The ones that can legitimately block
     a spend are the policy checks and the two limits: the root window and the tree's
-    capacity (G3c). One policy check is stricter than the code (`hDevPool`). -/
+    capacity (G3c). -/
 theorem unspent_note_is_spendable
     (params : InitParams)                                  -- [premise] a freshly initialized pool
     (hCompl : Groth16Complete)                             -- [trust T0] Groth16 completeness

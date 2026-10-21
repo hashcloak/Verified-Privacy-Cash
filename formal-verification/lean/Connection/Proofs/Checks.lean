@@ -18,7 +18,8 @@ private theorem val_natCast_small {n : ℕ} (h : n < 2 ^ 64) : (n : Fr).val = n 
 
 private theorem checkPublicAmount_iff (extAmount : I64) (fee : U64) (pa : Std.Array U8 32#usize) :
     ∃ b, zkcash_core.utils.check_public_amount arkFr extAmount fee pa = ok b ∧
-      (b = true ↔ LeanSpec.pubAmtConsistent extAmount.val fee.val (toF pa)) := by
+      (b = true ↔ LeanSpec.pubAmtConsistent extAmount.val fee.val (toF pa) ∧ LeanSpec.amountsInRange extAmount.val fee.val ∧
+        extAmount.val ≠ 0) := by
   have hlo : -2 ^ 63 ≤ extAmount.val := by scalar_tac
   have hhi : extAmount.val < 2 ^ 63 := by scalar_tac
   have hfee : fee.val < 2 ^ 64 := by scalar_tac
@@ -27,7 +28,7 @@ private theorem checkPublicAmount_iff (extAmount : I64) (fee : U64) (pa : Std.Ar
   by_cases hmin : extAmount = core.num.I64.MIN
   · have hv : extAmount.val = -9223372036854775808 := by rw [hmin]; rfl
     refine ⟨false, by simp [hmin], ?_⟩
-    simp [LeanSpec.pubAmtConsistent, hv]
+    simp [LeanSpec.amountsInRange, hv]
   · have hv : extAmount.val ≠ -9223372036854775808 := by
       intro h; apply hmin; rw [IScalar.eq_equiv, h]; rfl
     by_cases hpos : extAmount ≥ 0#i64
@@ -38,16 +39,17 @@ private theorem checkPublicAmount_iff (extAmount : I64) (fee : U64) (pa : Std.Ar
       rw [val_natCast_small (by rw [hc]; omega), val_natCast_small hfee, hc]
       by_cases hle : extAmount.val.toNat ≤ fee.val
       · refine ⟨false, by simp [hle], ?_⟩
-        simp [LeanSpec.pubAmtConsistent]; intro _ h; omega
+        simp only [Bool.false_eq_true, false_iff]
+        rintro ⟨hp, -, h0⟩; have := hp.1 (by omega); omega
       · refine ⟨_, by simp [hle]; rfl, ?_⟩
         simp only [decide_eq_true_eq, LeanSpec.pubAmtConsistent, toF]
         have e : ((extAmount.val.toNat : ℕ) : Fr) = (extAmount.val : Fr) := by
           rw [← Int.cast_natCast, Int.toNat_of_nonneg hpos']
         constructor
-        · intro h; refine ⟨hv, fun _ => by omega, ?_⟩
+        · intro h; refine ⟨⟨fun _ => by omega, ?_⟩, by simp only [LeanSpec.amountsInRange]; omega, by omega⟩
           show ((beNat pa : ℕ) : Fr) = (extAmount.val : Fr) - ((fee.val : ℕ) : Fr)
           rw [← h, e]
-        · rintro ⟨-, -, h⟩
+        · rintro ⟨⟨-, h⟩, -, -⟩
           show ((extAmount.val.toNat : ℕ) : Fr) - ((fee.val : ℕ) : Fr) = ((beNat pa : ℕ) : Fr)
           rw [e]; exact h.symm
     · have hneg : extAmount.val < 0 := by scalar_tac
@@ -64,18 +66,42 @@ private theorem checkPublicAmount_iff (extAmount : I64) (fee : U64) (pa : Std.Ar
       have e : (((IScalar.hcast UScalarTy.U64 v).val : ℕ) : Fr) = -(extAmount.val : Fr) := by
         rw [hc, ← Int.cast_natCast, Int.toNat_of_nonneg (by omega), Int.cast_neg]
       constructor
-      · intro h; refine ⟨hv, fun h' => absurd h' (by omega), ?_⟩
+      · intro h; refine ⟨⟨fun h' => absurd h' (by omega), ?_⟩, by simp only [LeanSpec.amountsInRange]; omega, by omega⟩
         show ((beNat pa : ℕ) : Fr) = (extAmount.val : Fr) - ((fee.val : ℕ) : Fr)
         rw [← h, e]; ring
-      · rintro ⟨-, -, h⟩
+      · rintro ⟨⟨-, h⟩, -, -⟩
         show -((((IScalar.hcast UScalarTy.U64 v).val : ℕ) : Fr) + ((fee.val : ℕ) : Fr)) = ((beNat pa : ℕ) : Fr)
         have h' : ((beNat pa : ℕ) : Fr) = (extAmount.val : Fr) - ((fee.val : ℕ) : Fr) := h
         rw [e, h']; ring
 theorem checkPublicAmount_eq (extAmount : I64) (fee : U64) (pa : Std.Array U8 32#usize) :
     zkcash_core.utils.check_public_amount arkFr extAmount fee pa
-      = ok (decide (LeanSpec.pubAmtConsistent extAmount.val fee.val (toF pa))) := by
+      = ok (decide (LeanSpec.pubAmtConsistent extAmount.val fee.val (toF pa) ∧ LeanSpec.amountsInRange extAmount.val fee.val ∧
+        extAmount.val ≠ 0)) := by
   obtain ⟨b, hb, hiff⟩ := checkPublicAmount_iff extAmount fee pa
-  rw [hb]; cases b <;> simp_all
+  rw [hb]; cases b <;> simp_all <;> exact hiff
+
+/-- Thirty-two zero bytes: the public amount 0. -/
+def zeroBytes : Std.Array U8 32#usize := Std.Array.repeat 32#usize 0#u8
+
+theorem checkPublicAmount_L1 :
+    zkcash_core.utils.check_public_amount arkFr 0#i64 0#u64 zeroBytes = ok false ∧
+      LeanSpec.pubAmtConsistent (0#i64).val (0#u64).val (toF zeroBytes) ∧
+        LeanSpec.amountsInRange (0#i64).val (0#u64).val := by
+  have hb : beNat zeroBytes = 0 := by rfl
+  have hz : toF zeroBytes = 0 := by simp only [toF, hb, Nat.cast_zero]
+  refine ⟨?_, ?_⟩
+  · rw [checkPublicAmount_eq]; simp
+  · simp [LeanSpec.pubAmtConsistent, LeanSpec.amountsInRange, hz]
+
+theorem checkPublicAmount_not_square :
+    ¬ ∀ (extAmount : I64) (fee : U64) (pa : Std.Array U8 32#usize),
+      zkcash_core.utils.check_public_amount arkFr extAmount fee pa
+        = ok (decide (LeanSpec.pubAmtConsistent extAmount.val fee.val (toF pa) ∧ LeanSpec.amountsInRange extAmount.val fee.val)) := by
+  intro h
+  obtain ⟨h1, h2⟩ := checkPublicAmount_L1
+  have := (h 0#i64 0#u64 zeroBytes).symm.trans h1
+  rw [decide_eq_true h2] at this
+  exact absurd (Result.ok_injective this) (by decide)
 
 
 /-! ## `is_known_root` ↔ `rootKnown` -/
@@ -521,5 +547,23 @@ theorem validateFee_iff (extAmt : I64) (fee : U64) (c : zkcash_core.admin.Global
         unfold zkcash_core.utils.validate_fee
         rw [if_neg hpos, if_neg hneg]
       rw [hcode]; simp [hz]
+
+/-- `validate_fee` checks `feeSufficient` and `amountsInRange`. -/
+theorem validateFee_eq_spec (extAmt : I64) (fee : U64) (c : zkcash_core.admin.GlobalConfig)
+    (t : zkcash_core.merkle_tree.MerkleTreeAccount)
+    (hd : c.deposit_fee_rate.val ≤ 10000) (hw : c.withdrawal_fee_rate.val ≤ 10000)
+    (hm : c.fee_error_margin.val ≤ 10000) :
+    zkcash_core.utils.validate_fee extAmt fee c.deposit_fee_rate c.withdrawal_fee_rate
+        c.fee_error_margin = ok (.Ok ()) ↔
+      LeanSpec.feeSufficient (toConfig c t) extAmt.val fee.val ∧
+        LeanSpec.amountsInRange extAmt.val fee.val := by
+  rw [validateFee_iff extAmt fee c t hd hw hm]
+  have hlo : -2 ^ 63 ≤ extAmt.val := by scalar_tac
+  have hhi : extAmt.val < 2 ^ 63 := by scalar_tac
+  have hfee : fee.val < 2 ^ 64 := by scalar_tac
+  simp only [LeanSpec.amountsInRange]
+  constructor
+  · rintro ⟨h1, h2⟩; exact ⟨h2, by omega, hhi, hfee⟩
+  · rintro ⟨h2, h1, -, -⟩; exact ⟨by omega, h2⟩
 
 end Connection

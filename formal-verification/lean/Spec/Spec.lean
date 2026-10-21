@@ -7,14 +7,10 @@ import Mathlib.Algebra.BigOperators.Fin
 
 --///////// Note: SOL ONLY. In Phase 2 we'll distinguish between SOL and SPL.
 
--- TODO review what has been translated so far. There are definitely errors in the translation still.
-
 -- Everything below lives in `LeanSpec`, not the root namespace: several names here
 -- (`Tree`, `Byte`, ...) are generic enough to collide with Mathlib/Aeneas root-level
--- declarations once a file imports both this spec and `code_model` (exactly what a
--- connection theorem needs to do). Callers that need both use `open LeanSpec (name1
--- name2 ...)` to selectively pull in what they need without pulling in the colliding
--- names -- see Connection/Basic.lean.
+-- declarations once a file imports both this spec and the code model (exactly what the
+-- connection does). The connection refers to spec names as `LeanSpec.name`.
 namespace LeanSpec
 
 --/////////////////////////////////////////
@@ -68,7 +64,7 @@ values determined by the theorem's hypotheses". We never assume collision-freene
 /-- `a` and `b` are different inputs with the same `H1` output. -/
 structure H1Collision (a b : F) : Prop where
   ne : a ≠ b
-  eq : H1 a = H1 b -- TODO should we rename this?
+  collision : H1 a = H1 b
 
 /-- A note: what a commitment commits to. -/
 structure Note where
@@ -80,19 +76,19 @@ structure Note where
 /-- Two different notes with the same `H4` output (so the same commitment). -/
 structure H4Collision (a b : Note) : Prop where
   ne : a ≠ b
-  eq : H4 a.amount a.ownerPk a.blinding a.mint = H4 b.amount b.ownerPk b.blinding b.mint
+  collision : H4 a.amount a.ownerPk a.blinding a.mint = H4 b.amount b.ownerPk b.blinding b.mint
 
 /-- Two different argument pairs with the same `H2` output -- the binary Merkle hash used
     in `Opening.calcRoot` and `appendEffects`. Used by G1a (`PathCollision`). -/
 structure H2Collision (a b : F × F) : Prop where
   ne : a ≠ b
-  eq : H2 a.1 a.2 = H2 b.1 b.2
+  collision : H2 a.1 a.2 = H2 b.1 b.2
 
 /-- Two different argument triples with the same `H3` output (`H3` builds nullifiers and
     signatures). Needed by G2b. -/
 structure H3Collision (a b : F × F × F) : Prop where
   ne : a ≠ b
-  eq : H3 a.1 a.2.1 a.2.2 = H3 b.1 b.2.1 b.2.2
+  collision : H3 a.1 a.2.1 a.2.2 = H3 b.1 b.2.1 b.2.2
 
 /-- Two different byte strings whose little-endian, mod-`p` reduced `sha256` digests
     collide -- the actual hash used to bind external transaction data
@@ -101,17 +97,17 @@ structure H3Collision (a b : F × F × F) : Prop where
     digests happen to agree mod `p`. -/
 structure Sha256Collision (a b : Bytes) : Prop where
   ne : a ≠ b
-  eq : (natOfLE (sha256 a) : F) = (natOfLE (sha256 b) : F)
+  collision : (natOfLE (sha256 a) : F) = (natOfLE (sha256 b) : F)
 
 /-- An `H4` preimage of `0`. An unwritten leaf holds `Z 0 = 0`, so a spend that opens an
     unwritten leaf with a real note needs a note that commits to `0`. Used by G1a. -/
 structure H4ZeroPreimage (a : Note) : Prop where
-  eq : H4 a.amount a.ownerPk a.blinding a.mint = 0
+  preimage : H4 a.amount a.ownerPk a.blinding a.mint = 0
 
 /-- An `H2` preimage of `0`: a pair that `H2` hashes to `0`. A Merkle root equal to `0`
     (which `rootKnown` rejects) needs one. Used by G3a. -/
 structure H2ZeroPreimage (a : F × F) : Prop where
-  eq : H2 a.1 a.2 = 0
+  preimage : H2 a.1 a.2 = 0
 
 -- Keys, commitments, nullifiers
 def pubKey (sk: F): F := H1 sk
@@ -289,7 +285,6 @@ structure config where
   withdrawalFeeRate: ℕ -- in basis points, default = 0.25%
   feeMarginError: ℕ -- in basis points, default = 500 (5% tolerance)
   -- NOTE: In solana code the max deposit limit in declared in the Merkle Tree but we have kept in here.
-  -- TODO should we move this
   maxDepositLimit: ℕ -- maximum deposit amount in lamports
 
 --/////////////////////////////////////////
@@ -410,11 +405,8 @@ def moveLamports (b : Pubkey → ℕ) (src dst : Pubkey) (x : ℕ) : Pubkey → 
   **Transfer**([doc ref](https://privacy-cash-privacy-cash.mintlify.app/concepts/how-it-works#universal-joinsplit-transactions)):
     - (deposit) if $extAmt>0$: move $extAmt$ from the signer $s$ to the pool
     - (withdrawal) if $extAmt<0$: move $|extAmt|$ from the pool to the recipient $A$
-    - (transfer) if $extAmt=0$: no changes to balances
+    - (transfer) if $extAmt=0$: no changes to external balances
 
-  The $extAmt=0$ case is defined here for `transferEffects` alone, but is unreachable
-  through `transact`: `pubAmtConsistent` (`transactPreconditions.pubAmtConsistency`)
-  rejects $extAmt=0$ outright, matching `check_public_amount`'s guard.
   No ℕ underflow: `signerSolvency` and `poolSolvency` rule it out.
 -/
 def transferEffects (inputs: TxInputs) (oldWorld: World): World :=
@@ -486,15 +478,10 @@ def feeSufficient (cfg: config) (extAmt: ℤ) (f: ℕ): Prop :=
   f ≥ minAcceptableFee
 
 -- The public amount the proof commits to is extAmt - fee, and extAmt is in range.
--- The middle conjunct is `extAmt ≥ 0`, not `extAmt > 0`: the program's guard
--- (`ext_amount >= 0 && ext_amount_fr <= fee_fr`, utils.rs) treats `extAmt = 0` as a
--- deposit that must also clear the fee, which it never can since `f : ℕ` can't be
--- negative. So `extAmt = 0` is always rejected -- a zero-amount "transfer" is
--- unreachable through `transact` (see the note above `transferEffects`).
+-- A deposit must exceed its fee. A transfer (extAmt = 0) is allowed; its fee is paid
+-- from the pool (see `transferEffects`).
 def pubAmtConsistent (extAmt: ℤ) (f: ℕ) (pubAmt: F): Prop :=
-  -- reference i64::MIN https://doc.rust-lang.org/std/i64/constant.MIN.html
-  extAmt ≠ -9_223_372_036_854_775_808 ∧
-  (extAmt ≥ 0 → extAmt > f) ∧
+  (extAmt > 0 → extAmt > f) ∧
   pubAmt = (extAmt: F) - f
 
 -- The Groth16 proof verifies for the deployed key and these public inputs.
@@ -514,10 +501,12 @@ def nullifiersDistinct (k0 k1: F): Prop :=
 def depositWithinLimit (cfg: config) (extAmt: ℤ): Prop :=
   extAmt > 0 → extAmt ≤ cfg.maxDepositLimit
 
--- The pool can pay out the withdrawal and the fee and still keep its rent reserve.
+-- The pool can pay out the withdrawal and the fee and still keep its rent reserve. On a
+-- deposit the fee is paid after the deposit has arrived (`transactEffects` moves the deposit
+-- first), so the deposit counts.
 def poolSolvent (poolBalance rentExemptMin: ℕ) (extAmt: ℤ) (f: ℕ): Prop :=
   (extAmt < 0 → poolBalance ≥ |extAmt| + f + rentExemptMin) ∧
-  (extAmt ≥ 0 ∧ f > 0 → poolBalance ≥ f + rentExemptMin)
+  (extAmt ≥ 0 ∧ f > 0 → poolBalance + extAmt ≥ f + rentExemptMin)
 
 -- The signer can pay the rent for the two nullifier accounts and, on a deposit, the deposit.
 -- Enforced on-chain: Anchor's `init` fails if the signer can't pay the rent, and the deposit
@@ -532,8 +521,11 @@ def treeHasRoom (T: Tree): Prop :=
 -- `extAmt` fits an i64 and the fee a u64, as in the code (`ext_amount: i64`, `fee: u64`).
 -- Without it the spec allows e.g. `extAmt = −p`: the proof sees `pubAmt = −f` (mod `p`),
 -- yet `p` lamports are withdrawn.
+-- NOT FROM THE DOCS: `extAmt = −2^63` (`i64::MIN`) is excluded. A withdrawal's amount is
+-- `−extAmt`, which does not fit an i64 there; the code rejects it. The docs should say so.
+-- No real withdrawal is affected: `2^63` lamports exceeds the total SOL supply.
 def amountsInRange (extAmt: ℤ) (f: ℕ): Prop :=
-  -2^63 ≤ extAmt ∧ extAmt < 2^63 ∧ f < 2^64
+  -2^63 < extAmt ∧ extAmt < 2^63 ∧ f < 2^64
 
 -- Each encrypted output is shorter than `2^32` bytes. Borsh writes a vector's length as a
 -- `u32` and fails on longer vectors (`u32::try_from`); Solana's transaction size limit
@@ -541,13 +533,18 @@ def amountsInRange (extAmt: ℤ) (f: ℕ): Prop :=
 def encOutsFit (inputs: TxInputs): Prop :=
   inputs.encOut0.length < 2^32 ∧ inputs.encOut1.length < 2^32
 
--- The pool's account is none of the signer, recipient and fee recipient. On Solana a
--- transaction that tries otherwise fails. The signer can't be the pool: a program address
--- can't sign. If the recipient or fee recipient is the pool, the program reads both balances
--- and then writes both, which would create lamports; the runtime rejects any instruction
--- that doesn't conserve lamports. The program itself doesn't check this.
+-- The pool's account is not the signer, and is not paid as recipient or fee recipient.
+-- NOT FROM THE DOCS: a modelling precondition. It makes the pool's balance change by exactly
+-- `extAmt − f` (`sol_balance_correctness_step`), which G1c (every unspent note is backed by SOL
+-- in the pool) and G4a (no SOL is created or lost) rely on: a withdrawal paid to the pool
+-- would spend notes while the SOL stays in the pool. It holds on Solana: the signer can't be
+-- the pool (a program address can't sign); if the pool is paid as recipient or fee recipient,
+-- the program reads both balances and then writes both, which would create lamports, and the
+-- runtime rejects any instruction that doesn't conserve lamports (the program itself doesn't
+-- check this). Naming the pool where it is not paid (the recipient of a deposit, the fee
+-- recipient of a zero fee) is allowed: nothing moves.
 def poolIsSeparate (inputs: TxInputs) (pool: Pubkey): Prop :=
-  inputs.s ≠ pool ∧ inputs.A ≠ pool ∧ inputs.t ≠ pool
+  inputs.s ≠ pool ∧ (inputs.extAmt < 0 → inputs.A ≠ pool) ∧ (inputs.f > 0 → inputs.t ≠ pool)
 
 structure transactPreconditions
   (inputs: TxInputs)

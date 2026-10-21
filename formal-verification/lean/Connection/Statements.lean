@@ -4,12 +4,13 @@ import Connection.Proofs.Tree
 import Connection.Proofs.Verifier
 import Connection.Proofs.Transact
 import Connection.Proofs.Bridge
+import Connection.Proofs.WellFormed
 open Aeneas Aeneas.Std Result PrivacyCash.Model
 
 /-! # Connection theorems
 
 REVIEW SURFACE, with `Connection/Mapping.lean` (how code values map to spec values) and
-`Connection/Assumptions.lean` (what is assumed). Proofs are in `Connection/Proofs/` and are
+`Connection/Hypotheses.lean` (the hypotheses). Proofs are in `Connection/Proofs/` and are
 not for review: each theorem here is proved by one line pointing to its proof, so what is
 reviewed is exactly what was proved.
 
@@ -30,11 +31,31 @@ namespace Connection
 
 /-! ## The program's checks -/
 
-/-- **`check_public_amount` computes `pubAmtConsistent`.** For every amount, fee and
-    public-amount bytes, the code returns the spec predicate's truth value. No hypotheses. -/
-theorem checkPublicAmount_connection (extAmount : I64) (fee : U64) (pa : Std.Array U8 32#usize) :
+/-- **FINDING L1: `check_public_amount` does NOT compute the spec's checks.** It checks
+    `pubAmtConsistent` and `amountsInRange` (only `extAmt ≠ −2^63` is a real check; the rest
+    holds by the types). The square `check_public_amount … = ok (decide (pubAmtConsistent … ∧
+    amountsInRange …))` is false. -/
+theorem checkPublicAmount_connection_fails :
+    ¬ ∀ (extAmount : I64) (fee : U64) (pa : Std.Array U8 32#usize),
+      zkcash_core.utils.check_public_amount arkFr extAmount fee pa
+        = ok (decide (LeanSpec.pubAmtConsistent extAmount.val fee.val (toF pa) ∧ LeanSpec.amountsInRange extAmount.val fee.val)) :=
+  checkPublicAmount_not_square
+
+/-- **L1, the counterexample.** An internal transfer (amount 0, fee 0, public amount 0):
+    the spec allows it, the code rejects it. -/
+theorem checkPublicAmount_L1_counterexample :
+    zkcash_core.utils.check_public_amount arkFr 0#i64 0#u64 zeroBytes = ok false ∧
+      LeanSpec.pubAmtConsistent (0#i64).val (0#u64).val (toF zeroBytes) ∧
+        LeanSpec.amountsInRange (0#i64).val (0#u64).val :=
+  checkPublicAmount_L1
+
+/-- **L1 is the only difference.** The code computes the two spec checks and `extAmt ≠ 0`.
+    This describes the finding; it is not the connection theorem. -/
+theorem checkPublicAmount_differs_only_at_zero (extAmount : I64) (fee : U64)
+    (pa : Std.Array U8 32#usize) :
     zkcash_core.utils.check_public_amount arkFr extAmount fee pa
-      = ok (decide (LeanSpec.pubAmtConsistent extAmount.val fee.val (toF pa))) :=
+      = ok (decide (LeanSpec.pubAmtConsistent extAmount.val fee.val (toF pa) ∧ LeanSpec.amountsInRange extAmount.val fee.val ∧
+          extAmount.val ≠ 0)) :=
   checkPublicAmount_eq extAmount fee pa
 
 /-- **`is_known_root` computes `rootKnown`**, for a tree of the fixed shape and canonical
@@ -56,13 +77,10 @@ theorem isKnownRoot_accepts (t : zkcash_core.merkle_tree.MerkleTreeAccount)
     LeanSpec.rootKnown (toTree t) (toF root) :=
   isKnownRoot_safe t root hshape hroot h
 
-/-- **`validate_fee` accepts exactly when `feeSufficient` holds and the amount is not
-    `i64::MIN`**, for a config whose two fee rates and fee error margin are at most 100%
-    (`update_global_config` refuses more). Outside these bounds the code's arithmetic
-    truncates or overflows and differs from the spec.
-    DIFFERENCE: at `extAmt = i64::MIN` the code rejects (`checked_neg` overflows) where
-    `feeSufficient` may hold. Harmless in `transact`: `check_public_amount` runs first and
-    rejects `i64::MIN`, as does the spec's `pubAmtConsistent`. -/
+/-- **`validate_fee` accepts exactly when `feeSufficient` and `amountsInRange` hold**, for a
+    config whose two fee rates and fee error margin are at most 100% (a proved invariant,
+    `WellFormed.config`; `update_global_config` refuses more). Of `amountsInRange`, only
+    `extAmt ≠ −2^63` is a real check: the rest holds by the types. -/
 theorem validateFee_connection (extAmt : I64) (fee : U64) (c : zkcash_core.admin.GlobalConfig)
     (t : zkcash_core.merkle_tree.MerkleTreeAccount)
     (hd : c.deposit_fee_rate.val ≤ 10000) (hw : c.withdrawal_fee_rate.val ≤ 10000)
@@ -150,10 +168,11 @@ variable [LeanSpec.PoseidonHashes] [LeanSpec.Sha] [LeanSpec.Groups]
     exactly the spec's `transactEffects`. The spent set grows by the two input nullifiers, and
     the new state is again `WellFormed`, so the theorem applies to the next transaction.
 
-    The hypotheses are in `Connection/Assumptions.lean`: `HashesAgree` and `Trusted` are
-    trusted; `WellFormed` is an invariant to be proved; `Findings` rules out the four known
-    code/spec differences (CONNECTIONS.md). `hProofValid` is TEMPORARY: until the verifier
-    bridge is built, the code's verifier accepting is assumed to mean the spec's `proofValid`.
+    The hypotheses are in `Connection/Hypotheses.lean`: `HashesAgree`, `SolanaFacts` and
+    `CryptoFacts` are assumed; `WellFormed` is an invariant (proved for every reachable state
+    by `wellFormed_reachable`); `OutsideSpecDetail` rules out Solana details the spec does
+    not model, by design. `hProofValid` stands for the verifier bridge, which
+    `transact_connection_verified` supplies.
 
     Scope: safety. Nothing is claimed about transactions the code rejects. -/
 theorem transact_connection
@@ -163,15 +182,16 @@ theorem transact_connection
     (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
     (hashes : HashesAgree d.crypto)
     (wf : WellFormed d spent s)
-    (trusted : Trusted d rent tx proof out1 out2)
-    (findings : Findings d rent s a proof extAmount fee)
+    (solana : SolanaFacts rent out1 out2)
+    (crypto : CryptoFacts d proof)
+    (outside : OutsideSpecDetail d rent s tx a proof)
     (hProofValid : d.crypto.proofVerifier.verify proof = ok true →
       LeanSpec.proofValid (toInputs a proof extAmount fee out1 out2 π)) :
     let inputs := toInputs a proof extAmount fee out1 out2 π
     let spent' := spent ∪ {inputs.k0, inputs.k1}
     LeanSpec.transact inputs (toWorld d rent spent s) (toWorld d rent spent' s') ∧
       WellFormed d spent' s' :=
-  transact_refines π hstep hashes wf trusted findings hProofValid
+  transact_refines π hstep hashes wf solana crypto outside hProofValid
 
 end
 
@@ -180,7 +200,7 @@ end
 The spec's groups, pairing, key and proof points are those of the `alt_bn128` syscalls and the
 program's key (`syscallGroups`, `syscallPairing`, `programKey`, `proofPoints`). The syscall
 contracts `C` are core-model's assumption (`AltBn128Contracts`); `PairingLaws` is in
-`Connection/Assumptions.lean`. -/
+`Connection/Hypotheses.lean`. -/
 
 section
 variable {G1 G2 GT : Type} [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGroup G2]
@@ -200,8 +220,8 @@ theorem verifier_bridge_connection (c : Crypto) (C : AltBn128Contracts c.altBn12
     LeanSpec.proofValid (toInputs a proof ext fee out1 out2 (proofPoints C proof)) :=
   verifier_bridge c C laws proof h a ext fee out1 out2
 
-/-- **MAIN RESULT. If the code model accepts a `transact` instruction, the spec's `transact`
-    holds**, with the spec instantiated by the syscalls and the program's key: every spec
+/-- **If the code model accepts a `transact` instruction from a `WellFormed` state, the spec's
+    `transact` holds**, with the spec instantiated by the syscalls and the program's key: every spec
     precondition held (the proof check included) and the new world is exactly the spec's
     `transactEffects`; the new state is again `WellFormed`. Same as `transact_connection`, with
     its temporary `hProofValid` replaced by the syscall contracts `C` and `PairingLaws`. -/
@@ -213,8 +233,9 @@ theorem transact_connection_verified [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
     (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
     (hashes : HashesAgree d.crypto)
     (wf : WellFormed d spent s)
-    (trusted : Trusted d rent tx proof out1 out2)
-    (findings : Findings d rent s a proof extAmount fee) :
+    (solana : SolanaFacts rent out1 out2)
+    (crypto : CryptoFacts d proof)
+    (outside : OutsideSpecDetail d rent s tx a proof) :
     letI : LeanSpec.Groups := syscallGroups G1 G2 GT
     letI : LeanSpec.Pairing := syscallPairing C laws
     letI : LeanSpec.Deployment := ⟨programKey C⟩
@@ -222,7 +243,56 @@ theorem transact_connection_verified [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
     let spent' := spent ∪ {inputs.k0, inputs.k1}
     LeanSpec.transact inputs (toWorld d rent spent s) (toWorld d rent spent' s') ∧
       WellFormed d spent' s' :=
-  transact_refines_verified C laws hstep hashes wf trusted findings
+  transact_refines_verified C laws hstep hashes wf solana crypto outside
+
+end
+
+/-! ## `WellFormed` holds of every reachable state -/
+
+/-- **Every state an execution of the code model reaches from genesis is `WellFormed`**, for
+    the nullifiers spent by the execution's `transact` instructions (`runSpent`). Executions
+    are core-model's `Run`: any mix of `initialize`, `update_deposit_limit`,
+    `update_global_config`, `transact` and outside actions. One hypothesis: the program is not
+    the system program. -/
+theorem wellFormed_reachable {d : Deployment} {s₀ s : State} {evs : List Event}
+    (hgen : Genesis d.programId s₀) (hrun : Run d s₀ evs s) (hpid : d.programId ≠ systemProgram) :
+    WellFormed d (runSpent evs) s :=
+  wf_reachable hgen hrun hpid
+
+/-! ## MAIN RESULT -/
+
+section
+variable {G1 G2 GT : Type} [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGroup G2]
+  [Module LeanSpec.F G2] [CommGroup GT]
+
+/-- **MAIN RESULT. In every execution of the code model from genesis, every `transact` the code
+    accepts satisfies the spec's `transact`**: every spec precondition held (the proof check
+    included) and the new world is exactly the spec's `transactEffects`. The spec's nullifier
+    set is the one the execution spent before this transaction.
+
+    Hypotheses (`Connection/Hypotheses.lean`): the execution (`hgen`, `hrun`, the step
+    `hstep`); the program is not the system program; `HashesAgree`, `SolanaFacts`,
+    `CryptoFacts`, the syscall contracts `C` and `PairingLaws` (assumed); `OutsideSpecDetail`
+    (Solana details the spec does not model, by design). No code/spec difference is excluded.
+    `WellFormed` is no longer a hypothesis: it is proved. -/
+theorem transact_connection_main [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
+    {d : Deployment} {rent : Nat → U64} {s₀ s s' : State} {evs : List Event} {tx : TxEnv}
+    {a : TransactAccounts} {proof : zkcash_core.transact.Proof} {extAmount : I64} {fee : U64}
+    {out1 out2 : Slice U8} {events : List CommitmentData}
+    (hgen : Genesis d.programId s₀) (hrun : Run d s₀ evs s) (hpid : d.programId ≠ systemProgram)
+    (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
+    (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
+    (hashes : HashesAgree d.crypto)
+    (solana : SolanaFacts rent out1 out2)
+    (crypto : CryptoFacts d proof)
+    (outside : OutsideSpecDetail d rent s tx a proof) :
+    letI : LeanSpec.Groups := syscallGroups G1 G2 GT
+    letI : LeanSpec.Pairing := syscallPairing C laws
+    letI : LeanSpec.Deployment := ⟨programKey C⟩
+    let inputs := toInputs a proof extAmount fee out1 out2 (proofPoints C proof)
+    LeanSpec.transact inputs (toWorld d rent (runSpent evs) s)
+      (toWorld d rent (runSpent evs ∪ {inputs.k0, inputs.k1}) s') :=
+  (transact_refines_verified C laws hstep hashes (wf_reachable hgen hrun hpid) solana crypto outside).1
 
 end
 

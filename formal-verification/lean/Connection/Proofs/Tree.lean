@@ -1,5 +1,5 @@
 import Connection.Proofs.Checks
-import Connection.Assumptions
+import Connection.Hypotheses
 open Aeneas Aeneas.Std Result PrivacyCash.Model
 
 /-! # Proofs: the Merkle tree append
@@ -244,10 +244,12 @@ theorem histF_set (a : Std.Array (Std.Array U8 32#usize) 100#usize) (i : Usize)
     rw [getElem!_pos _ _ (by simp [hlen]), getElem!_pos _ _ (by simp [hlen])]
     simp [Ne.symm hj']
 
+omit [LeanSpec.PoseidonHashes] in
 private theorem usize_big : 2 ^ 26 ≤ 2 ^ UScalarTy.Usize.numBits :=
   Nat.pow_le_pow_right (by norm_num)
     (by cases System.Platform.numBits_eq <;> simp_all [UScalarTy.numBits])
 
+omit [LeanSpec.PoseidonHashes] in
 /-- `x.ok_or e` followed by `?`, on a `some`: continues with the value. -/
 private theorem okOr_some {T β : Type} (v : T) (e : error.ErrorCode)
     (k : core.ops.control_flow.ControlFlow (core.result.Result core.convert.Infallible error.ErrorCode) T → Result β)
@@ -264,6 +266,7 @@ private theorem okOr_some {T β : Type} (v : T) (e : error.ErrorCode)
     simpa [core.result.Result.Insts.CoreOpsTry.branch] using hcf
   exact h
 
+omit [LeanSpec.PoseidonHashes] in
 /-- `x.ok_or e` followed by `?`, on a `none`: continues with the error. -/
 private theorem okOr_none {T β : Type} (e : error.ErrorCode)
     (k : core.ops.control_flow.ControlFlow (core.result.Result core.convert.Infallible error.ErrorCode) T → Result β)
@@ -400,6 +403,104 @@ theorem append_ok (H : merkle_tree.Hasher Unit)
     rw [Nat.mod_eq_of_lt hidx]
     simp
 
+
+omit [LeanSpec.PoseidonHashes] in
+/-- A successful `append` keeps the tree's shape (no hash assumption needed). -/
+theorem append_shape (H : merkle_tree.Hasher Unit)
+    (leaf : Std.Array U8 32#usize) (t t' : merkle_tree.MerkleTreeAccount)
+    (p : alloc.vec.Vec (Std.Array U8 32#usize)) (hshape : TreeShape t)
+    (h : merkle_tree.append H leaf t = ok (.Ok p, t')) :
+    TreeShape t' ∧
+      t.next_index.val < 2 ^ 26 ∧ t'.next_index.val = t.next_index.val + 1 ∧
+      t'.authority = t.authority ∧ t'.max_deposit_amount = t.max_deposit_amount ∧
+      t'.bump = t.bump := by
+  obtain ⟨hheight, hsize, hidx⟩ := hshape
+  unfold merkle_tree.append at h
+  have hhu : (UScalar.cast .Usize t.height).val = 26 := by simp [hheight]
+  have hsu : (UScalar.cast .Usize t.root_history_size).val = 100 := by simp [hsize]
+  obtain ⟨hu, hhu', h⟩ := bindOk h
+  obtain rfl : UScalar.cast .Usize t.height = hu := Result.ok_injective hhu'
+  obtain ⟨rs, hrs', h⟩ := bindOk h
+  obtain rfl : UScalar.cast .Usize t.root_history_size = rs := Result.ok_injective hrs'
+  obtain ⟨mc, hmc, h⟩ := bindOk h
+  obtain ⟨mc', hmc', hmcv, -⟩ := okOf (UScalar.ShiftLeft_spec 1#u64 (UScalar.cast .Usize t.height)
+    (2 ^ 64) (by rw [hhu]; decide) (by simp [U64.size, U64.numBits]))
+  rw [hmc'] at hmc; obtain rfl := Result.ok_injective hmc
+  have hmcV : mc'.val = 2 ^ 26 := by rw [hmcv, hhu]; decide
+  by_cases hroom : t.next_index < mc'
+  swap
+  · rw [if_neg hroom] at h
+    have := Result.ok_injective h; simp at this
+  rw [if_pos hroom] at h
+  have hroomV : t.next_index.val < 2 ^ 26 := by rw [← hmcV]; exact hroom
+  have hciv : (UScalar.cast .Usize t.next_index).val = t.next_index.val :=
+    UScalar.cast_val_mod_pow_of_inBounds_eq _ _ (by have := usize_big; omega)
+  obtain ⟨ci, hci', h⟩ := bindOk h
+  obtain rfl : UScalar.cast .Usize t.next_index = ci := Result.ok_injective hci'
+  obtain ⟨pr, hpr, h⟩ := bindOk h
+  have hclone : (core.clone.CloneArray 32#usize core.clone.CloneU8).clone (Std.Array.repeat 32#usize 0#u8)
+      = ok (Std.Array.repeat 32#usize 0#u8) := by
+    obtain ⟨a', ha', heq⟩ := okOf (core.array.CloneArray.clone_spec core.clone.CloneU8
+      (Std.Array.repeat 32#usize 0#u8) (by intro x _; rfl))
+    show core.array.CloneArray.clone core.clone.CloneU8 _ = _
+    rw [ha', ← heq]
+  obtain ⟨pr', hpr', -, hprl⟩ := okOf (alloc.vec.from_elem_spec _ _ (UScalar.cast .Usize t.height) hclone)
+  rw [hpr'] at hpr; obtain rfl := Result.ok_injective hpr
+  obtain ⟨⟨a1, root1, proof1⟩, hlp, h⟩ := bindOk h
+  -- next_index + 1
+  obtain ⟨o, ho, h⟩ := bindOk h
+  cases hval : t.next_index.checked_add 1#u64 with
+  | none =>
+    have : o = none := by rw [← hval]; exact (Result.ok_injective ho).symm
+    subst this
+    have h := okOr_none _ _ h
+    obtain ⟨r2, hr2, h⟩ := bindOk h
+    have := Result.ok_injective h
+    simp [core.result.Result.Insts.CoreOpsTryTraitFromResidualResultInfallible.from_residual] at hr2
+    rw [← hr2] at this; simp at this
+  | some val =>
+  have : o = some val := by rw [← hval]; exact (Result.ok_injective ho).symm
+  subst this
+  have h := okOr_some _ _ _ h
+  have hv : val.val = t.next_index.val + 1 := by
+    have hs := U64.checked_add_bv_spec t.next_index 1#u64; rw [hval] at hs; simpa using hs.2.1
+  obtain ⟨ri, hri, h⟩ := bindOk h
+  obtain rfl : UScalar.cast .Usize t.root_index = ri := Result.ok_injective hri
+  have hriu : (UScalar.cast .Usize t.root_index).val = t.root_index.val :=
+    UScalar.cast_val_mod_pow_of_inBounds_eq _ _ (by have := usize_big; omega)
+  obtain ⟨o1, ho1, h⟩ := bindOk h
+  cases hval1 : Usize.checked_add (UScalar.cast .Usize t.root_index) 1#usize with
+  | none =>
+    have : o1 = none := by rw [← hval1]; exact (Result.ok_injective ho1).symm
+    subst this
+    have h := okOr_none _ _ h
+    obtain ⟨r2, hr2, h⟩ := bindOk h
+    have := Result.ok_injective h
+    simp [core.result.Result.Insts.CoreOpsTryTraitFromResidualResultInfallible.from_residual] at hr2
+    rw [← hr2] at this; simp at this
+  | some val1 =>
+  have : o1 = some val1 := by rw [← hval1]; exact (Result.ok_injective ho1).symm
+  subst this
+  have h := okOr_some _ _ _ h
+  have hv1 : val1.val = t.root_index.val + 1 := by
+    have hs := Usize.checked_add_bv_spec (UScalar.cast .Usize t.root_index) 1#usize
+    rw [hval1] at hs; rw [hs.2.1, hriu]; simp
+  obtain ⟨nri, hnri, h⟩ := bindOk h
+  obtain ⟨nri', hnri', hnriv'⟩ := okOf (UScalar.rem_spec val1 (y := UScalar.cast .Usize t.root_history_size)
+    (by rw [hsu]; norm_num))
+  rw [hnri'] at hnri; obtain rfl := Result.ok_injective hnri
+  have hnriv : nri'.val = (t.root_index.val + 1) % 100 := by rw [hnriv', hv1, hsu]
+  have hnri100 : nri'.val < 100 := by rw [hnriv]; exact Nat.mod_lt _ (by norm_num)
+  obtain ⟨i1, hi1, h⟩ := bindOk h
+  obtain rfl : UScalar.cast .U64 nri' = i1 := Result.ok_injective hi1
+  obtain ⟨a2, ha2, h⟩ := bindOk h
+  obtain ⟨a2', ha2', ha2v⟩ := okOf (Std.Array.update_spec t.root_history nri' root1 (by simp; omega))
+  rw [ha2'] at ha2; obtain rfl := Result.ok_injective ha2
+  obtain ⟨-, rfl⟩ := Prod.mk.inj (Result.ok_injective h)
+  have hi1v : (UScalar.cast .U64 nri').val = nri'.val :=
+    UScalar.cast_val_mod_pow_of_inBounds_eq _ _ (by simp; omega)
+  exact ⟨⟨hheight, hsize, by show (UScalar.cast .U64 nri').val < 100; omega⟩, hroomV,
+    hv, rfl, rfl, rfl⟩
 
 omit [LeanSpec.PoseidonHashes] in
 /-- With no room, `append` returns `MerkleTreeFull` and leaves the tree as it was. -/
