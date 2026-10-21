@@ -8,7 +8,8 @@ REVIEW SURFACE. Besides "the code model accepted the transaction", the connectio
 be read differently:
 
 1. `HashesAgree` (ASSUMED, about the deployment's hash functions): the code's Poseidon, zero
-   hashes and SHA-256 compute the spec's `H2`, `Z` and `sha256`.
+   hashes and SHA-256 compute the spec's `H2`, `Z` and `sha256`; Poseidon's outputs and the
+   zero hashes are canonical bytes (below the field modulus).
 2. `WellFormed` (INVARIANT, PROVED): facts about the program's own accounts. Proved for every
    state an execution reaches from genesis (`wellFormed_reachable`), so the main result
    (`transact_connection_main`) does not take it as a hypothesis; the per-step theorems do.
@@ -23,7 +24,15 @@ be read differently:
    is written at the level of the documentation. Each field rules one out; the theorem does not
    cover transactions where such a detail matters. Not a defect of the code or the spec.
 
+7. For handler completeness only: `HashesSucceed`, `SyscallsSucceed` (ASSUMED: the primitives
+   answer at all), and `KeyG2Decodes` (OPEN: not an approved assumption).
+
 No code/spec difference is currently excluded: the main theorem has no `Findings` hypothesis.
+
+Not a hypothesis here, but relied on: core-model's `EnvStep` (outside actions cannot change the
+owner or data of an account the program owns, and the program never closes one). The
+double-spend protection rests on it: a nullifier account, once created, stays. Check it in
+core-model (`PrivacyCash/Model/Execution.lean`).
 -/
 
 namespace Connection
@@ -39,6 +48,14 @@ structure HashesAgree (c : Crypto) : Prop where
   zeroBytes : ∃ z, c.hasher.zero_bytes = ok z ∧ ∀ i, i ≤ 26 → toF (z.val[i]!) = LeanSpec.Z i
   /-- SHA-256 is the spec's `sha256` (used for the external data hash). -/
   sha256 : ∀ x h, c.sha256.hash x = ok h → toBytes h.val = LeanSpec.Sha.sha256 (toBytes x.val)
+  /-- Poseidon's outputs are canonical: their big-endian value is below the field modulus.
+      True of the program's hasher: `light-poseidon` computes in `ark_bn254::Fr` and writes
+      the result with `into_bigint().to_bytes_be()`, which is always below the field's modulus,
+      and that modulus is the spec's `p` (`p_eq`, `Connection/Mapping.lean`). -/
+  poseidonCanonical : ∀ a b h, c.hasher.hash_pair a b = ok h → Canonical h
+  /-- The program's zero hashes `0, …, 26` are canonical. True: they are Poseidon outputs
+      (checked by the fork's `zero_bytes_are_empty_subtree_roots` test), and entry 0 is zero. -/
+  zeroBytesCanonical : ∃ z, c.hasher.zero_bytes = ok z ∧ ∀ i, i ≤ 26 → Canonical (z.val[i]!)
 
 /-- **Invariant, proved**: facts about the program's own accounts. They hold in every state an
     execution reaches from genesis (`wellFormed_reachable`), with `spent` the nullifiers that
@@ -63,6 +80,14 @@ structure WellFormed (d : Deployment) (spent : Finset LeanSpec.F) (s : State) : 
   spentRecorded : ∀ x ∈ spent, ∃ n : Pubkey, Canonical n ∧ toF n = x ∧
     ((s (d.pda (nullifier0Seeds n))).owner = d.programId ∨
       (s (d.pda (nullifier1Seeds n))).owner = d.programId)
+  /-- Every root stored in the history of a tree the program owns is canonical (big-endian
+      value below the field modulus): the program stores only the zero hashes, zero bytes and
+      Poseidon outputs there (`HashesAgree.zeroBytesCanonical`, `poseidonCanonical`). -/
+  storedRoots : ∀ k t, HoldsTree d.programId s k t → ∀ j : Fin 100, Canonical t.root_history.val[j.val]!
+  /-- Every subtree stored in a tree the program owns is canonical: the program stores only
+      zero hashes, leaves the verifier range-checked, and Poseidon outputs there. Needed by
+      handler completeness (Poseidon answers only on canonical inputs). -/
+  storedSubtrees : ∀ k t, HoldsTree d.programId s k t → ∀ j : Fin 26, Canonical t.subtrees.val[j.val]!
 
 /-- **Assumed**, about the Solana runtime, for this transaction. -/
 structure SolanaFacts (rent : Nat → U64) (out1 out2 : Slice U8) : Prop where
@@ -101,8 +126,67 @@ variable {s : AltBn128}
 
 /-- The spec's pairing: the syscall's. -/
 @[reducible] def syscallPairing (C : AltBn128Contracts s G1 G2 GT) (laws : PairingLaws C.e) :
-    @LeanSpec.Pairing (syscallGroups G1 G2 GT) _ _ _ _ _ :=
-  @LeanSpec.Pairing.mk (syscallGroups G1 G2 GT) _ _ _ _ _ C.e laws.smul_left laws.smul_right
+    @LeanSpec.Pairing (syscallGroups C) _ _ _ _ _ :=
+  @LeanSpec.Pairing.mk (syscallGroups C) _ _ _ _ _ C.e laws.smul_left laws.smul_right
+
+end
+
+/-! ## For handler completeness only
+
+Safety ("code accepts ⟹ spec allows") needs only what a returned answer means. Completeness
+("spec allows ⟹ code accepts") also needs the primitives to answer at all. -/
+
+/-- **Assumed** (handler completeness only): the hash functions return a value where the
+    program needs one. True of the real libraries: `light-poseidon` fails only on inputs ≥ p,
+    and the program's Poseidon inputs are canonical (stored subtrees, zero hashes, the
+    commitments the verifier range-checked, and Poseidon's own outputs); SHA-256 always
+    returns. Separate from `HashesAgree`, which says only what a returned value is. -/
+structure HashesSucceed (c : Crypto) : Prop where
+  /-- Poseidon returns a value on canonical inputs. -/
+  poseidon : ∀ a b, Canonical a → Canonical b → ∃ h, c.hasher.hash_pair a b = ok h
+  /-- SHA-256 always returns a value. -/
+  sha256 : ∀ x, ∃ h, c.sha256.hash x = ok h
+
+section
+variable {G1 G2 GT : Type} [AddCommGroup G1] [CommMonoid GT] {s : AltBn128}
+
+/-- **Assumed** (handler completeness only): the `alt_bn128` syscalls return a value on valid
+    points, and the pairing answers 1 exactly when the product of the pairings is 1. The
+    converse of core-model's `AltBn128Contracts`, which only say what a returned answer means.
+    True of Solana's syscalls, which fail only on invalid input. To be raised with the
+    core-model team (`TODO.md`): if they add it to the contracts, this bundle can go. -/
+structure SyscallsSucceed (C : AltBn128Contracts s G1 G2 GT) : Prop where
+  /-- Multiplication returns a value when its point (bytes 0..63) decodes. -/
+  mul : ∀ input, C.decodeG1 (bytesAt input 0 64#usize (by simp)) ≠ none →
+    ∃ out, s.multiplication input = some out
+  /-- Addition returns a value when both points decode. -/
+  add : ∀ input, C.decodeG1 (bytesAt input 0 64#usize (by simp)) ≠ none →
+    C.decodeG1 (bytesAt input 64 64#usize (by simp)) ≠ none → ∃ out, s.addition input = some out
+  /-- The pairing returns a value when its eight points decode, and that value ends in 1
+      exactly when the product of the four pairings is 1. -/
+  pairing : ∀ input (P₁ P₂ P₃ P₄ : G1) (Q₁ Q₂ Q₃ Q₄ : G2),
+    C.decodeG1 (bytesAt input 0 64#usize (by simp)) = some P₁ →
+    C.decodeG2 (bytesAt input 64 128#usize (by simp)) = some Q₁ →
+    C.decodeG1 (bytesAt input 192 64#usize (by simp)) = some P₂ →
+    C.decodeG2 (bytesAt input 256 128#usize (by simp)) = some Q₂ →
+    C.decodeG1 (bytesAt input 384 64#usize (by simp)) = some P₃ →
+    C.decodeG2 (bytesAt input 448 128#usize (by simp)) = some Q₃ →
+    C.decodeG1 (bytesAt input 576 64#usize (by simp)) = some P₄ →
+    C.decodeG2 (bytesAt input 640 128#usize (by simp)) = some Q₄ →
+    ∃ out, s.pairing input = some out ∧
+      (out.val[31]! = 1#u8 ↔ C.e P₁ Q₁ * C.e P₂ Q₂ * C.e P₃ Q₃ * C.e P₄ Q₄ = 1)
+
+/-- **Assumed** (handler completeness only): the syscalls decode the three G2 points of the
+    program's verifying key. True: the trusted setup produced valid points, and the real
+    program verifies real proofs on chain. Needed because
+    `programKey` reads an undecodable key point as `0`, so without it the spec could accept a
+    proof the code rejects. The key's G1 points are checked by computation
+    (`key_alpha_decodes`, `key_ic_decodes`); the G2 decoding is a parameter of core-model's
+    contracts, so it cannot be checked in Lean. -/
+structure KeyG2Decodes (C : AltBn128Contracts s G1 G2 GT) : Prop where
+  beta : C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_beta_g2 ≠ none
+  gamma : C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_gamme_g2 ≠ none
+  delta : C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_delta_g2 ≠ none
 
 end
 

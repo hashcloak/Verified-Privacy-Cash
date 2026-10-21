@@ -1,10 +1,12 @@
 import Spec.Proofs
+import Mathlib.Algebra.Group.PUnit
 
 /-! ## Non-vacuity check (not for review)
 
 The theorems quantify over runs with witnesses (`r.WitnessesFor wit`), and G3a has many
 hypotheses. This checks that they can all hold at once, in a toy model of the hash
-functions and given Groth16 completeness:
+functions, for any groups and pairing given Groth16 completeness (and, at the end of this
+file, for a toy pairing in which Groth16 completeness is proved, `toyComplete`):
 - `run_with_witnesses_exists`: a run of one deposit, with a witness for its proof;
 - `toy_withdrawal_G3a`: G3a applies to withdrawing that deposit's note: every hypothesis
   of G3a holds;
@@ -88,7 +90,7 @@ def toyWitness : Witness where
   outPk := 0
   outR := 0
 
-def toyInputs (π : Groth16.Proof) : TxInputs where
+def toyInputs (π : Groth16.ProofBytes) : TxInputs where
   R := 1
   pubAmt := 1
   extDataHash := (natOfLE (Sha.sha256 []) : F)
@@ -105,8 +107,13 @@ def toyInputs (π : Groth16.Proof) : TxInputs where
   encOut1 := []
   π := π
   mintAddr := 0
+  pubInputBytes := ![encodeBE32 1, encodeBE32 1, encodeBE32 (natOfLE (Sha.sha256 []) : F),
+    encodeBE32 0, encodeBE32 11, encodeBE32 1, encodeBE32 0]
 
-lemma toy_relation (π : Groth16.Proof) : RelationS (toyInputs π).pubInputs toyWitness where
+lemma toy_encoded (π : Groth16.ProofBytes) : publicInputsEncoded (toyInputs π) := by
+  intro i; fin_cases i <;> exact canonicalEncoding_encodeBE32 _
+
+lemma toy_relation (π : Groth16.ProofBytes) : RelationS (toyInputs π).pubInputs toyWitness where
   outputCommitmentIntegrity := by
     intro j; fin_cases j <;> simp [toyInputs, TxInputs.pubInputs, toyWitness, commit, toy_H4]
   nullifierCorrectness := by
@@ -123,8 +130,8 @@ lemma toy_relation (π : Groth16.Proof) : RelationS (toyInputs π).pubInputs toy
     haveI : Fact (1 < p) := ⟨by norm_num [p]⟩
     intro j; fin_cases j <;> simp [toyWitness, ZMod.val_one]
 
-noncomputable def depProof (hCompl : Groth16Complete) : Groth16.Proof :=
-  Classical.choose (hCompl (toyInputs ⟨0, 0, 0⟩).pubInputs toyWitness (toy_relation _))
+noncomputable def depProof (hCompl : Groth16Complete) : Groth16.ProofBytes :=
+  Classical.choose (hCompl (toyInputs ⟨[], [], []⟩).pubInputs toyWitness (toy_relation _))
 
 noncomputable abbrev toyDeposit (hCompl : Groth16Complete) : TxInputs := toyInputs (depProof hCompl)
 
@@ -132,16 +139,35 @@ noncomputable abbrev toyDeposit (hCompl : Groth16Complete) : TxInputs := toyInpu
 noncomputable abbrev W1 (hCompl : Groth16Complete) : World :=
   transactEffects (toyDeposit hCompl) toyInit
 
+lemma toyInit_bal (k : Pubkey) : toyInit.balances k ≤ 1 := by
+  simp only [initWorld, Function.update]
+  split_ifs <;> simp
+
+lemma toy_delta_le (π : Groth16.ProofBytes) (k : Pubkey) :
+    balanceDelta (toyInputs π) toyInit.state.pool toyInit.nullifierRent k ≤ 1 := by
+  unfold balanceDelta; split_ifs <;> simp_all [toyInputs, initWorld]
+
+lemma toy_deposit_fit (π : Groth16.ProofBytes) : balancesFit (toyInputs π) toyInit := by
+  refine ⟨fun k _ => ?_, fun _ => ?_⟩
+  · have h1 : (toyInit.balances k : ℤ) ≤ 1 := by exact_mod_cast toyInit_bal k
+    have h2 := toy_delta_le π k
+    linarith
+  · simp [World.poolBalance, initWorld, toyInputs]
+
 lemma toy_deposit_step (hCompl : Groth16Complete) :
     transact (toyDeposit hCompl) toyInit (W1 hCompl) := by
   refine ⟨?_, ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩
+  obtain ⟨π, hdec, hver⟩ := Classical.choose_spec
+      (hCompl (toyInputs ⟨[], [], []⟩).pubInputs toyWitness (toy_relation _))
   exact {
-    knownRoot := ⟨⟨0, by simp [initWorld, initTree, toyInputs]; rfl⟩, one_ne_zero_F⟩
+    knownRoot := rootBytesKnown_of (toy_encoded _)
+      ⟨⟨0, by simp [initWorld, initTree, toyInputs]; rfl⟩, one_ne_zero_F⟩
+    canonicalInputs := toy_encoded _
+    balancesFit := toy_deposit_fit _
     externalDataBinding := rfl
     minimumFee := by simp [feeSufficient, initWorld, toyCfg, toyInputs]
     pubAmtConsistency := by simp [pubAmtConsistent, toyInputs]
-    validZKP := Classical.choose_spec
-      (hCompl (toyInputs ⟨0, 0, 0⟩).pubInputs toyWitness (toy_relation _))
+    validZKP := ⟨π, hdec, hver⟩
     newNullifiers := by simp [nullifiersFresh, initWorld]
     distinctNullifiers := fun h => natCast_ne_zero 11 (by norm_num) (by norm_num [p])
       (by simp only [toyInputs] at h; exact_mod_cast h.symm)
@@ -158,12 +184,13 @@ lemma toy_deposit_step (hCompl : Groth16Complete) :
 noncomputable def toyRun1 (hCompl : Groth16Complete) : Run toyInit where
   txs := [toyDeposit hCompl]
   ws := fun j => if j = 0 then toyInit else W1 hCompl
+  donations := fun _ => 0
   start := rfl
   step := by
     intro j hj
     simp only [List.length_singleton, Nat.lt_one_iff] at hj
     subst hj
-    simpa using toy_deposit_step hCompl
+    simpa [World.donate_zero] using toy_deposit_step hCompl
 
 lemma toyRun1_final (hCompl : Groth16Complete) : (toyRun1 hCompl).final = W1 hCompl := by
   simp [Run.final, toyRun1]
@@ -217,6 +244,14 @@ lemma W1_poolBalance (hCompl : Groth16Complete) : (W1 hCompl).poolBalance = 1 :=
   have : ((W1 hCompl).balances toyPool : ℤ) = 1 := by rw [h, hz, hd]; ring
   exact_mod_cast this
 
+lemma W1_bal (hCompl : Groth16Complete) (k : Pubkey) : ((W1 hCompl).balances k : ℤ) ≤ 2 := by
+  have hpre := (toy_deposit_step hCompl).1
+  have h := transactEffects_balances (toyDeposit hCompl) toyInit hpre.signerSolvency
+    hpre.poolSolvency hpre.poolSeparate k
+  have h1 : (toyInit.balances k : ℤ) ≤ 1 := by exact_mod_cast toyInit_bal k
+  have h2 := toy_delta_le (depProof hCompl) k
+  rw [h]; linarith
+
 /-! ### Transaction 1: withdrawing that note -/
 
 /-- Input 0 spends the deposit's note at leaf 0 (secret key `0`); input 1 is a dummy at
@@ -231,7 +266,7 @@ def wdWitness : Witness where
   outPk := 0
   outR := 0
 
-def wdInputs (π : Groth16.Proof) : TxInputs where
+def wdInputs (π : Groth16.ProofBytes) : TxInputs where
   R := 1
   pubAmt := -1
   extDataHash := (natOfLE (Sha.sha256 []) : F)
@@ -248,17 +283,31 @@ def wdInputs (π : Groth16.Proof) : TxInputs where
   encOut1 := []
   π := π
   mintAddr := 0
+  pubInputBytes := ![encodeBE32 1, encodeBE32 (-1), encodeBE32 (natOfLE (Sha.sha256 []) : F),
+    encodeBE32 7, encodeBE32 21, encodeBE32 0, encodeBE32 0]
 
-lemma wd_nullifiers (π : Groth16.Proof) (i : Fin 2) : (wdInputs π).pubInputs.nullifiers i
+lemma wd_encoded (π : Groth16.ProofBytes) : publicInputsEncoded (wdInputs π) := by
+  intro i; fin_cases i <;> exact canonicalEncoding_encodeBE32 _
+
+lemma wd_nullifiers (π : Groth16.ProofBytes) (i : Fin 2) : (wdInputs π).pubInputs.nullifiers i
     = nullifier (wdWitness.inC i) (wdWitness.sign i) (wdWitness.openings i).index := by
   fin_cases i <;>
     simp [wdInputs, TxInputs.pubInputs, wdWitness, nullifier, Witness.sign, signature,
       Witness.inC, commit, Witness.inPk, toy_H1, toy_H3, toy_H4] <;> norm_num
 
+lemma wd_fit (hCompl : Groth16Complete) (π : Groth16.ProofBytes) :
+    balancesFit (wdInputs π) (W1 hCompl) := by
+  refine ⟨fun k _ => ?_, fun h => by simp [wdInputs] at h⟩
+  have h1 := W1_bal hCompl k
+  have h2 : balanceDelta (wdInputs π) (W1 hCompl).state.pool (W1 hCompl).nullifierRent k ≤ 1 := by
+    rw [(W1_rent hCompl).1]
+    unfold balanceDelta; split_ifs <;> simp_all [wdInputs]
+  linarith
+
 lemma ne_7_21 : (7 : F) ≠ 21 := by
   have := natCast_ne 7 21 (by norm_num [p]) (by norm_num [p]) (by norm_num); exact_mod_cast this
 
-lemma wd_fresh (hCompl : Groth16Complete) (π : Groth16.Proof) (i : Fin 2) :
+lemma wd_fresh (hCompl : Groth16Complete) (π : Groth16.ProofBytes) (i : Fin 2) :
     (wdInputs π).pubInputs.nullifiers i ∉ (W1 hCompl).state.nullifiers := by
   rw [W1_nullifiers]
   have h70 : (7 : F) ≠ 0 := by have := natCast_ne_zero 7 (by norm_num) (by norm_num [p]); exact_mod_cast this
@@ -284,7 +333,7 @@ theorem toy_G3a_hypotheses (hCompl : Groth16Complete) :
   have hfin := toyRun1_final hCompl
   have hunsp0 : (0 : ℕ) ∈ (toyRun1 hCompl).unspent (fun _ => toyWitness) := by
     simp [Run.unspent, toyRun1, toyWitness]
-  refine ⟨wdInputs ⟨0, 0, 0⟩, wdWitness, 2, ?_, toyRun1_wit hCompl, ?_, ?_, ?_, ?_⟩
+  refine ⟨wdInputs ⟨[], [], []⟩, wdWitness, 2, ?_, toyRun1_wit hCompl, ?_, ?_, ?_, ?_⟩
   · show wdWitness.inAmt 0 ≠ 0
     simp only [wdWitness, Matrix.cons_val_zero]
     exact one_ne_zero_F
@@ -314,7 +363,8 @@ theorem toy_G3a_hypotheses (hCompl : Groth16Complete) :
         exact h'.symm
   · refine { outputs := ?_, nullifiers := wd_nullifiers _, amounts := ?_,
              outputRange := ?_, externalData := rfl, publicAmount := ?_, distinctNullifiers := ne_7_21,
-             amountRange := ?_, encOutLength := ?_, poolSeparate := ?_, signerCanPay := ?_ }
+             amountRange := ?_, encOutLength := ?_, poolSeparate := ?_, signerCanPay := ?_,
+             encodings := wd_encoded _ }
     · intro j; fin_cases j <;> simp [wdInputs, TxInputs.pubInputs, wdWitness, commit, toy_H4]
     · simp [wdInputs, TxInputs.pubInputs, wdWitness]
     · intro j; simp [wdWitness]
@@ -323,7 +373,8 @@ theorem toy_G3a_hypotheses (hCompl : Groth16Complete) :
     · simp [encOutsFit, wdInputs]
     · rw [hfin, W1_pool]; exact ⟨toyPool_ne, fun _ => toyPool_ne, fun _ => toyPool_ne⟩
     · rw [hfin]; unfold signerSolvent; rw [(W1_rent hCompl).1]; simp [wdInputs]
-  · refine { fee := ?_, depositLimit := ?_, depositFee := ?_, treeRoom := ?_ }
+  · refine { fee := ?_, depositLimit := ?_, depositFee := ?_, treeRoom := ?_,
+             balancesFit := by rw [hfin]; exact wd_fit hCompl _ }
     · rw [hfin]; simp [feeSufficient, W1, transactEffects, transferEffects_state, initWorld, toyCfg, wdInputs]
     · simp [depositWithinLimit, wdInputs]
     · simp [wdInputs]
@@ -331,7 +382,7 @@ theorem toy_G3a_hypotheses (hCompl : Groth16Complete) :
 
 /-! ### The run of both transactions -/
 
-lemma wd_relation (π : Groth16.Proof) : RelationS (wdInputs π).pubInputs wdWitness where
+lemma wd_relation (π : Groth16.ProofBytes) : RelationS (wdInputs π).pubInputs wdWitness where
   outputCommitmentIntegrity := by
     intro j; fin_cases j <;> simp [wdInputs, TxInputs.pubInputs, wdWitness, commit, toy_H4]
   nullifierCorrectness := wd_nullifiers π
@@ -342,8 +393,8 @@ lemma wd_relation (π : Groth16.Proof) : RelationS (wdInputs π).pubInputs wdWit
   amountConservation := by simp [wdInputs, TxInputs.pubInputs, wdWitness]
   outputRangeChecks := by intro j; simp [wdWitness]
 
-noncomputable def wdProof (hCompl : Groth16Complete) : Groth16.Proof :=
-  Classical.choose (hCompl (wdInputs ⟨0, 0, 0⟩).pubInputs wdWitness (wd_relation _))
+noncomputable def wdProof (hCompl : Groth16Complete) : Groth16.ProofBytes :=
+  Classical.choose (hCompl (wdInputs ⟨[], [], []⟩).pubInputs wdWitness (wd_relation _))
 
 noncomputable abbrev toyWithdrawal (hCompl : Groth16Complete) : TxInputs := wdInputs (wdProof hCompl)
 
@@ -353,13 +404,16 @@ lemma toy_withdrawal_step (hCompl : Groth16Complete) :
   have hcfg : (W1 hCompl).state.config = toyCfg := by
     simp [W1, transactEffects, transferEffects_state, initWorld]
   have hrent : (W1 hCompl).rentExemptMin = 0 := (W1_rent hCompl).2
+  obtain ⟨π, hdec, hver⟩ := Classical.choose_spec
+      (hCompl (wdInputs ⟨[], [], []⟩).pubInputs wdWitness (wd_relation _))
   exact {
-    knownRoot := ⟨W1_root_mem hCompl, one_ne_zero_F⟩
+    knownRoot := rootBytesKnown_of (wd_encoded _) ⟨W1_root_mem hCompl, one_ne_zero_F⟩
+    canonicalInputs := wd_encoded _
+    balancesFit := wd_fit hCompl _
     externalDataBinding := rfl
     minimumFee := by rw [hcfg]; simp [feeSufficient, toyCfg, wdInputs]
     pubAmtConsistency := by simp [pubAmtConsistent, wdInputs]
-    validZKP := Classical.choose_spec
-      (hCompl (wdInputs ⟨0, 0, 0⟩).pubInputs wdWitness (wd_relation _))
+    validZKP := ⟨π, hdec, hver⟩
     newNullifiers := ⟨wd_fresh hCompl (wdProof hCompl) 0, wd_fresh hCompl (wdProof hCompl) 1⟩
     distinctNullifiers := ne_7_21
     depositLimit := by simp [depositWithinLimit, wdInputs]
@@ -378,13 +432,14 @@ noncomputable def toyRun2 (hCompl : Groth16Complete) : Run toyInit where
   txs := [toyDeposit hCompl, toyWithdrawal hCompl]
   ws := fun j => if j = 0 then toyInit else if j = 1 then W1 hCompl
     else transactEffects (toyWithdrawal hCompl) (W1 hCompl)
+  donations := fun _ => 0
   start := rfl
   step := by
     intro j hj
     simp only [List.length_cons, List.length_nil] at hj
     rcases (show j = 0 ∨ j = 1 by omega) with rfl | rfl
-    · simpa using toy_deposit_step hCompl
-    · simpa using toy_withdrawal_step hCompl
+    · simpa [World.donate_zero] using toy_deposit_step hCompl
+    · simpa [World.donate_zero] using toy_withdrawal_step hCompl
 
 theorem run_with_spend_exists (hCompl : Groth16Complete) :
     ∃ (r : Run toyInit) (wit : ℕ → Witness),
@@ -403,9 +458,47 @@ theorem run_with_spend_exists (hCompl : Groth16Complete) :
 /-- **The toy withdrawal is accepted.** After `toyRun1`, the program accepts the withdrawal of
     the deposit's note. -/
 theorem toy_withdrawal_accepted (hCompl : Groth16Complete) :
-    CanBeAccepted (wdInputs ⟨0, 0, 0⟩) (toyRun1 hCompl).final := by
+    CanBeAccepted (wdInputs ⟨[], [], []⟩) (toyRun1 hCompl).final := by
   refine ⟨wdProof hCompl, ?_⟩
   rw [toyRun1_final]
   exact toy_withdrawal_step hCompl
+
+end LeanSpec.NonVacuity
+
+/-! ### A toy pairing, so that Groth16 completeness holds
+
+Everything above holds for any groups and pairing, given Groth16 completeness. Here the groups
+and the pairing are a deliberately broken toy, like the hashes: `G1 = G2 = F`, `GT = Unit`,
+every pairing is `1`, every byte string decodes (to `0`), and the key is all zeros. Every
+proof then verifies, so `Groth16Complete` holds (`toyComplete`). This shows the hypotheses can
+hold together; it says nothing about real cryptography. -/
+namespace LeanSpec.NonVacuity
+open LeanSpec
+
+/-- Toy groups: `G1 = G2 = F`, `GT = Unit`; every byte string decodes to the point `0`. -/
+@[reducible] def toyGroups : Groups := ⟨F, F, Unit, fun _ => some 0, fun _ => some 0⟩
+
+attribute [local instance] toyGroups
+
+-- The toy groups' structure: that of `F` and of `Unit`.
+@[reducible] def toyG1Group : AddCommGroup G1 := inferInstanceAs (AddCommGroup F)
+@[reducible] def toyG2Group : AddCommGroup G2 := inferInstanceAs (AddCommGroup F)
+attribute [local instance] toyG1Group toyG2Group
+@[reducible] def toyG1Module : Module F G1 := inferInstanceAs (Module F F)
+@[reducible] def toyG2Module : Module F G2 := inferInstanceAs (Module F F)
+@[reducible] def toyGTGroup : CommGroup GT := inferInstanceAs (CommGroup Unit)
+attribute [local instance] toyG1Module toyG2Module toyGTGroup
+
+/-- Toy pairing: always `1` (`GT = Unit` has no other element). Bilinear, trivially. -/
+@[reducible] def toyPairing : Pairing := ⟨fun _ _ => 1, fun _ _ _ => rfl, fun _ _ _ => rfl⟩
+
+/-- Toy key: all points `0`. -/
+@[reducible] def toyDeployment : Deployment := ⟨⟨0, 0, 0, 0, fun _ => 0⟩⟩
+
+attribute [local instance] toyPairing toyDeployment
+
+/-- In the toy groups every proof verifies, so Groth16 completeness holds (for any hashes). -/
+theorem toyComplete [PoseidonHashes] : Groth16Complete :=
+  fun _ _ _ => ⟨⟨[], [], []⟩, ⟨0, 0, 0⟩, rfl, rfl⟩
 
 end LeanSpec.NonVacuity

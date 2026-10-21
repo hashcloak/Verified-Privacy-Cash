@@ -220,22 +220,17 @@ lemma sol_balance_correctness_step
   · simp [hf0]
   · rw [if_neg (fun h => htP hfpos h.symm)]; ring
 
-/-- HELPER (used by `Connection/Reachable.lean`): trace-free form of `Run.poolBalance`.
-    Weaker: `∃ txs` alone could be any list with the right sum. -/
-lemma sol_balance_correctness
-  (params : InitParams) (w: World)
-  (h: ReachableWorld (initWorld params) w)
-  : ∃ txs: List TxInputs,
-      (w.poolBalance : ℤ)
-        = txs.foldl (fun acc (tx: TxInputs) => acc + tx.extAmt - tx.f) (params.rentExemptMin : ℤ) := by
-  induction h with
-  | noStep => exact ⟨[], by simp [initWorld, World.poolBalance]⟩
-  | extend inputs _ transact_proof ih =>
-    obtain ⟨txs, htxs⟩ := ih
-    refine ⟨txs ++ [inputs], ?_⟩
-    have hstep := sol_balance_correctness_step _ _ inputs transact_proof
-    simp only [List.foldl_append, List.foldl_cons, List.foldl_nil]
-    rw [hstep, htxs]
+-- HELPERS: a donation changes only the pool's balance.
+@[simp] lemma World.donate_state (w : World) (x : ℕ) : (w.donate x).state = w.state := rfl
+@[simp] lemma World.donate_rentExemptMin (w : World) (x : ℕ) :
+    (w.donate x).rentExemptMin = w.rentExemptMin := rfl
+@[simp] lemma World.donate_nullifierRent (w : World) (x : ℕ) :
+    (w.donate x).nullifierRent = w.nullifierRent := rfl
+lemma World.donate_poolBalance (w : World) (x : ℕ) :
+    (w.donate x).poolBalance = w.poolBalance + x := by
+  simp [World.donate, World.poolBalance]
+lemma World.donate_zero (w : World) : w.donate 0 = w := by
+  cases w; simp [World.donate]
 
 /-- HELPER: `transferEffects` doesn't touch the tree. -/
 lemma transferEffects_tree (inputs: TxInputs) (oldWorld: World) :
@@ -828,7 +823,7 @@ lemma config_and_rent_exempt_min_constant
   : w.state.config = params.cfg ∧ w.rentExemptMin = params.rentExemptMin := by
   induction h with
   | noStep => exact ⟨rfl, rfl⟩
-  | extend inputs _ transact_proof ih =>
+  | extend d inputs _ transact_proof ih =>
     obtain ⟨ihc, ihr⟩ := ih
     obtain ⟨hc, hr⟩ := config_and_rent_exempt_min_step _ _ inputs transact_proof
     exact ⟨hc.trans ihc, hr.trans ihr⟩
@@ -896,6 +891,20 @@ lemma value_delta_eq_ext_sub_fee
   omega
 
 
+-- HELPERS: the root's bytes and the root's field element (`knownRoot`, `canonicalInputs`).
+
+/-- An accepted transaction's root is a known root. -/
+lemma transactPreconditions.rootKnown {inputs : TxInputs} {w : World}
+    (h : transactPreconditions inputs w) : rootKnown w.state.tree inputs.R := by
+  obtain ⟨_, _, hR⟩ := h.knownRoot
+  obtain ⟨_, _, he⟩ := h.canonicalInputs 0
+  rw [he] at hR; exact hR
+
+/-- Canonically encoded, a known root's bytes are known. -/
+lemma rootBytesKnown_of {T : Tree} {inputs : TxInputs} (hEnc : publicInputsEncoded inputs)
+    (h : rootKnown T inputs.R) : rootBytesKnown T (inputs.pubInputBytes 0) :=
+  ⟨(hEnc 0).1, (hEnc 0).2.1, by rw [(hEnc 0).2.2]; exact h⟩
+
 /-- HELPER: `transact` completeness. If every check of `transact` except the proof holds, and every
     non-zero input is a leaf of `cs0` (with `later` appended since), Groth16 completeness gives a
     proof that makes `transact` succeed. The openings are rebuilt from the tree (`opening_forward_preservation`). -/
@@ -927,6 +936,8 @@ lemma transact_complete (hCompl : Groth16Complete)
   (hRange: amountsInRange inputs.extAmt inputs.f)
   (hEnc: encOutsFit inputs)
   (hSep: poolIsSeparate inputs oldWorld.state.pool)
+  (hCanon: publicInputsEncoded inputs)
+  (hFit: balancesFit inputs oldWorld)
   : ∃ π, transact { inputs with π := π } oldWorld (transactEffects { inputs with π := π } oldWorld) := by
   classical
   -- For each spent input, use `opening_forward_preservation` to get a genuinely valid opening at the
@@ -981,14 +992,16 @@ lemma transact_complete (hCompl : Groth16Complete)
     amountConservation := hAmountConservation
     outputRangeChecks := hOutputRangeChecks
   }
-  obtain ⟨π, hπ⟩ := hCompl inputs.pubInputs witness' hRel'
-  refine ⟨π, ⟨?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩
+  obtain ⟨πb, π, hdec, hπ⟩ := hCompl inputs.pubInputs witness' hRel'
+  refine ⟨πb, ⟨?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩
   exact {
-    knownRoot := hRoot
+    knownRoot := rootBytesKnown_of hCanon hRoot
+    canonicalInputs := hCanon
+    balancesFit := hFit
     externalDataBinding := hData
     minimumFee := hFee
     pubAmtConsistency := hPubAmt
-    validZKP := hπ
+    validZKP := ⟨π, hdec, hπ⟩
     newNullifiers := hFresh
     distinctNullifiers := hDistinct
     signerSolvency := hSignerSolvent
@@ -1070,25 +1083,29 @@ lemma Run.reachable {w0 : World} (r : Run w0) :
   intro j
   induction j with
   | zero => intro _; rw [r.start]; exact ReachableWorld.noStep _
-  | succ j ih => intro hj; exact ReachableWorld.extend _ (ih (by omega)) (r.step j (by omega))
+  | succ j ih => intro hj; exact ReachableWorld.extend _ _ (ih (by omega)) (r.step j (by omega))
 
 /-- Every reachable world is the final world of some run. -/
 lemma ReachableWorld.exists_run {w0 w : World} (h : ReachableWorld w0 w) :
     ∃ r : Run w0, r.final = w := by
   induction h with
-  | noStep => exact ⟨⟨[], fun _ => _, rfl, fun j h => absurd h (by simp)⟩, rfl⟩
-  | @extend w2 w3 tx _ htx ih =>
+  | noStep => exact ⟨⟨[], fun _ => _, fun _ => 0, rfl, fun j h => absurd h (by simp)⟩, rfl⟩
+  | @extend w2 w3 d tx _ htx ih =>
     obtain ⟨r, hr⟩ := ih
-    refine ⟨⟨r.txs ++ [tx], fun j => if j ≤ r.txs.length then r.ws j else w3, ?_, ?_⟩, ?_⟩
+    refine ⟨⟨r.txs ++ [tx], fun j => if j ≤ r.txs.length then r.ws j else w3,
+      fun j => if j < r.txs.length then r.donations j else d, ?_, ?_⟩, ?_⟩
     · simp [r.start]
     · intro j hj
       simp only [List.length_append, List.length_singleton] at hj
       by_cases hjn : j < r.txs.length
-      · rw [List.getElem_append_left hjn, if_pos (by omega), if_pos (by omega)]
+      · rw [List.getElem_append_left hjn, if_pos (show j ≤ r.txs.length by omega),
+          if_pos (show j + 1 ≤ r.txs.length by omega), if_pos hjn]
         exact r.step j hjn
       · have hjeq : j = r.txs.length := by omega
         subst hjeq
-        rw [List.getElem_append_right (by omega), if_pos le_rfl, if_neg (by omega)]
+        rw [List.getElem_append_right (by omega), if_pos (le_refl r.txs.length),
+          if_neg (show ¬ r.txs.length + 1 ≤ r.txs.length by omega),
+          if_neg (show ¬ r.txs.length < r.txs.length by omega)]
         simp only [Nat.sub_self, List.getElem_singleton]
         rw [← hr] at htx; exact htx
     · simp [Run.final]
@@ -1129,7 +1146,7 @@ lemma Run.tree {params : InitParams}
     refine ⟨?_, ?_⟩
     · rw [hagree.tree, hfold, ← hcs]
       simp only [transactEffects, transferEffects_tree, nullifierRentEffects_state, foldAppend, List.foldl_cons,
-        List.foldl_nil]
+        List.foldl_nil, World.donate_state]
     · intro R hR
       rw [hagree.tree] at hR
       simp only [transactEffects, transferEffects_tree, nullifierRentEffects_state] at hR
@@ -1158,6 +1175,7 @@ lemma Run.cap {params : InitParams}
     2 * j ≤ 2^26 - 2 := by
   have hroom := (r.step j hj).1.treeNotFull
   unfold treeHasRoom at hroom
+  simp only [World.donate_state] at hroom
   rw [(r.tree j hj.le).1, foldAppend_nextIndex, r.leaves_take_length j hj.le] at hroom
   exact hroom
 
@@ -1210,18 +1228,20 @@ lemma Run.nullifier_fresh {w0 : World} (r : Run w0) (j : ℕ) (hj : j < r.txs.le
   · exact hfresh.1
   · exact hfresh.2
 
-/-- The pool's SOL after the first `j` transactions: rent reserve plus their `extAmt − f`. -/
+/-- The pool's SOL after the first `j` transactions: rent reserve plus their `extAmt − f`
+    plus the donations before them. -/
 lemma Run.poolBalance {params : InitParams}
     (r : Run (initWorld params)) :
     ∀ j ≤ r.txs.length, ((r.ws j).poolBalance : ℤ)
-      = params.rentExemptMin + ((r.txs.take j).map (fun tx => tx.extAmt - (tx.f : ℤ))).sum := by
+      = params.rentExemptMin + ((r.txs.take j).map (fun tx => tx.extAmt - (tx.f : ℤ))).sum
+        + ∑ i ∈ Finset.range j, (r.donations i : ℤ) := by
   intro j
   induction j with
   | zero => intro _; rw [r.start]; simp [initWorld, World.poolBalance]
   | succ j ih =>
     intro hj
-    rw [sol_balance_correctness_step _ _ _ (r.step j (by omega)), ih (by omega),
-      r.take_succ j (by omega)]
+    rw [sol_balance_correctness_step _ _ _ (r.step j (by omega)), World.donate_poolBalance,
+      Nat.cast_add, ih (by omega), r.take_succ j (by omega), Finset.sum_range_succ]
     simp only [List.map_append, List.map_cons, List.map_nil, List.sum_append, List.sum_cons,
       List.sum_nil]
     ring
@@ -1242,7 +1262,7 @@ theorem spends_are_genuine
   obtain ⟨hpre, _⟩ := r.step j hj
   have hRel := hwit.relation j hj
   obtain ⟨_, hhist⟩ := r.tree j hj.le
-  obtain ⟨hRmem, hR0⟩ := hpre.knownRoot
+  obtain ⟨hRmem, hR0⟩ := hpre.rootKnown
   have hlen := r.leaves_take_length j hj.le
   have hcap := r.cap j hj
   rcases hhist _ hRmem with h0 | ⟨k, hk, hRk⟩
@@ -1319,7 +1339,8 @@ theorem no_double_spend
 theorem balance
     (params : InitParams)
     (r : Run (initWorld params)) (wit : ℕ → Witness) (hwit : r.WitnessesFor wit) :
-    (r.final.poolBalance : ℤ) = params.rentExemptMin + ∑ pos ∈ r.unspent wit, leafValue wit pos
+    (r.final.poolBalance : ℤ)
+      = params.rentExemptMin + ∑ pos ∈ r.unspent wit, leafValue wit pos + r.donated
     ∨ BalanceBreak r wit := by
   classical
   have hBound : ∀ j (h : j < r.txs.length), r.txs[j].extAmt.natAbs < 2^248 ∧ r.txs[j].f < 2^248 := by
@@ -1361,10 +1382,11 @@ theorem balance
     rw [hamt]
     exact (hwit.relation (spentLeaf wit j i / 2) (by omega)).outputRangeChecks _
   set inV : ℕ → Fin 2 → ℤ := fun x i => (((wit x).inAmt i).val : ℤ) with hinV
-  -- After `j` transactions: pool = rent + value created − value spent.
+  -- After `j` transactions: pool = rent + value created − value spent + donations.
   have hA : ∀ j ≤ r.txs.length, ((r.ws j).poolBalance : ℤ)
       = params.rentExemptMin + ∑ pos ∈ Finset.range (2 * j), leafValue wit pos
-        - ∑ x ∈ Finset.range j, (inV x 0 + inV x 1) := by
+        - ∑ x ∈ Finset.range j, (inV x 0 + inV x 1)
+        + ∑ x ∈ Finset.range j, (r.donations x : ℤ) := by
     intro j
     induction j with
     | zero => intro _; rw [r.start]; simp [initWorld, World.poolBalance]
@@ -1388,7 +1410,8 @@ theorem balance
         have hf : (⟨(2 * j + 1) % 2, Nat.mod_lt _ (by norm_num)⟩ : Fin 2) = 1 := Fin.ext (by simp)
         rw [hf, e]
       rw [show 2 * (j+1) = 2 * j + 1 + 1 by ring, Finset.sum_range_succ, Finset.sum_range_succ,
-        Finset.sum_range_succ, hstep, ih (by omega), hl0, hl1]
+        Finset.sum_range_succ, Finset.sum_range_succ, hstep, World.donate_poolBalance,
+        Nat.cast_add, ih (by omega), hl0, hl1]
       simp only [hinV]
       linarith
   -- The spent leaves, and the spent value as a sum over them.
@@ -1437,6 +1460,8 @@ theorem balance
   rw [hB] at hfin
   rw [hunspent]
   show ((r.ws r.txs.length).poolBalance : ℤ) = _
+  unfold Run.donated
+  push_cast
   linarith
 
 -- PROOF of G1d. Statement and explanation: `Spec/Statements.lean`.
@@ -1491,6 +1516,24 @@ lemma natOfLE_natToBytesLE : ∀ (w n : ℕ), natOfLE (natToBytesLE w n) = n % 2
     rw [ih, BitVec.toNat_ofNat, Nat.shiftRight_eq_div_pow]
     rw [show 8 * (w+1) = 8 + 8 * w by ring, pow_add, Nat.mod_mul]
     norm_num
+
+lemma natOfBE_reverse (l : Bytes) : natOfBE l.reverse = natOfLE l := by
+  unfold natOfBE natOfLE
+  rw [List.foldl_reverse]
+  congr 1
+  funext b acc; ring
+
+/-- HELPER (used by the non-vacuity checks): the canonical 32-byte big-endian encoding of a
+    field element. -/
+def encodeBE32 (x : F) : Bytes := (natToBytesLE 32 x.val).reverse
+
+lemma canonicalEncoding_encodeBE32 (x : F) : canonicalEncoding (encodeBE32 x) x := by
+  have hx : x.val < p := ZMod.val_lt x
+  have hp : p < 2^(8*32) := by norm_num [p]
+  have hv : natOfBE (encodeBE32 x) = x.val := by
+    rw [encodeBE32, natOfBE_reverse, natOfLE_natToBytesLE, Nat.mod_eq_of_lt (by omega)]
+  refine ⟨by simp [encodeBE32, natToBytesLE_length], by rw [hv]; exact hx, ?_⟩
+  rw [hv]; exact ZMod.natCast_zmod_val x
 
 lemma natToBytesLE_inj (w n m : ℕ) (hn : n < 2^(8*w)) (hm : m < 2^(8*w))
     (h : natToBytesLE w n = natToBytesLE w m) : n = m := by
@@ -1748,8 +1791,9 @@ lemma withdrawal_solvent
   rw [hrent, ge_iff_le, habs]
   show _ ≤ ((r.ws r.txs.length).poolBalance : ℤ)
   have hfinal : ((r.ws r.txs.length).poolBalance : ℤ)
-      = params.rentExemptMin + ∑ pos ∈ r.unspent wit, leafValue wit pos := hbal
+      = params.rentExemptMin + ∑ pos ∈ r.unspent wit, leafValue wit pos + r.donated := hbal
   have ho : (0 : ℤ) ≤ (witness.outAmt 0).val + (witness.outAmt 1).val := by positivity
+  have hd : (0 : ℤ) ≤ r.donated := by positivity
   linarith
 
 -- LEMMA (used by G3a): G3a with every hypothesis spelled out.
@@ -1791,7 +1835,9 @@ lemma spendable_core
     (hDepositFee: inputs.extAmt ≥ 0 ∧ inputs.f > 0 →
         (r.final.poolBalance : ℤ) + inputs.extAmt ≥ inputs.f + r.final.rentExemptMin)
     (hSignerSolvent: signerSolvent r.final.balances inputs.s inputs.extAmt r.final.nullifierRent)
-    (hRoom: treeHasRoom r.final.state.tree) :
+    (hRoom: treeHasRoom r.final.state.tree)
+    (hCanon: publicInputsEncoded inputs)
+    (hFit: balancesFit inputs r.final) :
     (∃ π, transact { inputs with π := π } r.final (transactEffects { inputs with π := π } r.final))
     ∨ H2ZeroPreimage (treeHash ((leaves r.txs).take k) 25 0, treeHash ((leaves r.txs).take k) 25 1)
     ∨ BalanceBreak r wit
@@ -1867,7 +1913,7 @@ lemma spendable_core
     (by rw [List.append_nil]; exact hRk) hDep
     hOutputCommitmentIntegrity hNullifierCorrectness hNoDuplicateNullifiers hAmountConservation
     hOutputRangeChecks hRoot hData hFee hPubAmt hFresh hDistinct hDeposit hSolvent
-    hSignerSolvent hRoom hRange hEnc hSep
+    hSignerSolvent hRoom hRange hEnc hSep hCanon hFit
 
 -- PROOF of G3a. Statement and explanation: `Spec/Statements.lean`.
 theorem unspent_note_is_spendable
@@ -1888,7 +1934,7 @@ theorem unspent_note_is_spendable
       hHonest.distinctNullifiers hHonest.amounts hHonest.outputRange hHonest.externalData
       hHonest.publicAmount hHonest.distinctNullifiers hHonest.amountRange hHonest.encOutLength
       hHonest.poolSeparate hPolicy.fee hPolicy.depositLimit hPolicy.depositFee
-      hHonest.signerCanPay hPolicy.treeRoom with h | h
+      hHonest.signerCanPay hPolicy.treeRoom hHonest.encodings hPolicy.balancesFit with h | h
   · exact Or.inl h
   · exact Or.inr h
 

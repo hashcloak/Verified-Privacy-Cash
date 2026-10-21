@@ -13,8 +13,9 @@ hand-written Solana/Anchor model) to the spec (`lean/Spec/`). Open work is in `T
 
 **Scope: safety, plus exact per-function squares.** Code accepts ⟹ spec allows, with the
 spec's effects. The per-function equations also catch wrong rejections (L1); elsewhere they
-are not caught yet. Handler completeness is planned (`TODO.md`); full completeness, and with
-it G3a/G3b, is future work.
+are not caught yet. Handler completeness is proved, except at L1 and A0 (`handlerComplete_*`); full
+completeness through Anchor and the runtime, and with it G3a/G3b, is future work. No spec
+invariant is concluded over code executions yet: the highest-priority item in `TODO.md`.
 
 ## Theorems (`Statements.lean`)
 
@@ -26,19 +27,24 @@ external-data hash are not conditions and are not listed.
 | Code | Spec | Hypotheses (kind) |
 |---|---|---|
 | `check_public_amount` | `pubAmtConsistent` ∧ `amountsInRange`: **FAILS** (L1); counterexample; L1 is the only difference | none |
-| `is_known_root` | `rootKnown` (equal) | tree shape (inv); canonical history (OPEN: to prove, `TODO.md`); canonical root (OPEN: removed by the byte-level spec, `TODO.md`) |
-| `is_known_root` (accepts ⟹ known) | `rootKnown` | tree shape (inv); canonical root (OPEN, as above; in `transact` discharged by `verify_proof`) |
+| `is_known_root` | `rootBytesKnown` (equal) | tree shape (inv); canonical history (inv: `storedRoots_canonical_reachable`) |
 | `validate_fee` | `feeSufficient` ∧ `amountsInRange` (iff) | rates ≤ 100% (inv) |
 | `calculate_complete_ext_data_hash` | hashes exactly `serealizeExternalData`; `none` iff not `encOutsFit` | fits in a vector (asm, `SolanaFacts`) |
 | `append` | `appendEffects` (if it returns) / `MerkleTreeFull` (no room) | `HashesAgree` (asm); tree shape (inv) |
 | `verify_proof` | the 7 public inputs are canonical | none |
-| `verify_proof` (verifier bridge) | `proofValid` (spec's `Groth16.verify`) | syscall contracts (asm, core-model); `PairingLaws` (asm) |
+| `verify_proof` (verifier bridge) | `proofValid` (points decode, `Groth16.verify`) | syscall contracts (asm, core-model); `PairingLaws` (asm) |
 | `step … transact` (`transact_connection_verified`) | `transact` (all preconditions, exact effects) and `WellFormed` again | `WellFormed` (inv); `HashesAgree`, `SolanaFacts`, `CryptoFacts`, syscall contracts, `PairingLaws` (asm); `OutsideSpecDetail` (design) |
-| any execution from genesis (`wellFormed_reachable`) | every reached state is `WellFormed` | program ≠ system program (asm) |
+| any execution from genesis (`wellFormed_reachable`) | every reached state is `WellFormed` | program ≠ system program (asm); `HashesAgree` (asm) |
+| `storedRoots_canonical_reachable`, `storedSubtrees_canonical_reachable` | every tree the program owns stores canonical roots and subtrees, in every reachable state | as `wellFormed_reachable` |
+| handler (`handlerComplete_connection_fails`) | `transact` from the handler's view: **FAILS** (L1); counterexample | none |
+| handler (`handlerComplete_without_L1_fails`) | **FAILS** (A0); counterexample | none |
+| handler (`handlerComplete_differs_only_at_L1_A0`) | complete except L1 and A0 (describes the findings) | `HashesAgree`, `HashesSucceed`, `SyscallsSucceed`, `PairingLaws`, `KeyG2Decodes` (asm); tree shape, canonical history and subtrees, rates ≤ 100% (inv); signer is a system account (OPEN: premise or design) |
 | **every `transact` in any execution** (`transact_connection_main`, MAIN RESULT) | `transact`, with the spec's nullifier set = nullifiers spent so far | as `transact_connection_verified`, without `WellFormed` (proved) |
 
 `transact_connection` is the per-step result for any spec instances, with the bridge replaced
-by a hypothesis `hProofValid`.
+by a hypothesis `hProofValid`. `connection_nonvacuous` exhibits a toy execution (genesis,
+`initialize`, a 1-lamport deposit) accepted by `step` where every hypothesis of the main
+result holds.
 
 All are `sorry`-free and use only Lean's standard axioms.
 
@@ -46,6 +52,10 @@ All are `sorry`-free and use only Lean's standard axioms.
 
 No code/spec difference is excluded at present. Findings for the program's authors are in
 `FINDINGS.md`.
+
+- **A0 (informational, completeness only; in `FINDINGS.md`):** the code rejects a
+  proof whose `proof_a` is 64 zero bytes (arkworks rejects (0, 0) in `negate_g1`), which the
+  syscalls, and so the spec, read as the identity point.
 
 - **L1 (open, code rejects more):** `check_public_amount` rejects `extAmt = 0`, the internal
   transfer the docs describe and the spec allows. Lean proves the square false, with a
@@ -74,7 +84,11 @@ The spec is written at the level of the documentation and deliberately leaves th
 
 ## Assumed, not derived
 
-- `HashesAgree`: Poseidon, zero hashes, SHA-256 are the spec's.
+- `HashesAgree`: Poseidon, zero hashes, SHA-256 are the spec's; Poseidon outputs and the
+  zero hashes are canonical.
+- `HashesSucceed`, `SyscallsSucceed` (handler completeness only): the hashes and the
+  `alt_bn128` syscalls return a value on valid input. `KeyG2Decodes`: the syscalls decode
+  the program key's G2 points (true: the setup produced valid points).
 - `SolanaFacts`: rent positive; the transaction's data fits in a vector.
 - `CryptoFacts`: distinct nullifiers (circuit only; neither the program nor Anchor checks it,
   finding I1); the two new nullifier addresses differ (SHA-256).

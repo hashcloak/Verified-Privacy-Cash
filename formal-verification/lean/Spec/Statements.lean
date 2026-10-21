@@ -93,7 +93,10 @@ four ways that happens:
 ## Runs and witnesses
 
 Theorems quantify over a `Run` (`Spec/Vocabulary.lean`): the transactions actually applied
-from `initWorld`, and the world before each. Every reachable world ends some run
+from `initWorld`, the SOL anyone sent to the pool before each (donations, `World.donate`;
+the first is pre-funding), and the world before each. Only G1c mentions donations: every
+other theorem is about the state, the nullifiers or one transaction, which donations don't
+touch. Every reachable world ends some run
 (`ReachableWorld.exists_run`), so nothing is lost, and the code connection
 (`ReachableWorld`) still applies. Witnesses are any `wit` with `r.WitnessesFor wit`, read
 as what a knowledge extractor gets from whoever made the proofs (T1). The theorems hold
@@ -165,6 +168,13 @@ Each check of `transact` and constraint of `RelationS`, and the theorem whose pr
 it. A check no theorem uses protects something not stated yet, or is redundant.
 
   knownRoot                                                 G1a
+  canonicalInputs                                           G1a (reads the root from its
+                                                            bytes). NOT FROM THE DOCS (wire
+                                                            format): it rules out input
+                                                            aliasing (bytes of `x + p` sent
+                                                            for `x`), which a model of field
+                                                            elements cannot see; the code
+                                                            connection relies on it
   treeNotFull                                               G1a, G3c
   newNullifiers                                             G1b
   pubAmtConsistency                                         G1c
@@ -183,6 +193,10 @@ it. A check no theorem uses protects something not stated yet, or is redundant.
                                  protect no user's funds
   distinctNullifiers             none: duplicates `RelationS.noDuplicateNullifiers`. The
                                  program relies on the circuit for it, as we do (T1)
+  balancesFit                    none: Solana's `u64` balances (a payment that would overflow
+                                 is rejected); protects no user's funds
+                                 NOT FROM THE DOCS (wire format); a check of its own in the
+                                 code (the syscalls reject bytes that are not a point)
 
 ## Out of scope
 
@@ -269,16 +283,22 @@ theorem no_double_spend
     unable to pay out all notes; and SOL disappearing from the pool.
 
     How it is stated: in any `Run`, the pool's SOL equals its rent reserve plus the total
-    value of the notes not yet spent, or a hash break of G1a/G1b occurs (`BalanceBreak`). A note's value comes from the witness of the transaction
-    that created it; "not yet spent" means no non-zero input opened its leaf.
+    value of the notes not yet spent plus the SOL donated to the pool during the run
+    (`r.donated`), or a hash break of G1a/G1b occurs (`BalanceBreak`). A note's value comes
+    from the witness of the transaction that created it; "not yet spent" means no non-zero
+    input opened its leaf.
 
     Why this is the right statement: inflation is private value exceeding the SOL that
-    backs it, so the two are compared directly. An equality rules out both directions. -/
+    backs it, so the two are compared directly. An equality rules out both directions.
+    Anyone can send SOL to the pool (a donation, `World.donate`), so the pool can hold more
+    than its notes; the donations are counted exactly rather than stating `≥`, which would
+    hide SOL leaking out of the pool while donations cover it. -/
 theorem balance
     (params : InitParams)                                  -- [premise] a freshly initialized pool
     (r : Run (initWorld params))                           -- [attacker] any history
     (wit : ℕ → Witness) (hwit : r.WitnessesFor wit) :      -- [trust T1] the witnesses of its proofs
-    (r.final.poolBalance : ℤ) = params.rentExemptMin + ∑ pos ∈ r.unspent wit, leafValue wit pos
+    (r.final.poolBalance : ℤ)
+      = params.rentExemptMin + ∑ pos ∈ r.unspent wit, leafValue wit pos + r.donated
     ∨ BalanceBreak r wit :=
   LeanSpec.balance params r wit hwit
 
@@ -530,43 +550,50 @@ end LeanSpec.Goals
 /-! ## Non-vacuity: the hypotheses can hold
 
 Read these statements: vacuity (hypotheses that can never hold together) is the main way a
-theorem can say nothing. In a toy model of the hash functions (`toyHashes`, `toySha` in
-`Spec/NonVacuity.lean`), and given Groth16 completeness, the hypotheses of G1a–G1d and of
-G3a can all hold. Until the group types are parameters (the first step of the Groth16 verifier
-bridge), this depends on Groth16 completeness being satisfiable for the abstract groups and
-pairing: `Groth16Complete` is a hypothesis of each statement below, not proved. -/
+theorem can say nothing. In a toy model (`Spec/NonVacuity.lean`), the hypotheses of G1a–G1d
+and of G3a can all hold, and G3a's good outcome happens. The toy model is deliberately broken:
+the hash functions (`toyHashes`, `toySha`) and the groups and pairing (`toyGroups`,
+`toyPairing`: `G1 = G2 = F`, `GT = Unit`, every pairing is `1`, every byte string decodes, the
+key is all zeros) are not cryptographic. With that pairing every proof verifies, so Groth16
+completeness, a hypothesis of G3a, is proved (`toyComplete`) rather than assumed. So these
+statements show the hypotheses can hold together, not that real cryptography reaches the good
+outcome. -/
 namespace LeanSpec.Goals.NonVacuous
 open LeanSpec
 
-variable [Groups] [AddCommGroup G1] [Module F G1] [AddCommGroup G2] [Module F G2] [CommGroup GT]
-variable [Pairing] [Deployment]
-
-attribute [local instance] NonVacuity.toyHashes NonVacuity.toySha
+attribute [local instance] NonVacuity.toyHashes NonVacuity.toySha NonVacuity.toyGroups
+  NonVacuity.toyG1Group NonVacuity.toyG2Group NonVacuity.toyG1Module NonVacuity.toyG2Module
+  NonVacuity.toyGTGroup NonVacuity.toyPairing NonVacuity.toyDeployment
 
 /-- A run of two transactions (a deposit, then a withdrawal of that note) with witnesses
     for both proofs, where the second spends a real (non-zero) note: the hypotheses of
-    G1a–G1d hold for a real spend. -/
-theorem nonvacuous_spend (hCompl : Groth16Complete) :
+    G1a–G1d hold for a real spend. Toy hashes and a toy pairing. -/
+theorem nonvacuous_spend :
     ∃ (r : Run NonVacuity.toyInit) (wit : ℕ → Witness),
       r.txs.length = 2 ∧ r.WitnessesFor wit ∧ (wit 1).inAmt 0 ≠ 0 :=
-  NonVacuity.run_with_spend_exists hCompl
+  NonVacuity.run_with_spend_exists NonVacuity.toyComplete
 
 /-- The hypotheses of G3a can all hold together, for a real spend: after a one-deposit run,
     withdrawing the deposit's note (input 0 has a non-zero amount) satisfies every hypothesis
-    of G3a. -/
-theorem nonvacuous_G3a_hypotheses (hCompl : Groth16Complete) :
+    of G3a. Groth16 completeness holds in the toy model (`toyComplete`). -/
+theorem nonvacuous_G3a_hypotheses :
+    Groth16Complete ∧
     ∃ (inputs : TxInputs) (witness : Witness) (k : ℕ),
       witness.inAmt 0 ≠ 0
-      ∧ (NonVacuity.toyRun1 hCompl).WitnessesFor (fun _ => NonVacuity.toyWitness)
-      ∧ RootInWindow (NonVacuity.toyRun1 hCompl) inputs.R k
-      ∧ OwnsUnspentNotes (NonVacuity.toyRun1 hCompl) (fun _ => NonVacuity.toyWitness) witness k
-      ∧ BuiltHonestly (NonVacuity.toyRun1 hCompl).final inputs witness
-      ∧ PolicyChecksPass (NonVacuity.toyRun1 hCompl).final inputs :=
-  NonVacuity.toy_G3a_hypotheses hCompl
+      ∧ (NonVacuity.toyRun1 NonVacuity.toyComplete).WitnessesFor (fun _ => NonVacuity.toyWitness)
+      ∧ RootInWindow (NonVacuity.toyRun1 NonVacuity.toyComplete) inputs.R k
+      ∧ OwnsUnspentNotes (NonVacuity.toyRun1 NonVacuity.toyComplete)
+          (fun _ => NonVacuity.toyWitness) witness k
+      ∧ BuiltHonestly (NonVacuity.toyRun1 NonVacuity.toyComplete).final inputs witness
+      ∧ PolicyChecksPass (NonVacuity.toyRun1 NonVacuity.toyComplete).final inputs :=
+  ⟨NonVacuity.toyComplete, NonVacuity.toy_G3a_hypotheses NonVacuity.toyComplete⟩
 
-/-- G3a's good outcome happens: after the same run, the program accepts that withdrawal. -/
-theorem nonvacuous_withdrawal_accepted (hCompl : Groth16Complete) :
-    CanBeAccepted (NonVacuity.wdInputs ⟨0, 0, 0⟩) (NonVacuity.toyRun1 hCompl).final :=
-  NonVacuity.toy_withdrawal_accepted hCompl
+/-- G3a's good outcome happens: after the same run, the program accepts that withdrawal.
+    Toy hashes and a toy pairing: it shows the outcome is reachable, not that real
+    cryptography reaches it. -/
+theorem nonvacuous_withdrawal_accepted :
+    CanBeAccepted (NonVacuity.wdInputs ⟨[], [], []⟩)
+      (NonVacuity.toyRun1 NonVacuity.toyComplete).final :=
+  NonVacuity.toy_withdrawal_accepted NonVacuity.toyComplete
 
 end LeanSpec.Goals.NonVacuous

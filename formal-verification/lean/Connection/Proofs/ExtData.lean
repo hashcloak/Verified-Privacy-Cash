@@ -283,7 +283,7 @@ private theorem toSlice_toBytes (v : alloc.vec.Vec U8) :
     exact List.map_congr_left (fun x _ => rfl)
   simp only [toSlice, hl, alloc.vec.Vec.deref, dif_pos v.property]
 
-theorem extDataHash_eq [LeanSpec.Groups] (sha : ext_data.Sha256 Unit) (recipient feeRecipient mint : Pubkey)
+theorem extDataHash_eq (sha : ext_data.Sha256 Unit) (recipient feeRecipient mint : Pubkey)
     (ext : I64) (out1 out2 : Slice U8) (fee : U64) (inputs : LeanSpec.TxInputs)
     (hA : inputs.A = toPubkey recipient) (hext : inputs.extAmt = ext.val)
     (he0 : inputs.encOut0 = toBytes out1.val) (he1 : inputs.encOut1 = toBytes out2.val)

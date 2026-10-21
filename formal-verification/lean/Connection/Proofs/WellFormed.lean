@@ -60,7 +60,7 @@ theorem wf_envStep {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State}
     by_cases hk : (s k).owner = d.programId
     · exact ⟨hk, ((h k).1 hk).2.1⟩
     · have := (h k).2 hk; rw [hx] at this; simp [hpx] at this
-  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_⟩
+  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · intro k t ⟨ho, hd⟩
     obtain ⟨ho', hd'⟩ := own k ho ⟨_, hd, rfl⟩
     exact wf.tree k t ⟨ho', hd' ▸ hd⟩
@@ -73,6 +73,12 @@ theorem wf_envStep {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State}
   · intro x hx
     obtain ⟨n, hn, hnx, hown⟩ := wf.spentRecorded x hx
     exact ⟨n, hn, hnx, hown.imp (EnvStep.keepsOwned h _) (EnvStep.keepsOwned h _)⟩
+  · intro k t ⟨ho, hd⟩
+    obtain ⟨ho', hd'⟩ := own k ho ⟨_, hd, rfl⟩
+    exact wf.storedRoots k t ⟨ho', hd' ▸ hd⟩
+  · intro k t ⟨ho, hd⟩
+    obtain ⟨ho', hd'⟩ := own k ho ⟨_, hd, rfl⟩
+    exact wf.storedSubtrees k t ⟨ho', hd' ▸ hd⟩
 
 omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
 /-- Changing one account's data to a value of a given kind, at an address that already held
@@ -104,7 +110,7 @@ theorem wf_updateDepositLimit {d : Deployment} {spent : Finset LeanSpec.F} {s s'
     fun k hk => set_data_other hk
   have hkey : (s.set a.treeAccount { s a.treeAccount with data := .treeAccount tree' }) a.treeAccount
       = { s a.treeAccount with data := .treeAccount tree' } := by simp
-  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_⟩
+  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · intro k t ⟨ho, hd⟩
     by_cases hka' : k = a.treeAccount
     · subst hka'; rw [hkey] at hd; cases hd
@@ -127,6 +133,18 @@ theorem wf_updateDepositLimit {d : Deployment} {spent : Finset LeanSpec.F} {s s'
       · subst hka'; rw [hkey]; exact ho
       · rw [hk k hka']; exact ho
     exact ⟨n, hn, hnx, hown.imp (keep _) (keep _)⟩
+  · intro k t ⟨ho, hd⟩
+    by_cases hka' : k = a.treeAccount
+    · subst hka'; rw [hkey] at hd; cases hd
+      have hr := wf.storedRoots _ _ hval.treeAccount.1
+      rw [ht']; exact hr
+    · rw [hk k hka'] at ho hd; exact wf.storedRoots k t ⟨ho, hd⟩
+  · intro k t ⟨ho, hd⟩
+    by_cases hka' : k = a.treeAccount
+    · subst hka'; rw [hkey] at hd; cases hd
+      have hr := wf.storedSubtrees _ _ hval.treeAccount.1
+      rw [ht']; exact hr
+    · rw [hk k hka'] at ho hd; exact wf.storedSubtrees k t ⟨ho, hd⟩
 
 omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
 theorem wf_updateGlobalConfig {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State} {tx : TxEnv}
@@ -152,7 +170,7 @@ theorem wf_updateGlobalConfig {d : Deployment} {spent : Finset LeanSpec.F} {s s'
     fun k hk => set_data_other hk
   have hkey : (s.set a.globalConfig { s a.globalConfig with data := .globalConfig config' }) a.globalConfig
       = { s a.globalConfig with data := .globalConfig config' } := by simp
-  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_⟩
+  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · intro k t ⟨ho, hd⟩
     by_cases hka' : k = a.globalConfig
     · subst hka'; rw [hkey] at hd; cases hd
@@ -175,14 +193,24 @@ theorem wf_updateGlobalConfig {d : Deployment} {spent : Finset LeanSpec.F} {s s'
       · subst hka'; rw [hkey]; exact ho
       · rw [hk k hka']; exact ho
     exact ⟨n, hn, hnx, hown.imp (keep _) (keep _)⟩
+  · intro k t ⟨ho, hd⟩
+    by_cases hka' : k = a.globalConfig
+    · subst hka'; rw [hkey] at hd; cases hd
+    · rw [hk k hka'] at ho hd; exact wf.storedRoots k t ⟨ho, hd⟩
+  · intro k t ⟨ho, hd⟩
+    by_cases hka' : k = a.globalConfig
+    · subst hka'; rw [hkey] at hd; cases hd
+    · rw [hk k hka'] at ho hd; exact wf.storedSubtrees k t ⟨ho, hd⟩
 
 
 omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
 /-- Every successful `transact` keeps `WellFormed`, and its two input nullifiers become spent.
-    No hypothesis beyond `WellFormed` itself. -/
+    Needs that Poseidon's outputs are canonical (`HashesAgree.poseidonCanonical`): the two
+    appends store Poseidon outputs as roots. -/
 theorem wf_transact {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State} {tx : TxEnv}
     {a : TransactAccounts} {proof : zkcash_core.transact.Proof} {ext : I64} {fee : U64}
     {out1 out2 : Slice U8} {evs : List CommitmentData}
+    (hpc : ∀ a b h, d.crypto.hasher.hash_pair a b = ok h → Canonical h)
     (wf : WellFormed d spent s) (hx : execTransact d s tx a proof ext fee out1 out2 = .ok (s', evs)) :
     WellFormed d (spent ∪ {toF proof.input_nullifiers.val[0]!, toF proof.input_nullifiers.val[1]!}) s' := by
   obtain ⟨tree, tt, config, mb, s₁, env', tree', ap, hvalid, hmb, hs₁, hhandler, hs', -⟩ := execTransact_ok hx
@@ -210,6 +238,18 @@ theorem wf_transact {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State} 
   obtain ⟨p1, p2, t1, hap1, hap2⟩ := hok.appends
   have hsh1 := (append_shape _ _ tree t1 p1 hshape hap1).1
   have hsh2 := (append_shape _ _ t1 tree' p2 hsh1 hap2).1
+  have hroots' : ∀ j : Fin 100, Canonical tree'.root_history.val[j.val]! :=
+    append_history_canonical _ hpc _ _ _ _ hsh1
+      (append_history_canonical _ hpc _ _ _ _ hshape (wf.storedRoots _ _ hvalid.treeAccount.1) hap1)
+      hap2
+  have hcanC0 : Canonical proof.output_commitments.val[0]! := by
+    simpa [publicInputs] using hcan 5 (by decide)
+  have hcanC1 : Canonical proof.output_commitments.val[1]! := by
+    simpa [publicInputs] using hcan 6 (by decide)
+  have hsubs' : ∀ j : Fin 26, Canonical tree'.subtrees.val[j.val]! :=
+    append_subtrees_canonical _ hpc _ _ _ _ hsh1
+      (append_subtrees_canonical _ hpc _ _ _ _ hshape (wf.storedSubtrees _ _ hvalid.treeAccount.1)
+        hcanC0 hap1) hcanC1 hap2
   have hs'k : ∀ k, (s' k).owner = (s₁ k).owner ∧
       (s' k).data = (if k = a.treeAccount then .treeAccount tree' else (s₁ k).data) := by
     intro k; rw [hs']
@@ -236,7 +276,7 @@ theorem wf_transact {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State} 
     intro k hk
     obtain ⟨-, b, hb⟩ := hnf k hk
     exact ⟨b, by rw [(hs'k k).2, if_neg (htree_nf k hk), hb]⟩
-  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_⟩
+  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · intro k t ⟨ho, hd⟩
     by_cases ht : k = a.treeAccount
     · subst ht; rw [(hs'k _).2, if_pos rfl] at hd; cases hd; exact ⟨htreeAddr, hsh2⟩
@@ -269,7 +309,113 @@ theorem wf_transact {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State} 
       · rw [Finset.mem_singleton] at h
         refine ⟨_, hcan1, h.symm, Or.inr ?_⟩
         rw [← hvalid.nullifier1.1, (hs'k _).1]; exact (hnf _ (Or.inr rfl)).1
+  · intro k t ⟨ho, hd⟩
+    by_cases ht : k = a.treeAccount
+    · subst ht; rw [(hs'k _).2, if_pos rfl] at hd; cases hd; exact hroots'
+    by_cases hn : k = a.nullifier0 ∨ k = a.nullifier1
+    · obtain ⟨b, hb⟩ := notNull k hn; rw [hb] at hd; cases hd
+    obtain ⟨e1, e2⟩ := back k ht hn
+    exact wf.storedRoots k t ⟨e1 ▸ ho, e2 ▸ hd⟩
+  · intro k t ⟨ho, hd⟩
+    by_cases ht : k = a.treeAccount
+    · subst ht; rw [(hs'k _).2, if_pos rfl] at hd; cases hd; exact hsubs'
+    by_cases hn : k = a.nullifier0 ∨ k = a.nullifier1
+    · obtain ⟨b, hb⟩ := notNull k hn; rw [hb] at hd; cases hd
+    obtain ⟨e1, e2⟩ := back k ht hn
+    exact wf.storedSubtrees k t ⟨e1 ▸ ho, e2 ▸ hd⟩
 
+
+omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
+/-- `init_tree` stores the zero hash of height 26 in slot 0 and keeps the other slots: if the
+    zero hashes and the old slots are canonical, so are the new slots. -/
+theorem initTree_history {H : zkcash_core.merkle_tree.Hasher Unit}
+    {t0 t : zkcash_core.merkle_tree.MerkleTreeAccount} {auth : Pubkey} {b : U8} {m : U64}
+    {r : core.result.Result Unit zkcash_core.error.ErrorCode}
+    (hzc : ∃ z, H.zero_bytes = ok z ∧ ∀ i, i ≤ 26 → Canonical (z.val[i]!))
+    (ht0 : ∀ j : Fin 100, Canonical t0.root_history.val[j.val]!)
+    (h : zkcash_core.admin.init_tree H t0 auth b m = ok (r, t)) :
+    ∀ j : Fin 100, Canonical t.root_history.val[j.val]! := by
+  obtain ⟨z, hzb, hzc⟩ := hzc
+  unfold zkcash_core.admin.init_tree zkcash_core.merkle_tree.initialize at h
+  obtain ⟨hgt, hhgt, h⟩ := bindOk h
+  obtain ⟨z', hz', h⟩ := bindOk h
+  rw [hzb] at hz'; obtain rfl := Result.ok_injective hz'
+  obtain ⟨_, -, h⟩ := bindOk h
+  obtain ⟨ir, hir, h⟩ := bindOk h
+  obtain ⟨a1, ha1, h⟩ := bindOk h
+  have e := Result.ok_injective h
+  simp only [Prod.mk.injEq] at e
+  obtain ⟨-, rfl⟩ := e
+  have hgv : hgt.val = 26 := by
+    have := (Result.ok_injective hhgt).symm
+    rw [this]; simp [zkcash_core.admin.MERKLE_TREE_HEIGHT]
+  obtain ⟨ir', hir', hirv⟩ := (WP.spec_equiv_exists _ _).mp
+    (Std.Array.index_usize_spec z hgt (by simp; omega))
+  rw [hir'] at hir; obtain rfl := Result.ok_injective hir
+  have hirc : Canonical ir' := by
+    have := hzc 26 le_rfl
+    rw [getElem!_pos _ _ (by simp)] at this
+    subst hirv
+    simpa [hgv] using this
+  obtain ⟨a1', ha1', ha1v⟩ := (WP.spec_equiv_exists _ _).mp
+    (Std.Array.update_spec t0.root_history 0#usize ir' (by simp))
+  rw [ha1'] at ha1; obtain rfl := Result.ok_injective ha1
+  intro j
+  show Canonical a1'.val[j.val]!
+  rw [ha1v]
+  have hlen : t0.root_history.val.length = 100 := by simp
+  simp only [Std.Array.set_val_eq]
+  by_cases hj : j.val = 0
+  · rw [getElem!_pos _ _ (by simp [hlen])]; simp [hj]; exact hirc
+  · rw [getElem!_pos _ _ (by simp [hlen])]
+    have := ht0 j
+    rw [getElem!_pos _ _ (by simp [hlen])] at this
+    have hj' : (0 : ℕ) ≠ j.val := Ne.symm hj
+    simpa [hj'] using this
+
+omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
+/-- `init_tree` fills the subtrees with the zero hashes `0 … 25`: canonical if they are. -/
+theorem initTree_subtrees {H : zkcash_core.merkle_tree.Hasher Unit}
+    {t0 t : zkcash_core.merkle_tree.MerkleTreeAccount} {auth : Pubkey} {b : U8} {m : U64}
+    {r : core.result.Result Unit zkcash_core.error.ErrorCode}
+    (hzc : ∃ z, H.zero_bytes = ok z ∧ ∀ i, i ≤ 26 → Canonical (z.val[i]!))
+    (hs0 : ∀ j : Fin 26, Canonical t0.subtrees.val[j.val]!)
+    (h : zkcash_core.admin.init_tree H t0 auth b m = ok (r, t)) :
+    ∀ j : Fin 26, Canonical t.subtrees.val[j.val]! := by
+  obtain ⟨z, hzb, hzc⟩ := hzc
+  unfold zkcash_core.admin.init_tree zkcash_core.merkle_tree.initialize at h
+  obtain ⟨hgt, hhgt, h⟩ := bindOk h
+  obtain ⟨z', hz', h⟩ := bindOk h
+  rw [hzb] at hz'; obtain rfl := Result.ok_injective hz'
+  obtain ⟨a, ha, h⟩ := bindOk h
+  obtain ⟨ir, -, h⟩ := bindOk h
+  obtain ⟨a1, -, h⟩ := bindOk h
+  have e := Result.ok_injective h
+  simp only [Prod.mk.injEq] at e
+  obtain ⟨-, rfl⟩ := e
+  have hgv : hgt.val = 26 := by
+    have := (Result.ok_injective hhgt).symm
+    rw [this]; simp [zkcash_core.admin.MERKLE_TREE_HEIGHT]
+  intro j
+  exact initLoop_subtrees _ _ _ _ hzc (by simpa using hgv) (fun i hi => hs0 ⟨i, hi⟩) ha j.val j.isLt
+
+omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
+/-- The fresh tree account's subtrees are all zero bytes, which are canonical. -/
+theorem zeroTree_subtrees : ∀ j : Fin 26, Canonical zeroTree.subtrees.val[j.val]! := by
+  intro j
+  have : zeroTree.subtrees.val[j.val]! = Std.Array.repeat 32#usize 0#u8 := by
+    rw [getElem!_pos _ _ (by simp)]
+    simp only [zeroTree, Std.Array.repeat_val, List.getElem_replicate]
+  rw [this]; exact zero_canonical
+
+omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
+/-- The fresh tree account's history is all zero bytes, which are canonical. -/
+theorem zeroTree_history : ∀ j : Fin 100, Canonical zeroTree.root_history.val[j.val]! := by
+  intro j
+  have : zeroTree.root_history.val[j.val]! = Std.Array.repeat 32#usize 0#u8 := by
+    rw [getElem!_pos _ _ (by simp)]
+    simp only [zeroTree, Std.Array.repeat_val, List.getElem_replicate]
+  rw [this]; exact zero_canonical
 
 omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
 /-- What the extracted `admin::initialize` produces when it succeeds: a tree of the fixed shape
@@ -277,11 +423,17 @@ omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
 theorem adminInitialize_ok {H : zkcash_core.merkle_tree.Hasher Unit}
     {t0 t : zkcash_core.merkle_tree.MerkleTreeAccount} {tk0 tk : zkcash_core.admin.TreeTokenAccount}
     {c0 c : zkcash_core.admin.GlobalConfig} {auth : Pubkey} {b1 b2 b3 : U8}
+    (hzc : ∃ z, H.zero_bytes = ok z ∧ ∀ i, i ≤ 26 → Canonical (z.val[i]!))
+    (ht0 : ∀ j : Fin 100, Canonical t0.root_history.val[j.val]!)
+    (hs0 : ∀ j : Fin 26, Canonical t0.subtrees.val[j.val]!)
     (h : zkcash_core.admin.initialize H t0 tk0 c0 auth b1 b2 b3 = ok (.Ok (), t, tk, c)) :
     TreeShape t ∧ c.deposit_fee_rate.val = 0 ∧ c.withdrawal_fee_rate.val = 25 ∧
-      c.fee_error_margin.val = 500 := by
+      c.fee_error_margin.val = 500 ∧ (∀ j : Fin 100, Canonical t.root_history.val[j.val]!) ∧
+      ∀ j : Fin 26, Canonical t.subtrees.val[j.val]! := by
   unfold zkcash_core.admin.initialize at h
   obtain ⟨⟨r, t1⟩, hit, h⟩ := bindOk h
+  have hroots := initTree_history hzc ht0 hit
+  have hsubs := initTree_subtrees hzc hs0 hit
   obtain ⟨cf, hcf, h⟩ := bindOk h
   cases r with
   | Err e =>
@@ -300,7 +452,7 @@ theorem adminInitialize_ok {H : zkcash_core.merkle_tree.Hasher Unit}
   have e := Result.ok_injective h
   simp only [Prod.mk.injEq] at e
   obtain ⟨-, rfl, -, rfl⟩ := e
-  refine ⟨?_, by simp, by simp, by simp⟩
+  refine ⟨?_, by simp, by simp, by simp, hroots, hsubs⟩
   -- init_tree sets the shape fields, `merkle_tree::initialize` keeps them
   unfold zkcash_core.admin.init_tree zkcash_core.merkle_tree.initialize at hit
   obtain ⟨_, -, hit⟩ := bindOk hit
@@ -318,7 +470,9 @@ omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
 /-- `initialize` keeps `WellFormed` (it creates the tree, pool and config at their canonical
     addresses, with the fixed tree shape and rates 0, 25, 500). -/
 theorem wf_initialize {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State} {tx : TxEnv}
-    {a : InitializeAccounts} (wf : WellFormed d spent s) (h : execInitialize d s tx a = .ok s') :
+    {a : InitializeAccounts}
+    (hzc : ∃ z, d.crypto.hasher.zero_bytes = ok z ∧ ∀ i, i ≤ 26 → Canonical (z.val[i]!))
+    (wf : WellFormed d spent s) (h : execInitialize d s tx a = .ok s') :
     WellFormed d spent s' := by
   have hkeep := PrivacyCash.Model.execInitialize_keepsOwned h
   unfold execInitialize at h
@@ -340,7 +494,8 @@ theorem wf_initialize {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State
   cases r with
   | Err e => cases h
   | Ok u =>
-  obtain ⟨hshape, hdr, hwr, hmr⟩ := adminInitialize_ok (ofResult_ok hres)
+  obtain ⟨hshape, hdr, hwr, hmr, hroots, hsubs⟩ :=
+    adminInitialize_ok hzc zeroTree_history zeroTree_subtrees (ofResult_ok hres)
   have hs' := PrivacyCash.Model.checkBalanced_ok h
   -- the three inits: only the three new accounts change owner or data
   obtain ⟨s₀₂, h₀₂, h₃⟩ := Option.bind_eq_some_iff.mp hs₁
@@ -368,7 +523,7 @@ theorem wf_initialize {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State
     intro k ht hp hc
     obtain ⟨e1, e2⟩ := hs'k k; obtain ⟨e3, e4⟩ := hoth k ht hp hc
     rw [e1, e2, if_neg hc, if_neg hp, if_neg ht]; exact ⟨e3, e4⟩
-  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_⟩
+  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · intro k t ⟨ho, hd⟩
     rw [(hs'k k).2] at hd
     by_cases hc : k = a.globalConfig
@@ -412,6 +567,32 @@ theorem wf_initialize {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State
   · intro x hx
     obtain ⟨n, hn, hnx, hown⟩ := wf.spentRecorded x hx
     exact ⟨n, hn, hnx, hown.imp (hkeep _) (hkeep _)⟩
+  · intro k t ⟨ho, hd⟩
+    rw [(hs'k k).2] at hd
+    by_cases hc : k = a.globalConfig
+    · rw [if_pos hc] at hd; cases hd
+    rw [if_neg hc] at hd
+    by_cases hp : k = a.treeTokenAccount
+    · rw [if_pos hp] at hd; cases hd
+    rw [if_neg hp] at hd
+    by_cases ht : k = a.treeAccount
+    · rw [if_pos ht] at hd; cases hd; exact hroots
+    rw [if_neg ht] at hd
+    obtain ⟨e1, e2⟩ := back k ht hp hc
+    exact wf.storedRoots k t ⟨e1 ▸ ho, by rw [← (hoth k ht hp hc).2]; exact hd⟩
+  · intro k t ⟨ho, hd⟩
+    rw [(hs'k k).2] at hd
+    by_cases hc : k = a.globalConfig
+    · rw [if_pos hc] at hd; cases hd
+    rw [if_neg hc] at hd
+    by_cases hp : k = a.treeTokenAccount
+    · rw [if_pos hp] at hd; cases hd
+    rw [if_neg hp] at hd
+    by_cases ht : k = a.treeAccount
+    · rw [if_pos ht] at hd; cases hd; exact hsubs
+    rw [if_neg ht] at hd
+    obtain ⟨e1, e2⟩ := back k ht hp hc
+    exact wf.storedSubtrees k t ⟨e1 ▸ ho, by rw [← (hoth k ht hp hc).2]; exact hd⟩
 
 
 /-- The nullifiers one instruction spends (only `transact` spends any). -/
@@ -428,12 +609,14 @@ def runSpent : List Event → Finset LeanSpec.F
 omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
 theorem wf_step {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State} {tx : TxEnv}
     {ix : Instruction} {evs : List CommitmentData}
+    (hpc : ∀ a b h, d.crypto.hasher.hash_pair a b = ok h → Canonical h)
+    (hzc : ∃ z, d.crypto.hasher.zero_bytes = ok z ∧ ∀ i, i ≤ 26 → Canonical (z.val[i]!))
     (wf : WellFormed d spent s) (h : step d s tx ix = .ok (s', evs)) :
     WellFormed d (spent ∪ stepSpent ix) s' := by
   cases ix with
   | «initialize» a =>
     obtain ⟨s₁, h1, h2⟩ := PrivacyCash.Model.Except.bind_ok h
-    cases h2; simpa [stepSpent] using wf_initialize wf h1
+    cases h2; simpa [stepSpent] using wf_initialize hzc wf h1
   | updateDepositLimit a l =>
     obtain ⟨s₁, h1, h2⟩ := PrivacyCash.Model.Except.bind_ok h
     cases h2; simpa [stepSpent] using wf_updateDepositLimit wf h1
@@ -441,15 +624,17 @@ theorem wf_step {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State} {tx 
     obtain ⟨s₁, h1, h2⟩ := PrivacyCash.Model.Except.bind_ok h
     cases h2; simpa [stepSpent] using wf_updateGlobalConfig wf h1
   | transact a proof ext fee out1 out2 =>
-    exact wf_transact wf h
+    exact wf_transact hpc wf h
 
 omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
 theorem wf_run {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State} {evs : List Event}
+    (hpc : ∀ a b h, d.crypto.hasher.hash_pair a b = ok h → Canonical h)
+    (hzc : ∃ z, d.crypto.hasher.zero_bytes = ok z ∧ ∀ i, i ≤ 26 → Canonical (z.val[i]!))
     (hrun : Run d s evs s') (wf : WellFormed d spent s) : WellFormed d (spent ∪ runSpent evs) s' := by
   induction hrun generalizing spent with
   | nil => simpa [runSpent] using wf
   | program hstep _ ih =>
-    have := ih (wf_step wf hstep)
+    have := ih (wf_step hpc hzc wf hstep)
     simpa [runSpent, Finset.union_assoc] using this
   | env henv _ ih =>
     simpa [runSpent] using ih (wf_envStep wf henv)
@@ -458,14 +643,22 @@ omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
 theorem wf_genesis {d : Deployment} {s : State} (hgen : Genesis d.programId s)
     (hpid : d.programId ≠ systemProgram) : WellFormed d ∅ s :=
   ⟨hpid, fun k _ h => absurd h.1 (hgen k), fun k _ h => absurd h.1 (hgen k),
-   fun k _ h => absurd h.1 (hgen k), fun _ hx => absurd hx (Finset.notMem_empty _)⟩
+   fun k _ h => absurd h.1 (hgen k), fun _ hx => absurd hx (Finset.notMem_empty _),
+   fun k _ h => absurd h.1 (hgen k), fun k _ h => absurd h.1 (hgen k)⟩
 
-omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
 /-- **Every state an execution reaches from genesis is `WellFormed`**, for the nullifiers the
-    execution spent. -/
+    execution spent. Uses only the canonicity fields of `HashesAgree`. -/
 theorem wf_reachable {d : Deployment} {s₀ s : State} {evs : List Event}
-    (hgen : Genesis d.programId s₀) (hrun : Run d s₀ evs s) (hpid : d.programId ≠ systemProgram) :
+    (hgen : Genesis d.programId s₀) (hrun : Run d s₀ evs s) (hpid : d.programId ≠ systemProgram)
+    (hashes : HashesAgree d.crypto) :
     WellFormed d (runSpent evs) s := by
-  simpa using wf_run hrun (wf_genesis hgen hpid)
+  simpa using wf_run hashes.poseidonCanonical hashes.zeroBytesCanonical hrun (wf_genesis hgen hpid)
+
+/-- **The program's trees hold canonical roots in every reachable state.** -/
+theorem storedRoots_reachable {d : Deployment} {s₀ s : State} {evs : List Event}
+    (hgen : Genesis d.programId s₀) (hrun : Run d s₀ evs s) (hpid : d.programId ≠ systemProgram)
+    (hashes : HashesAgree d.crypto) :
+    ∀ k t, HoldsTree d.programId s k t → ∀ j : Fin 100, Canonical t.root_history.val[j.val]! :=
+  (wf_reachable hgen hrun hpid hashes).storedRoots
 
 end Connection

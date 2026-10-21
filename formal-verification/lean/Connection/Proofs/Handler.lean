@@ -58,6 +58,7 @@ theorem setBalance_vals (b : Pubkey → U64) (k : Pubkey) (v : U64) :
   by_cases h : k' = k <;> simp [h]
 
 theorem u64_pos {x : U64} (h : x > 0#u64) : x.val > 0 := by scalar_tac
+theorem u64_lt (x : U64) : x.val < 2 ^ 64 := by scalar_tac
 theorem u64_not_pos {x : U64} (h : ¬ x > 0#u64) : x.val = 0 := by scalar_tac
 theorem i64_pos {x : I64} (h : x > 0#i64) : x.val > 0 := by scalar_tac
 theorem i64_not_pos {x : I64} (h : ¬ x > 0#i64) : x.val ≤ 0 := by scalar_tac
@@ -164,7 +165,10 @@ structure HandlerOk (c : Crypto) (env : SolEnv) (tree : merkle_tree.MerkleTreeAc
     (ext.val < 0 →
       (env.balances env.treeToken).val ≥ ext.val.natAbs + fee.val + v.val ∧
       (fun k => (env'.balances k).val) = payN (payN (fun k => (env.balances k).val) env.treeToken
-          env.recipient ext.val.natAbs) env.treeToken env.feeRecipient fee.val)
+          env.recipient ext.val.natAbs) env.treeToken env.feeRecipient fee.val) ∧
+    (ext.val > 0 →
+      moveN (fun k => (env.balances k).val) env.signer env.treeToken ext.val.natAbs env.treeToken
+        < 2 ^ 64)
 
 /-- **The handler, when it returns `Ok`.** The balance equations are exactly the code's
     read-before-write updates (`payN`), for any accounts, aliased or not. -/
@@ -299,7 +303,7 @@ theorem handler_ok (c : Crypto) (env : SolEnv) (tree : merkle_tree.MerkleTreeAcc
                depositLimit := fun _ => ?_,
                appends := ⟨_, _, _, (idx2 _ _ _ (by decide) hi0) ▸ hap1, (idx2 _ _ _ (by decide) hi1) ▸ hap2⟩,
                sameEnv := ⟨rfl, rfl, rfl, rfl, rfl⟩, rent := ⟨v, hv, fun _ => ⟨hso, hsd, hsleZ, fun _ => ?_, ?_⟩,
-                 fun hn => absurd hn (by omega)⟩ }
+                 fun hn => absurd hn (by omega), fun _ => ?_⟩ }
       · have : (IScalar.hcast .U64 ext).val ≤ tree.max_deposit_amount.val := hlim
         omega
       · rw [← hsb]
@@ -307,6 +311,7 @@ theorem handler_ok (c : Crypto) (env : SolEnv) (tree : merkle_tree.MerkleTreeAcc
         show (b1 env.treeToken).val ≥ fee.val + v.val
         omega
       · rw [setLamports_vals, setLamports_vals, ← hsb, hv2, hv3]; rfl
+      · rw [← hsb]; exact u64_lt _
     · have h := ite_neg' h hf
       have hf0 : fee.val = 0 := u64_not_pos hf
       appends_tail h hi0 hap1 hi1 hap2
@@ -314,10 +319,11 @@ theorem handler_ok (c : Crypto) (env : SolEnv) (tree : merkle_tree.MerkleTreeAcc
                depositLimit := fun _ => ?_,
                appends := ⟨_, _, _, (idx2 _ _ _ (by decide) hi0) ▸ hap1, (idx2 _ _ _ (by decide) hi1) ▸ hap2⟩,
                sameEnv := ⟨rfl, rfl, rfl, rfl, rfl⟩, rent := ⟨v, hv, fun _ => ⟨hso, hsd, hsleZ,
-                 fun hfp => absurd hfp (by omega), ?_⟩, fun hn => absurd hn (by omega)⟩ }
+                 fun hfp => absurd hfp (by omega), ?_⟩, fun hn => absurd hn (by omega), fun _ => ?_⟩ }
       · have : (IScalar.hcast .U64 ext).val ≤ tree.max_deposit_amount.val := hlim
         omega
       · rw [hf0, payN_zero, ← hsb]
+      · rw [← hsb]; exact u64_lt _
   · have h := ite_neg' h hpos
     have hpub : LeanSpec.pubAmtConsistent ext.val fee.val (toF proof.public_amount) ∧
         LeanSpec.amountsInRange ext.val fee.val ∧ ext.val ≠ 0 := by
@@ -424,7 +430,8 @@ theorem handler_ok (c : Crypto) (env : SolEnv) (tree : merkle_tree.MerkleTreeAcc
                depositLimit := fun hp => absurd hp (by omega),
                appends := ⟨_, _, _, (idx2 _ _ _ (by decide) hi0) ▸ hap1, (idx2 _ _ _ (by decide) hi1) ▸ hap2⟩,
                sameEnv := ⟨rfl, rfl, rfl, rfl, rfl⟩,
-               rent := ⟨v, hv, fun hp => absurd hp (by omega), fun _ => ⟨hpoolv, ?_⟩⟩ }
+               rent := ⟨v, hv, fun hp => absurd hp (by omega), fun _ => ⟨hpoolv, ?_⟩,
+                 fun hp => absurd hp (by omega)⟩ }
       rw [setLamports_vals, setLamports_vals, ← hW, hv6, hv7]
       rfl
     · have h := ite_neg' h hf
@@ -434,7 +441,8 @@ theorem handler_ok (c : Crypto) (env : SolEnv) (tree : merkle_tree.MerkleTreeAcc
                depositLimit := fun hp => absurd hp (by omega),
                appends := ⟨_, _, _, (idx2 _ _ _ (by decide) hi0) ▸ hap1, (idx2 _ _ _ (by decide) hi1) ▸ hap2⟩,
                sameEnv := ⟨rfl, rfl, rfl, rfl, rfl⟩,
-               rent := ⟨v, hv, fun hp => absurd hp (by omega), fun _ => ⟨hpoolv, ?_⟩⟩ }
+               rent := ⟨v, hv, fun hp => absurd hp (by omega), fun _ => ⟨hpoolv, ?_⟩,
+                 fun hp => absurd hp (by omega)⟩ }
       rw [hf0, payN_zero, ← hW]
       rfl
 

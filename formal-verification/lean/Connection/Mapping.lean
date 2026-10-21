@@ -1,10 +1,10 @@
 import PrivacyCash
-import Spec.privacy_cash_spec
+import Spec.Statements
 open Aeneas Aeneas.Std PrivacyCash.Model
 
 /-! # Mapping: code-model values to spec values
 
-REVIEW SURFACE. The connection theorem (`Connection/Transact.lean`) says: when the code
+REVIEW SURFACE. The connection theorems (`Connection/Statements.lean`) say: when the code
 model accepts a `transact`, the spec's `transact` holds between the mapped worlds. Its
 meaning depends on these definitions, so each is short and should be checked by reading.
 
@@ -96,7 +96,7 @@ def publicBalance (s : State) (k : Pubkey) : ℕ :=
 
 /-- The spec world a chain state stands for.
     * `rent`: Solana's rent-exempt minimum for an account of a given size. The spec fixes the
-      two amounts it uses; `Assumed.rentFixed` says each transaction sees this `rent`.
+      two amounts it uses; `OutsideSpecDetail.rentFixed` says each transaction sees this `rent`.
     * `spent`: the spent nullifiers, tracked alongside the chain. On-chain a nullifier is
       spent when its nullifier account exists; `WellFormed.spentRecorded` links the two. -/
 def toWorld (d : Deployment) (rent : Nat → U64) (spent : Finset LeanSpec.F) (s : State) :
@@ -112,13 +112,11 @@ def toWorld (d : Deployment) (rent : Nat → U64) (spent : Finset LeanSpec.F) (s
 
 /-! ## Transactions -/
 
-variable [LeanSpec.Groups]
-
-/-- The spec inputs of a `transact` instruction. `π` is the proof as spec group elements;
-    until the verifier bridge is built it is a free parameter, tied to `proof` only by the
-    connection theorem's `hProofValid`. -/
+/-- The spec inputs of a `transact` instruction. The seven public inputs are given twice, as
+    the spec's field elements (`toF`) and as the sender's 32 bytes (`pubInputBytes`, in
+    circuit order, `publicInputs`); the proof is the sender's bytes of its three points. -/
 def toInputs (a : TransactAccounts) (proof : zkcash_core.transact.Proof) (extAmount : I64)
-    (fee : U64) (out1 out2 : Slice U8) (π : LeanSpec.Groth16.Proof) : LeanSpec.TxInputs where
+    (fee : U64) (out1 out2 : Slice U8) : LeanSpec.TxInputs where
   R := toF proof.root
   pubAmt := toF proof.public_amount
   extDataHash := toF proof.ext_data_hash
@@ -133,38 +131,79 @@ def toInputs (a : TransactAccounts) (proof : zkcash_core.transact.Proof) (extAmo
   t := toPubkey a.feeRecipientAccount
   encOut0 := toBytes out1.val
   encOut1 := toBytes out2.val
-  π := π
+  π := ⟨toBytes proof.proof_a.val, toBytes proof.proof_b.val, toBytes proof.proof_c.val⟩
   mintAddr := toPubkey zkcash_core.transact.SOL_ADDRESS
+  pubInputBytes i := toBytes ((publicInputs proof)[i.val]!).val
+
+/-! ## The handler's view (for handler completeness)
+
+The extracted `transact` handler runs after Anchor's account checks and `init`s, on the
+runtime environment `execTransact` builds. Handler completeness compares it with the spec
+`transact` from the world the handler sees. -/
+
+/-- The runtime environment the handler runs in, exactly as `execTransact` builds it: the state
+    `s₁` after Anchor's two `init`s, the instruction's accounts, the rent-exempt minimum `v`. -/
+def handlerEnv (a : TransactAccounts) (s₁ : State) (v : U64) : SolEnv :=
+  { accounts := s₁, balances := s₁.balances, signer := a.signer,
+    treeToken := a.treeTokenAccount, recipient := a.recipient,
+    feeRecipient := a.feeRecipientAccount, rentExemptMinimum := some v }
+
+/-- The spec world the handler sees: every account's lamports in `s₁`, the tree and config it
+    is given, the pool's address, the rent-exempt minimum `v`, the nullifiers `spent` (the
+    handler does not read them). MAPPING DECISION: `nullifierRent := 0`, because Anchor has
+    already paid the two nullifier accounts' rent before the handler runs; the handler's
+    effects are the spec's transfer and fee effects.
+    How it differs from `toWorld` (the main theorem's world): it is taken after Anchor's two
+    `init`s, not before; it reads every account's raw lamports, nullifier accounts included
+    (`toWorld` counts those as 0, `publicBalance`), since the handler never pays them in the
+    cases it covers; and its rent is the handler's own `v`. Used only by handler
+    completeness. -/
+def handlerWorld (a : TransactAccounts) (s₁ : State) (v : U64)
+    (tree : zkcash_core.merkle_tree.MerkleTreeAccount) (config : zkcash_core.admin.GlobalConfig)
+    (spent : Finset LeanSpec.F) : LeanSpec.World where
+  state :=
+    { tree := toTree tree
+      nullifiers := spent
+      pool := toPubkey a.treeTokenAccount
+      config := toConfig config tree }
+  balances x := (s₁ (fromPubkey x)).lamports.val
+  rentExemptMin := v.val
+  nullifierRent := 0
 
 /-! ## The verifier: the spec instantiated by the syscalls and the program's key
 
-The spec's groups, pairing, deployed key and proof points, for the verifier bridge. The
-groups `G1 G2 GT`, the point decoding come from the syscall contracts
-`C` (core-model's `AltBn128Contracts`); the key is the program's extracted `VERIFYING_KEY`. -/
+The spec's groups, point decoding, pairing and deployed key, for the verifier bridge. The
+groups `G1 G2 GT` and the point decoding come from the syscall contracts `C` (core-model's
+`AltBn128Contracts`); the key is the program's extracted `VERIFYING_KEY`. -/
+
+/-- The spec's bytes as an `n`-byte code array, if there are exactly `n` of them. -/
+def toArray (n : Usize) (bs : LeanSpec.Bytes) : Option (Std.Array U8 n) :=
+  if h : bs.length = n.val then
+    some (Std.Array.from (bs.map (fun b => (⟨b⟩ : U8))) (by simp [h]))
+  else none
 
 section
 variable {G1 G2 GT : Type} [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGroup G2]
   [Module LeanSpec.F G2] [CommGroup GT] {s : AltBn128}
 open PrivacyCash.Proofs.Groth16 (ic)
 
-/-- The spec's groups: the syscalls'. -/
-@[reducible] def syscallGroups (G1 G2 GT : Type) : LeanSpec.Groups := ⟨G1, G2, GT⟩
+/-- The spec's groups and point decoding: the syscalls'. A G1 point is 64 bytes and a G2 point
+    128 bytes, decoded as the syscalls decode them (`C.decodeG1`, `C.decodeG2`); bytes of any
+    other length are not a point. -/
+@[reducible] def syscallGroups (C : AltBn128Contracts s G1 G2 GT) : LeanSpec.Groups :=
+  ⟨G1, G2, GT, fun bs => (toArray 64#usize bs).bind C.decodeG1,
+    fun bs => (toArray 128#usize bs).bind C.decodeG2⟩
 
-/-- The spec's deployed key: the program's key, as the syscalls decode it. -/
+/-- The spec's deployed key: the program's key, as the syscalls decode it. The key is the
+    program's own constant, not sender data; whenever the verifier accepts a proof, every one
+    of its points decodes (`programVerifier_groth16`), so the default `0` is never used. -/
 @[reducible] def programKey (C : AltBn128Contracts s G1 G2 GT) :
-    @LeanSpec.Groth16.VerificationKey (syscallGroups G1 G2 GT) :=
-  letI : LeanSpec.Groups := syscallGroups G1 G2 GT
+    @LeanSpec.Groth16.VerificationKey (syscallGroups C) :=
+  letI : LeanSpec.Groups := syscallGroups C
   let vk := zkcash_core.verifying_key.VERIFYING_KEY
   { α := (C.decodeG1 vk.vk_alpha_g1).getD 0, β := (C.decodeG2 vk.vk_beta_g2).getD 0,
     γ := (C.decodeG2 vk.vk_gamme_g2).getD 0, δ := (C.decodeG2 vk.vk_delta_g2).getD 0,
     IC := fun i => ic C vk i.val }
-
-/-- The spec's proof: the proof's points, as the syscalls decode them. -/
-@[reducible] def proofPoints (C : AltBn128Contracts s G1 G2 GT) (proof : zkcash_core.transact.Proof) :
-    @LeanSpec.Groth16.Proof (syscallGroups G1 G2 GT) :=
-  letI : LeanSpec.Groups := syscallGroups G1 G2 GT
-  { A := (C.decodeG1 proof.proof_a).getD 0, B := (C.decodeG2 proof.proof_b).getD 0,
-    C := (C.decodeG1 proof.proof_c).getD 0 }
 
 end
 
@@ -185,5 +224,8 @@ instance (inputs : LeanSpec.TxInputs) : Decidable (LeanSpec.encOutsFit inputs) :
 
 instance (T : LeanSpec.Tree) (R : LeanSpec.F) : Decidable (LeanSpec.rootKnown T R) :=
   decidable_of_iff ((∃ i, T.history i = R) ∧ R ≠ 0) (by simp [LeanSpec.rootKnown, Set.mem_range])
+
+instance (T : LeanSpec.Tree) (bs : LeanSpec.Bytes) : Decidable (LeanSpec.rootBytesKnown T bs) := by
+  unfold LeanSpec.rootBytesKnown; infer_instance
 
 end Connection

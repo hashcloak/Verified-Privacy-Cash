@@ -72,21 +72,32 @@ def PathCollision (cs : List F) (O : Opening) (c : F) : Prop :=
 --/////////////////////////////////////////
 
 /-- A run is the history of the pool: the transactions the program accepted, in order,
-    and the state of the pool before and after each one. Every theorem is about every
-    possible history starting from the freshly initialized pool, so it holds whatever
-    transactions were submitted.
+    the SOL anyone sent to the pool between them (donations), and the state of the pool
+    before and after each transaction. Every theorem is about every possible history
+    starting from the freshly initialized pool, so it holds whatever transactions were
+    submitted and whatever was donated.
 
     Technical: `txs` is the list of accepted transactions, starting from world `w0`.
-    `ws j` is the world before transaction `j` (so `ws 0 = w0`), and `ws txs.length` is the
-    final world. `step` says each transaction is accepted (`transact`) and leads to the
-    next world. Every theorem uses `w0 = initWorld params`; `w0` is a
-    parameter only so some lemmas don't need those arguments. This is ghost data: the
-    program doesn't store it; it exists only to state the theorems. -/
+    `ws j` is the world after transaction `j - 1` (so `ws 0 = w0`), and `ws txs.length` is
+    the final world. Before transaction `j`, `donations j` lamports are credited to the pool
+    (`World.donate`); `donations 0` is SOL sent to the pool before the first transaction,
+    including before `initialize`. `step` says transaction `j` is accepted (`transact`)
+    from world `j` with that donation credited, and leads to world `j + 1`. Donations after
+    the last transaction are not part of the run (`final` is the world right after it).
+    Every theorem uses `w0 = initWorld params`; `w0` is a parameter only so some lemmas
+    don't need those arguments. This is ghost data: the program doesn't store it; it exists
+    only to state the theorems. -/
 structure Run (w0 : World) where
   txs : List TxInputs
   ws : ℕ → World
+  donations : ℕ → ℕ
   start : ws 0 = w0
-  step : ∀ j (h : j < txs.length), transact txs[j] (ws j) (ws (j+1))
+  step : ∀ j (h : j < txs.length), transact txs[j] ((ws j).donate (donations j)) (ws (j+1))
+
+/-- The SOL donated to the pool during the run: the donations before each of its
+    transactions. -/
+def Run.donated {w0 : World} (r : Run w0) : ℕ :=
+  ∑ j ∈ Finset.range r.txs.length, r.donations j
 
 /-- The state of the pool at the end of the history. -/
 def Run.final {w0 : World} (r : Run w0) : World := r.ws r.txs.length
@@ -250,6 +261,8 @@ structure BuiltHonestly (w : World) (inputs : TxInputs) (witness : Witness) : Pr
   poolSeparate : poolIsSeparate inputs w.state.pool
   /-- The signer's account can pay the rent for the two nullifier accounts and the deposit. -/
   signerCanPay : signerSolvent w.balances inputs.s inputs.extAmt w.nullifierRent
+  /-- The seven public inputs are sent as their canonical encodings. -/
+  encodings : publicInputsEncoded inputs
 
 /-- The program's policy checks pass in world `w`. These can legitimately block a spend. -/
 structure PolicyChecksPass (w : World) (inputs : TxInputs) : Prop where
@@ -263,6 +276,9 @@ structure PolicyChecksPass (w : World) (inputs : TxInputs) : Prop where
     (w.poolBalance : ℤ) + inputs.extAmt ≥ inputs.f + w.rentExemptMin
   /-- [limit] The tree is not full (G3c). -/
   treeRoom : treeHasRoom w.state.tree
+  /-- [limit] No balance a payment credits overflows a `u64` (unreachable in practice: 2^64
+      lamports exceeds the total SOL supply). -/
+  balancesFit : balancesFit inputs w
 
 /-- The program accepts `inputs` in world `w`, with some proof. -/
 def CanBeAccepted (inputs : TxInputs) (w : World) : Prop :=

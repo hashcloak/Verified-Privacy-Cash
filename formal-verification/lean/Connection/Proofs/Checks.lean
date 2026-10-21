@@ -270,7 +270,38 @@ theorem toF_injOn {a b : Std.Array U8 32#usize} (ha : Canonical a) (hb : Canonic
   exact (Std.Array.eq_iff _ _).mpr
     (beListInj (by rw [Std.Array.property, Std.Array.property]) (by simpa [beNat] using hval))
 
-private theorem zero_canonical : Canonical (Std.Array.repeat 32#usize 0#u8) := by
+/-- The spec's big-endian reading of code bytes is the code's. -/
+theorem natOfBE_toBytes (l : List U8) :
+    LeanSpec.natOfBE (toBytes l) = l.foldl (fun acc x => acc * 256 + x.val) 0 := by
+  unfold LeanSpec.natOfBE toBytes
+  rw [List.foldl_map]
+  congr 1; funext acc x
+  show 256 * acc + x.val = acc * 256 + x.val
+  ring
+
+theorem toBytes_length (l : List U8) : (toBytes l).length = l.length := by simp [toBytes]
+
+/-- A 32-byte array, as the spec's bytes: the spec reads the same number (`beNat`). -/
+theorem natOfBE_toBytes_arr (b : Std.Array U8 32#usize) :
+    LeanSpec.natOfBE (toBytes b.val) = beNat b := natOfBE_toBytes b.val
+
+/-- A 32-byte array is the spec's canonical encoding of `x` exactly when it is canonical and
+    `toF` maps it to `x`. -/
+theorem canonicalEncoding_iff (b : Std.Array U8 32#usize) (x : LeanSpec.F) :
+    LeanSpec.canonicalEncoding (toBytes b.val) x ↔ Canonical b ∧ toF b = x := by
+  unfold LeanSpec.canonicalEncoding
+  rw [natOfBE_toBytes_arr, toBytes_length, Std.Array.property]
+  exact ⟨fun ⟨_, h1, h2⟩ => ⟨h1, h2⟩, fun ⟨h1, h2⟩ => ⟨rfl, h1, h2⟩⟩
+
+/-- The root's bytes are known (byte level) exactly when they are canonical and their field
+    element is known. -/
+theorem rootBytesKnown_iff (T : LeanSpec.Tree) (b : Std.Array U8 32#usize) :
+    LeanSpec.rootBytesKnown T (toBytes b.val) ↔ Canonical b ∧ LeanSpec.rootKnown T (toF b) := by
+  unfold LeanSpec.rootBytesKnown
+  rw [natOfBE_toBytes_arr, toBytes_length, Std.Array.property]
+  exact ⟨fun ⟨_, h1, h2⟩ => ⟨h1, h2⟩, fun ⟨h1, h2⟩ => ⟨rfl, h1, h2⟩⟩
+
+theorem zero_canonical : Canonical (Std.Array.repeat 32#usize 0#u8) := by
   simp [Canonical, beNat, bn254ScalarModulus]
 
 private theorem toF_zero : toF (Std.Array.repeat 32#usize 0#u8) = 0 := by
@@ -306,20 +337,23 @@ private theorem isKnownRootSpec (t : zkcash_core.merkle_tree.MerkleTreeAccount)
     exact ⟨fun h => ⟨fun h0 => hbv (hb.mpr h0), h⟩, fun h => h.2⟩
 
 theorem isKnownRoot_eq (t : zkcash_core.merkle_tree.MerkleTreeAccount) (root : Std.Array U8 32#usize)
-    (hshape : TreeShape t) (hroot : Canonical root)
+    (hshape : TreeShape t)
     (hhist : ∀ j : Fin 100, Canonical t.root_history.val[j.val]!) :
     zkcash_core.merkle_tree.is_known_root t root
-      = ok (decide (LeanSpec.rootKnown (toTree t) (toF root))) := by
+      = ok (decide (LeanSpec.rootBytesKnown (toTree t) (toBytes root.val))) := by
   obtain ⟨b, hb, hiff⟩ := (WP.spec_equiv_exists _ _).mp (isKnownRootSpec t root hshape.2.1 hshape.2.2)
   have key : (root ≠ Std.Array.repeat 32#usize 0#u8 ∧ ∃ j : Fin 100, t.root_history.val[j.val]! = root)
-      ↔ LeanSpec.rootKnown (toTree t) (toF root) := by
+      ↔ LeanSpec.rootBytesKnown (toTree t) (toBytes root.val) := by
+    rw [rootBytesKnown_iff]
     simp only [LeanSpec.rootKnown, toTree, Set.mem_range]
     constructor
     · rintro ⟨hne, j, hj⟩
-      exact ⟨⟨j, congrArg toF hj⟩, fun h0 => hne (toF_injOn hroot zero_canonical (h0.trans toF_zero.symm))⟩
-    · rintro ⟨⟨j, hj⟩, hne⟩
+      have hroot : Canonical root := hj ▸ hhist j
+      exact ⟨hroot, ⟨j, congrArg toF hj⟩,
+        fun h0 => hne (toF_injOn hroot zero_canonical (h0.trans toF_zero.symm))⟩
+    · rintro ⟨hroot, ⟨j, hj⟩, hne⟩
       exact ⟨fun h => hne (by rw [h, toF_zero]), j, toF_injOn (hhist j) hroot hj⟩
-  have hbd : b = decide (LeanSpec.rootKnown (toTree t) (toF root)) := by
+  have hbd : b = decide (LeanSpec.rootBytesKnown (toTree t) (toBytes root.val)) := by
     have h := hiff.trans key
     cases b <;> simp_all
   rw [hb, hbd]

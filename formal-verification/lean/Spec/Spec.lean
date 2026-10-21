@@ -43,6 +43,16 @@ class Sha where
     as `Fr::from_le_bytes_mod_order` does. -/
 def natOfLE (bs : Bytes) : ℕ := bs.foldr (fun b acc => b.toNat + 256 * acc) 0
 
+/-- Read bytes as a number, big-endian (byte 0 is most significant), as the program's
+    Groth16 verifier reads its public inputs. -/
+def natOfBE (bs : Bytes) : ℕ := bs.foldl (fun acc b => 256 * acc + b.toNat) 0
+
+/-- `bs` is the canonical encoding of the field element `x`, as the sender sends a public
+    input: 32 bytes whose big-endian value is below `p` and is `x`. Every field element has
+    exactly one canonical encoding; a non-canonical one (value `x + p`, …) is rejected. -/
+def canonicalEncoding (bs : Bytes) (x : F) : Prop :=
+  bs.length = 32 ∧ natOfBE bs < p ∧ (natOfBE bs : F) = x
+
 -- open the namespaces defined by the class definition
 open PoseidonHashes Sha
 /-
@@ -205,12 +215,16 @@ Let Lean assume there is an AddCommGroup G1 instance available
 
 (We don't have to provide the actual types, but can use the abstraction)
 -/
-/-- The three groups of the pairing. A class rather than fixed `opaque` types, so that a
-    deployment (and the code connection) can instantiate them with the real BN254 groups. -/
+/-- The three groups of the pairing, and how a sender's bytes are read as points of `G1` and
+    `G2` (`none`: the bytes are not a point). A class rather than fixed `opaque` types, so
+    that a deployment (and the code connection) can instantiate them with the real BN254
+    groups and the syscalls' decoding. The spec says nothing about the encoding itself. -/
 class Groups where
   G1 : Type
   G2 : Type
   GT : Type
+  decodeG1 : Bytes → Option G1
+  decodeG2 : Bytes → Option G2
 variable [Groups]
 abbrev G1 : Type := Groups.G1
 abbrev G2 : Type := Groups.G2
@@ -236,6 +250,19 @@ structure Proof where
   A: G1
   B: G2
   C: G1
+
+/-- A proof as the sender sends it: the bytes of its three points. -/
+structure ProofBytes where
+  A: Bytes
+  B: Bytes
+  C: Bytes
+
+/-- The proof's three points, decoded (`Groups.decodeG1`, `Groups.decodeG2`); `none` if one
+    of them is not a point. -/
+def ProofBytes.decode (πb: ProofBytes) : Option Proof :=
+  match Groups.decodeG1 πb.A, Groups.decodeG2 πb.B, Groups.decodeG1 πb.C with
+  | some A, some B, some C => some ⟨A, B, C⟩
+  | _, _, _ => none
 
 structure VerificationKey where
   α: G1
@@ -273,10 +300,13 @@ variable [Deployment]
 -- infeasible to find. So the theorems take the witnesses as data instead (`wit`, read as
 -- the knowledge extractor's output; trusted assumption T1 in `Spec/Statements.lean`).
 
-/-- Groth16 completeness for the deployed key: every statement with a witness has a proof
-    that verifies. True for an honestly generated key (Groth16 has perfect completeness).
-    A hypothesis of G3a only. -/
-def Groth16Complete : Prop := ∀ x w, RelationS x w → ∃ π, Groth16.verify Deployment.vk π x
+/-- Groth16 completeness for the deployed key: every statement with a witness has a proof,
+    sent as bytes, whose points decode and which verifies. True for an honestly generated key
+    (Groth16 has perfect completeness; the prover writes the points it computes in the
+    format the decoders read). A hypothesis of G3a only. -/
+def Groth16Complete : Prop :=
+  ∀ x w, RelationS x w → ∃ πb : Groth16.ProofBytes, ∃ π,
+    πb.decode = some π ∧ Groth16.verify Deployment.vk π x
 
 -- Configurations for the privacy-cash contract
 structure config where
@@ -369,8 +399,12 @@ structure TxInputs where
   t : Pubkey -- fee recipient
   encOut0: Bytes -- encrypted output 0
   encOut1: Bytes -- encrypted output 1
-  π: Groth16.Proof -- Groth16 proof for relation S
+  π: Groth16.ProofBytes -- Groth16 proof for relation S, as the sender's bytes
   mintAddr: Pubkey -- token type
+  -- The seven public inputs as the sender sends them, 32 bytes each, in circuit order
+  -- (`Groth16.toVector`: root, public amount, external data hash, the two nullifiers, the
+  -- two output commitments). `publicInputsEncoded` ties them to the field elements above.
+  pubInputBytes: Fin 7 → Bytes
 
 /-- The `PubInputs` record that `inputs` should produce a valid Groth16 proof for. -/
 def TxInputs.pubInputs (inputs : TxInputs) : PubInputs :=
@@ -464,6 +498,12 @@ def balanceDelta (inputs : TxInputs) (pool : Pubkey) (rent : ℕ) (k : Pubkey) :
 def rootKnown (T: Tree) (R: F): Prop :=
   R ∈ Set.range T.history ∧ R ≠ 0
 
+-- `rootKnown`, for the root as the sender sends it: 32 bytes, canonical (big-endian value
+-- below `p`), whose value is a known root. The program compares the bytes with the stored
+-- roots' bytes.
+def rootBytesKnown (T: Tree) (bs: Bytes): Prop :=
+  bs.length = 32 ∧ natOfBE bs < p ∧ rootKnown T (natOfBE bs : F)
+
 -- The external data (recipient, amounts, fee, encrypted outputs, mint) hashes to the
 -- value the proof commits to.
 def externalDataBound (inputs: TxInputs): Prop :=
@@ -484,9 +524,20 @@ def pubAmtConsistent (extAmt: ℤ) (f: ℕ) (pubAmt: F): Prop :=
   (extAmt > 0 → extAmt > f) ∧
   pubAmt = (extAmt: F) - f
 
--- The Groth16 proof verifies for the deployed key and these public inputs.
+-- The Groth16 proof is valid for the deployed key and these public inputs. Two checks:
+-- the proof's bytes decode to points (`Groups.decodeG1`, `decodeG2`; the wire format, NOT
+-- FROM THE DOCS), and the decoded points satisfy the Groth16 equation. Bytes that are not
+-- points are no proof at all, so decoding is part of validity, not a separate check.
 def proofValid (inputs: TxInputs): Prop :=
-  Groth16.verify Deployment.vk inputs.π inputs.pubInputs
+  ∃ π, inputs.π.decode = some π ∧ Groth16.verify Deployment.vk π inputs.pubInputs
+
+-- Each of the seven public inputs is sent as its canonical encoding: 32 bytes whose
+-- big-endian value is below `p` and is the field element the spec uses.
+-- NOT FROM THE DOCS: it is the wire format. Guards against input aliasing: without it the
+-- bytes of `x + p` would be accepted as `x`, so one nullifier could be sent as two different
+-- byte strings (two different nullifier accounts on-chain) while the spec sees one.
+def publicInputsEncoded (inputs: TxInputs): Prop :=
+  ∀ i, canonicalEncoding (inputs.pubInputBytes i) (Groth16.toVector inputs.pubInputs i)
 
 -- Neither input nullifier has been spent before.
 def nullifiersFresh (spent: Finset F) (k0 k1: F): Prop :=
@@ -546,10 +597,22 @@ def encOutsFit (inputs: TxInputs): Prop :=
 def poolIsSeparate (inputs: TxInputs) (pool: Pubkey): Prop :=
   inputs.s ≠ pool ∧ (inputs.extAmt < 0 → inputs.A ≠ pool) ∧ (inputs.f > 0 → inputs.t ≠ pool)
 
+-- Every balance a payment credits is below 2^64 after that payment: every account the
+-- transaction credits (`balanceDelta` positive) ends below 2^64, and so does the pool right
+-- after a deposit, before the fee is paid from it (`transactEffects` moves the deposit
+-- first). Solana balances are `u64`; a payment that would overflow is rejected.
+-- NOT FROM THE DOCS. No real transaction is affected: 2^64 lamports exceeds the total SOL
+-- supply. The pool between deposit and fee is the only intermediate balance that can exceed
+-- a final one (every other payment only adds to its payee's final balance).
+def balancesFit (inputs: TxInputs) (w: World): Prop :=
+  (∀ k, 0 < balanceDelta inputs w.state.pool w.nullifierRent k →
+    (w.balances k : ℤ) + balanceDelta inputs w.state.pool w.nullifierRent k < 2^64) ∧
+  (inputs.extAmt > 0 → (w.poolBalance : ℤ) + inputs.extAmt < 2^64)
+
 structure transactPreconditions
   (inputs: TxInputs)
   (oldWorld: World): Prop where
-  knownRoot: rootKnown oldWorld.state.tree inputs.R
+  knownRoot: rootBytesKnown oldWorld.state.tree (inputs.pubInputBytes 0)
   externalDataBinding: externalDataBound inputs
   minimumFee: feeSufficient oldWorld.state.config inputs.extAmt inputs.f
   pubAmtConsistency: pubAmtConsistent inputs.extAmt inputs.f inputs.pubAmt
@@ -564,6 +627,8 @@ structure transactPreconditions
   amountRange: amountsInRange inputs.extAmt inputs.f
   encOutLength: encOutsFit inputs
   poolSeparate: poolIsSeparate inputs oldWorld.state.pool
+  canonicalInputs: publicInputsEncoded inputs
+  balancesFit: balancesFit inputs oldWorld
 
 /-- `actual` agrees with `predicted` on everything, field by field: every account balance
     (uninvolved accounts stay unchanged, the pool's included), the pool's address, the tree, the nullifiers, the config and
@@ -631,17 +696,25 @@ def initWorld (params : InitParams) : World := {
   nullifierRent := params.nullifierRent
 }
 
+/-- A donation: `x` lamports credited to the pool's account, nothing else changes. On Solana
+    anyone can send SOL to any account at any time, the pool's included, also before
+    `initialize` (Anchor's `init` then only tops the account up to the rent-exempt minimum).
+    The program cannot prevent it and does not see it as a transaction. Other accounts are
+    not modelled: no theorem compares their balances across transactions. -/
+def World.donate (w: World) (x: ℕ) : World :=
+  { w with balances := Function.update w.balances w.state.pool (w.balances w.state.pool + x) }
+
 -- A claim about a pair of worlds; can we go from w1 to w2?
 --   This lets us reason about "in any number of steps"
 inductive ReachableWorld: World → World → Prop where
   -- No transactions; true for any world
  | noStep(w1: World): ReachableWorld w1 w1
- -- Given a reachable pair w1, w2 and
- -- a proof that transact succeeds from w2 to w3,
+ -- Given a reachable pair w1, w2, a donation `d` to the pool, and
+ -- a proof that transact succeeds from w2 (with the donation credited) to w3,
  -- Then obtain proof that w3 is reachable from w1
- | extend{w1 w2 w3: World}(txInputs: TxInputs):
+ | extend{w1 w2 w3: World}(d: ℕ)(txInputs: TxInputs):
       ReachableWorld w1 w2 →
-      transact txInputs w2 w3 →
+      transact txInputs (w2.donate d) w3 →
        ReachableWorld w1 w3
 
 end LeanSpec
