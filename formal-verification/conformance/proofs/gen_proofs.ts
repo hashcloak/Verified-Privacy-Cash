@@ -172,7 +172,9 @@ async function main() {
   // Proofs already in the file first, in their order, so adding one only appends.
   const ordered: Record<string, unknown> = {};
   for (const k of [...Object.keys(existing), ...Object.keys(out)]) if (k in out) ordered[k] = out[k];
-  fs.writeFileSync(OUT, JSON.stringify(ordered, null, 1) + '\n');
+  // One proof per line (byte arrays inline), so the file stays short.
+  const lines = Object.entries(ordered).map(([k, v]) => ` ${JSON.stringify(k)}: ${JSON.stringify(v)}`);
+  fs.writeFileSync(OUT, '{\n' + lines.join(',\n') + '\n}\n');
   console.log('wrote proofs.json:', Object.keys(out).join(', '));
 }
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Conformance: runs the compiled zkcash program (the mainnet build) in LiteSVM
 # on fixed scenarios (formal-verification/conformance) and fails unless
-# Tests/Conformance.lean holds exactly those traces. `lake build` then checks
-# the model's `step` against every trace.
+# Tests/ConformanceTraces.lean holds exactly those traces. `lake build` then
+# checks the model's `step` against every trace (Tests/Conformance.lean).
 #
 # Needs the IDL from scripts/check_idl.sh (run it first). The `transact`
 # scenarios submit the proofs in formal-verification/conformance/proofs/
@@ -20,7 +20,7 @@ HARNESS="$REPO/formal-verification/conformance"
 OUT="$ROOT/target/conformance"
 IDL="$ROOT/target/idl-check/fork.json"
 PROOFS="$HARNESS/proofs/proofs.json"
-LEAN="$ROOT/Tests/Conformance.lean"
+LEAN="$ROOT/Tests/ConformanceTraces.lean"
 BEGIN='-- BEGIN GENERATED'
 END='-- END GENERATED'
 
@@ -46,7 +46,7 @@ fi
 OLD="$(sed -n "/^$BEGIN\$/,/^$END\$/p" "$LEAN")"
 
 if [ "$NEW" = "$OLD" ]; then
-  echo "OK: Tests/Conformance.lean holds the program's traces"
+  echo "OK: Tests/ConformanceTraces.lean holds the program's traces"
 elif [ "${1:-}" = "--write" ]; then
   TMP="$(mktemp)"
   {
@@ -55,9 +55,9 @@ elif [ "${1:-}" = "--write" ]; then
     sed "1,/^$END\$/d" "$LEAN"
   } > "$TMP"
   mv "$TMP" "$LEAN"
-  echo "WROTE: Tests/Conformance.lean (now run lake build to check the model against it)"
+  echo "WROTE: Tests/ConformanceTraces.lean (now run lake build to check the model against it)"
 else
   diff <(printf '%s\n' "$OLD") <(printf '%s\n' "$NEW") | head -20 || true
-  echo "FAIL: Tests/Conformance.lean is out of date; rerun with --write"
+  echo "FAIL: Tests/ConformanceTraces.lean is out of date; rerun with --write"
   exit 1
 fi
