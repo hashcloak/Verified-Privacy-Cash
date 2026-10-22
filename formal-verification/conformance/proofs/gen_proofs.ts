@@ -4,12 +4,21 @@
  * hash, prover) and the circuit artifacts (artifacts/circuits/transaction2).
  * Writes proofs.json next to this file. Keys and blindings are fixed; proofs
  * are randomized by snarkjs, so the file is generated once and committed
- * (scripts/gen_proofs.sh regenerates it).
+ * (scripts/gen_proofs.sh regenerates it). A proof already in proofs.json is
+ * kept as it is, so adding proofs does not change the existing scenarios'
+ * traces; REGENERATE=1 remakes them all.
  *
  * The proofs, against the program's state as the scenarios build it:
  *   deposit       : 1_000_000 lamports into note A (two empty input notes), no fee
  *   withdraw      : note A spent in input slot 0, everything withdrawn (fee 2500)
  *   withdraw_slot1: note A spent in input slot 1 instead (same nullifier, other slot)
+ *   deposit_fee   : 1_000_000 lamports with a 5_000 fee, into note B (empty tree)
+ * and `withdraw`'s spend of note A with other accounts in the ext data, so the
+ * accounts the instruction pays alias each other:
+ *   withdraw_to_fee_recipient: the recipient is the fee recipient
+ *   withdraw_to_signer       : the recipient is the user who signs
+ *   withdraw_to_pool         : the recipient is the tree token account
+ *   withdraw_fee_to_pool     : the fee recipient is the tree token account
  */
 
 import * as fs from 'fs';
@@ -29,9 +38,14 @@ const { FIELD_SIZE } = lib('constants');
 
 const KEY_BASE = path.join(FORK, 'artifacts/circuits/transaction2');
 const SOL_MINT = new PublicKey('11111111111111111111111111111112');
-// The harness's fixed recipient and fee recipient (32 bytes of 0x0d and 0x0e).
+// The harness's fixed recipient, fee recipient and signer (32 bytes of 0x0d,
+// 0x0e and 0x0f), and the tree token account of the mainnet program.
 const RECIPIENT = new PublicKey(Buffer.alloc(32, 0x0d));
 const FEE_RECIPIENT = new PublicKey(Buffer.alloc(32, 0x0e));
+const USER = new PublicKey(Buffer.alloc(32, 0x0f));
+const PROGRAM_ID = new PublicKey('9fhQBbumKEFuXtMBDw8AaQyAjCorLGJQiS3skWZdQyQD');
+const [TREE_TOKEN] = PublicKey.findProgramAddressSync([Buffer.from('tree_token')], PROGRAM_ID);
+const OUT = path.join(__dirname, 'proofs.json');
 
 async function main() {
   const lightWasm = await WasmFactory.getInstance();
@@ -40,6 +54,8 @@ async function main() {
     new Utxo({ lightWasm, amount, keypair: key(k), blinding, index });
 
   const tree = new MerkleTree(26, lightWasm);
+  const existing: Record<string, any> =
+    !process.env.REGENERATE && fs.existsSync(OUT) ? JSON.parse(fs.readFileSync(OUT, 'utf8')) : {};
   const out: Record<string, unknown> = {};
 
   async function proof(
@@ -50,14 +66,20 @@ async function main() {
     fee: BN,
     enc1: string,
     enc2: string,
+    recipient: PublicKey = RECIPIENT,
+    feeRecipient: PublicKey = FEE_RECIPIENT,
   ) {
+    if (existing[name]) {
+      out[name] = existing[name];
+      return existing[name].commitments_decimal;
+    }
     const extData = {
-      recipient: RECIPIENT,
+      recipient,
       extAmount,
       encryptedOutput1: Buffer.from(enc1),
       encryptedOutput2: Buffer.from(enc2),
       fee,
-      feeRecipient: FEE_RECIPIENT,
+      feeRecipient,
       mintAddress: SOL_MINT,
     };
     const publicAmount = extAmount.sub(fee).add(FIELD_SIZE).mod(FIELD_SIZE);
@@ -101,6 +123,8 @@ async function main() {
       fee: fee.toString(),
       encrypted_output1: Buffer.from(enc1).toString('hex'),
       encrypted_output2: Buffer.from(enc2).toString('hex'),
+      recipient: recipient.toBuffer().toString('hex'),
+      fee_recipient: feeRecipient.toBuffer().toString('hex'),
       commitments_decimal: input.outputCommitment,
     };
     return input.outputCommitment;
@@ -117,6 +141,11 @@ async function main() {
     'deposit-output-1',
     'deposit-output-2',
   );
+  // A deposit with a fee, against the empty tree (the scenarios using it do
+  // not deposit first): 1_000_000 in, 5_000 to the fee recipient, the rest to note B.
+  await proof('deposit_fee', [note(0, 220, 60), note(0, 221, 61)], [note(995_000, 130, 70, 0), note(0, 131, 71)],
+    new BN(1_000_000), new BN(5_000), 'deposit-fee-output-1', 'deposit-fee-output-2');
+
   deposited.forEach((c: string) => tree.insert(c));
 
   // Withdraw everything from note A (index 0), fee 2500 (withdrawal rate 25 bps).
@@ -128,7 +157,22 @@ async function main() {
   await proof('withdraw_slot1', [note(0, 204, 24), A], [note(0, 105, 15), note(0, 106, 16)], ext, fee,
     'withdraw1-output-1', 'withdraw1-output-2');
 
-  fs.writeFileSync(path.join(__dirname, 'proofs.json'), JSON.stringify(out, null, 1) + '\n');
+  // Note A withdrawn to aliased accounts (each against the tree after `deposit`).
+  const aliased: [string, PublicKey, PublicKey][] = [
+    ['withdraw_to_fee_recipient', FEE_RECIPIENT, FEE_RECIPIENT],
+    ['withdraw_to_signer', USER, FEE_RECIPIENT],
+    ['withdraw_to_pool', TREE_TOKEN, FEE_RECIPIENT],
+    ['withdraw_fee_to_pool', RECIPIENT, TREE_TOKEN],
+  ];
+  for (const [i, [name, recipient, feeRecipient]] of aliased.entries()) {
+    await proof(name, [A, note(0, 210 + i, 30 + i)], [note(0, 110 + i, 40 + i), note(0, 120 + i, 50 + i)],
+      ext, fee, name + '-output-1', name + '-output-2', recipient, feeRecipient);
+  }
+
+  // Proofs already in the file first, in their order, so adding one only appends.
+  const ordered: Record<string, unknown> = {};
+  for (const k of [...Object.keys(existing), ...Object.keys(out)]) if (k in out) ordered[k] = out[k];
+  fs.writeFileSync(OUT, JSON.stringify(ordered, null, 1) + '\n');
   console.log('wrote proofs.json:', Object.keys(out).join(', '));
 }
 
