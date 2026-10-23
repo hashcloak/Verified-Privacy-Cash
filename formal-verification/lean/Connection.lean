@@ -1,3 +1,4 @@
 import Connection.Mapping
 import Connection.Hypotheses
-import Connection.Statements
+import Connection.ConnectionTheorems
+import Connection.Findings

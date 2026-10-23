@@ -4,30 +4,32 @@ open Aeneas Aeneas.Std Result PrivacyCash.Model
 /-! # The hypotheses of the connection theorem for `transact`
 
 REVIEW SURFACE. Besides "the code model accepted the transaction", the connection theorems
-(`Connection/Statements.lean`) take these hypotheses. They are of different kinds, and should
+(`Connection/ConnectionTheorems.lean`) take these hypotheses. They are of different kinds, and should
 be read differently:
 
 1. `HashesAgree` (ASSUMED, about the deployment's hash functions): the code's Poseidon, zero
    hashes and SHA-256 compute the spec's `H2`, `Z` and `sha256`; Poseidon's outputs and the
    zero hashes are canonical bytes (below the field modulus).
 2. `WellFormed` (INVARIANT, PROVED): facts about the program's own accounts. Proved for every
-   state an execution reaches from genesis (`wellFormed_reachable`), so the main result
-   (`transact_connection_main`) does not take it as a hypothesis; the per-step theorems do.
-3. `SolanaFacts` (ASSUMED, about the Solana runtime): the rent is positive, and the
-   transaction's data fits in memory.
+   state an execution reaches from genesis, so no theorem in `ConnectionTheorems.lean` takes it as a
+   hypothesis.
+3. `SolanaFacts` (ASSUMED, about the Solana runtime): the rent is positive, the transaction's
+   data fits in memory, and the pool's address does not sign.
 4. `CryptoFacts` (ASSUMED, about the circuit and SHA-256, for this transaction): the circuit
    makes the two nullifiers differ; SHA-256 makes the two new nullifier accounts' addresses
    differ.
 5. `PairingLaws` (ASSUMED, about the `alt_bn128` pairing), with core-model's syscall contracts
    `AltBn128Contracts`: needed by the verifier bridge.
 6. `OutsideSpecDetail` (BY DESIGN): Solana details the spec deliberately does not model, as it
-   is written at the level of the documentation. Each field rules one out; the theorem does not
-   cover transactions where such a detail matters. Not a defect of the code or the spec.
+   is written at the level of the documentation. Each field rules one out; `transact_connection`
+   does not cover transactions where such a detail matters. Not a defect of the code or the
+   spec. `run_connection` does not take it: there these details are changes the spec allows
+   between transactions.
 
 7. For handler completeness only: `HashesSucceed`, `SyscallsSucceed` (ASSUMED: the primitives
-   answer at all), and `KeyG2Decodes` (OPEN: not an approved assumption).
+   answer at all), and `KeyG2Decodes` (approved assumption).
 
-No code/spec difference is currently excluded: the main theorem has no `Findings` hypothesis.
+No code/spec difference is currently excluded: no theorem has a `Findings` hypothesis.
 
 Not a hypothesis here, but relied on: core-model's `EnvStep` (outside actions cannot change the
 owner or data of an account the program owns, and the program never closes one). The
@@ -58,8 +60,8 @@ structure HashesAgree (c : Crypto) : Prop where
   zeroBytesCanonical : ∃ z, c.hasher.zero_bytes = ok z ∧ ∀ i, i ≤ 26 → Canonical (z.val[i]!)
 
 /-- **Invariant, proved**: facts about the program's own accounts. They hold in every state an
-    execution reaches from genesis (`wellFormed_reachable`), with `spent` the nullifiers that
-    execution spent. -/
+    execution reaches from genesis, with `spent` the nullifiers that execution spent (proved in
+    `Proofs/WellFormed.lean`), so no theorem in `ConnectionTheorems.lean` assumes it. -/
 structure WellFormed (d : Deployment) (spent : Finset LeanSpec.F) (s : State) : Prop where
   /-- The program is not the system program (so "owned by the program" and "not yet created"
       are different things). -/
@@ -90,12 +92,17 @@ structure WellFormed (d : Deployment) (spent : Finset LeanSpec.F) (s : State) : 
   storedSubtrees : ∀ k t, HoldsTree d.programId s k t → ∀ j : Fin 26, Canonical t.subtrees.val[j.val]!
 
 /-- **Assumed**, about the Solana runtime, for this transaction. -/
-structure SolanaFacts (rent : Nat → U64) (out1 out2 : Slice U8) : Prop where
+structure SolanaFacts (d : Deployment) (rent : Nat → U64) (tx : TxEnv) (out1 out2 : Slice U8) : Prop where
   /-- A nullifier account's rent-exempt minimum is not zero (true on Solana). -/
   nullifierRentPositive : 0 < (rent nullifierAccountSpace).val
   /-- The serialized external data fits in a vector: 120 bytes plus the two encrypted outputs
       is at most the largest `usize`. True of every real transaction (at most 1232 bytes). -/
   fitsInVector : out1.length + out2.length + 120 ≤ Usize.max
+  /-- The pool's address does not sign the transaction. It is a program-derived address: it has
+      no private key, and the program never signs for it. Needed when Anchor's `init` of the two
+      nullifier accounts takes nothing from the signer (both addresses already hold their rent):
+      then nothing else stops the signer from being the pool. -/
+  poolDoesNotSign : poolAddr d ∉ tx.signers
 
 /-- **Assumed**, about the circuit and SHA-256, for this transaction. -/
 structure CryptoFacts (d : Deployment) (proof : zkcash_core.transact.Proof) : Prop where
@@ -188,7 +195,40 @@ structure KeyG2Decodes (C : AltBn128Contracts s G1 G2 GT) : Prop where
   gamma : C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_gamme_g2 ≠ none
   delta : C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_delta_g2 ≠ none
 
+/-- **Assumed** (handler completeness only): the deployment's hashes are the spec's
+    (`HashesAgree`), and its hash and syscall calls return a value on valid input. -/
+structure CompletenessAssumptions (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT) : Prop where
+  hashesAgree : HashesAgree c
+  hashesSucceed : HashesSucceed c
+  syscallsSucceed : SyscallsSucceed C
+  keyDecodes : KeyG2Decodes C
+
 end
+
+/-- **What holds when the handler starts** (handler completeness only), in the state `s₁` after
+    Anchor's checks and `init`s, for the tree and config the handler is given. -/
+structure HandlerContext (a : TransactAccounts) (s₁ : State)
+    (tree : zkcash_core.merkle_tree.MerkleTreeAccount) (config : zkcash_core.admin.GlobalConfig)
+    (out1 out2 : Slice U8) : Prop where
+  /-- Invariant (`WellFormed.tree`): height 26, a history of 100 roots, a root index below 100. -/
+  treeShape : TreeShape tree
+  /-- Invariant (`WellFormed.storedRoots`): every stored root is canonical. -/
+  rootsCanonical : ∀ j : Fin 100, Canonical tree.root_history.val[j.val]!
+  /-- Invariant (`WellFormed.storedSubtrees`): every stored subtree is canonical. -/
+  subtreesCanonical : ∀ j : Fin 26, Canonical tree.subtrees.val[j.val]!
+  /-- Invariant (`WellFormed.config`): the deposit fee rate is at most 10000. -/
+  depositRate : config.deposit_fee_rate.val ≤ 10000
+  /-- Invariant (`WellFormed.config`): the withdrawal fee rate is at most 10000. -/
+  withdrawalRate : config.withdrawal_fee_rate.val ≤ 10000
+  /-- Invariant (`WellFormed.config`): the fee error margin is at most 10000. -/
+  feeMargin : config.fee_error_margin.val ≤ 10000
+  /-- Premise: the signer is a plain system account. Guaranteed by Anchor whenever creating the
+      two nullifier accounts takes lamports from the signer (a system transfer requires a plain
+      system account as source); that is always the case unless both nullifier addresses
+      already hold their rent. -/
+  signerIsSystemAccount : (s₁ a.signer).owner = systemProgram ∧ (s₁ a.signer).data.isEmpty
+  /-- Assumed (`SolanaFacts.fitsInVector`): the serialized external data fits in a vector. -/
+  fitsInVector : out1.length + out2.length + 120 ≤ Usize.max
 
 /-- **Outside the spec's level of detail (by design)**: Solana details the spec deliberately
     does not model. Each field rules one out; transactions where it matters are not covered. -/
@@ -212,5 +252,30 @@ structure OutsideSpecDetail (d : Deployment) (rent : Nat → U64) (s : State) (t
     a.recipient ≠ d.pda (nullifier1Seeds proof.input_nullifiers.val[1]!) ∧
     a.feeRecipientAccount ≠ d.pda (nullifier0Seeds proof.input_nullifiers.val[0]!) ∧
     a.feeRecipientAccount ≠ d.pda (nullifier1Seeds proof.input_nullifiers.val[1]!)
+
+/-- The assumptions one step of an execution needs: `initialize` and `transact` see the rent
+    `rent`; a `transact` satisfies the per-transaction assumptions (`SolanaFacts`,
+    `CryptoFacts`). -/
+def StepAssumptions (d : Deployment) (rent : Nat → U64) (tx : TxEnv) : Instruction → Prop
+  | .initialize _ => tx.minimumBalance = some rent
+  | .transact _ proof _ _ out1 out2 =>
+    SolanaFacts d rent tx out1 out2 ∧ CryptoFacts d proof ∧ tx.minimumBalance = some rent
+  | _ => True
+
+/-- **Assumed**, for one execution from `s₀` with events `evs` (used by `run_connection`):
+    every step of it satisfies `StepAssumptions`, and the program's three fixed accounts are
+    different. -/
+structure ExecutionAssumptions (d : Deployment) (rent : Nat → U64) (s₀ : State) (evs : List Event) :
+    Prop where
+  /-- SHA-256 collision resistance for the program's three fixed addresses (the tree, the pool,
+      the config): they are three different accounts. Same kind of assumption as
+      `CryptoFacts.nullifierAddressesDiffer`. Without it, `initialize` could write two of them
+      to the same account. -/
+  fixedAddressesDiffer : PdaCollisionFree d.toAddresses
+    {d.pdaInput merkleTreeSeeds, d.pdaInput treeTokenSeeds, d.pdaInput globalConfigSeeds}
+  /-- Every program step of the execution, from the state the execution reached before it,
+      satisfies `StepAssumptions`. -/
+  eachStep : ∀ pre post s tx ix em, evs = pre ++ .program tx ix em :: post → Run d s₀ pre s →
+    StepAssumptions d rent tx ix
 
 end Connection

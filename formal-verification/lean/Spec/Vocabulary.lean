@@ -32,69 +32,65 @@ def canonicalOpening (cs : List F) (k : Fin (2^26)) : Opening where
   index := k
   siblings := fun h => treeHash cs h.val (siblingIdx k.val h.val)
 
--- HELPER: turn `Fin.foldl` loops into plain `ℕ` recursion, so the 26-level folds can be
--- proved by ordinary induction.
+/-- The sibling hash opening `O` gives at level `h` (unused past level 25). -/
+def Opening.sibling (O : Opening) (h : ℕ) : F := if hh : h < 26 then O.siblings ⟨h, hh⟩ else 0
 
-/-- `foldUpTo f n x = f (⋯ (f (f x 0) 1) ⋯) (n-1)`: `Fin.foldl` without the `Fin`
-    (`fin_foldl_eq_foldUpTo`). -/
-def foldUpTo {α : Type} (f : α → ℕ → α) : ℕ → α → α
-  | 0, x => x
-  | k+1, x => f (foldUpTo f k x) k
+/-- The hash reached after `h` levels, going up from `leaf` along opening `O` (level 0 is the
+    leaf itself; level 26 is the root `Opening.calcRoot` computes). At each level, bit `h` of
+    the index says whether the node so far is the right or the left input of `H2`. -/
+def Opening.nodeAt (O : Opening) (leaf : F) : ℕ → F
+  | 0 => leaf
+  | h + 1 => if Nat.testBit O.index.val h then H2 (O.sibling h) (O.nodeAt leaf h)
+      else H2 (O.nodeAt leaf h) (O.sibling h)
 
-/-- `Opening.calcRoot`'s per-level combination step, as a function of the plain `ℕ`
-    height. -/
-def stepFn (k : ℕ) (sib : ℕ → F) : F → ℕ → F :=
-  fun acc h => if Nat.testBit k h then H2 (sib h) acc else H2 acc (sib h)
+/-- The two values `H2` combines at level `h`, going up from `leaf` along opening `O`: the
+    node reached so far and the sibling, in the order bit `h` of the index gives. -/
+def Opening.inputsAt (O : Opening) (leaf : F) (h : ℕ) : F × F :=
+  if Nat.testBit O.index.val h then (O.sibling h, O.nodeAt leaf h) else (O.nodeAt leaf h, O.sibling h)
 
-/-- The `H2` input pair at height `h`, used to state an `H2Collision`. -/
-def stepPair (k : ℕ) (sib : ℕ → F) (acc : F) (h : ℕ) : F × F :=
-  if Nat.testBit k h then (sib h, acc) else (acc, sib h)
-
-/-- `O.siblings` as a plain `ℕ → F` (default `0` past height 26, never read). -/
-def OpeningSib (O : Opening) : ℕ → F := fun h => if hh : h < 26 then O.siblings ⟨h,hh⟩ else 0
-
-/-- A fake Merkle path that still reaches a real root: at some level, opening `O` (claiming
-    leaf `c`) and the real path of the tree `cs` at the same position hash different pairs
-    to the same value.
-
-    Technically: an `H2Collision` between the `stepPair`s of the two paths at level `h`.
-    All values are fixed by `cs`, `O` and `c`. -/
+/-- A fake Merkle path that still reaches a real root: at some level, the path of opening `O`
+    from the claimed leaf `c`, and the real path of the tree `cs` at the same position, feed
+    different pairs to `H2` with the same output. All values are fixed by `cs`, `O` and `c`. -/
 def PathCollision (cs : List F) (O : Opening) (c : F) : Prop :=
-  ∃ h : Fin 26, H2Collision
-    (stepPair O.index.val (OpeningSib O)
-      (foldUpTo (stepFn O.index.val (OpeningSib O)) h.val c) h.val)
-    (stepPair O.index.val (OpeningSib (canonicalOpening cs O.index))
-      (foldUpTo (stepFn O.index.val (OpeningSib (canonicalOpening cs O.index))) h.val
-        (leafAt cs O.index.val)) h.val)
+  ∃ h : Fin 26, H2Collision (O.inputsAt c h)
+    ((canonicalOpening cs O.index).inputsAt (leafAt cs O.index.val) h)
 
 --/////////////////////////////////////////
 -- Runs: the vocabulary the theorems are stated in
 --/////////////////////////////////////////
 
-/-- A run is the history of the pool: the transactions the program accepted, in order,
-    the SOL anyone sent to the pool between them (donations), and the state of the pool
-    before and after each transaction. Every theorem is about every possible history
-    starting from the freshly initialized pool, so it holds whatever transactions were
-    submitted and whatever was donated.
+/-- A run is the history of the pool: the transactions the program accepted, in order, what
+    happened between them (SOL sent to the pool or to other accounts, other accounts spent
+    from, admin changes to the config), and the state of the pool before and after each
+    transaction. Every theorem is about every possible history starting from the freshly
+    initialized pool, so it holds whatever transactions were submitted and whatever happened
+    between them.
 
     Technical: `txs` is the list of accepted transactions, starting from world `w0`.
     `ws j` is the world after transaction `j - 1` (so `ws 0 = w0`), and `ws txs.length` is
-    the final world. Before transaction `j`, `donations j` lamports are credited to the pool
-    (`World.donate`); `donations 0` is SOL sent to the pool before the first transaction,
-    including before `initialize`. `step` says transaction `j` is accepted (`transact`)
-    from world `j` with that donation credited, and leads to world `j + 1`. Donations after
-    the last transaction are not part of the run (`final` is the world right after it).
+    the final world. Before transaction `j`, what happened since world `j` is `between j`
+    (the balances and the config just before it; `allowed` says Solana and the program allow
+    it, `Between.Allowed`); `between 0` covers what happened before the first transaction,
+    including SOL sent to the pool before `initialize`. `step` says transaction `j` is
+    accepted (`transact`) from world `j` updated by `between j`, and leads to world `j + 1`.
+    What happens after the last transaction is not part of the run (`final` is the world
+    right after it).
     Every theorem uses `w0 = initWorld params`; `w0` is a parameter only so some lemmas
     don't need those arguments. This is ghost data: the program doesn't store it; it exists
     only to state the theorems. -/
 structure Run (w0 : World) where
   txs : List TxInputs
   ws : ℕ → World
-  donations : ℕ → ℕ
+  between : ℕ → Between
   start : ws 0 = w0
-  step : ∀ j (h : j < txs.length), transact txs[j] ((ws j).donate (donations j)) (ws (j+1))
+  allowed : ∀ j < txs.length, (between j).Allowed (ws j)
+  step : ∀ j (h : j < txs.length), transact txs[j] ((ws j).between (between j)) (ws (j+1))
 
-/-- The SOL donated to the pool during the run: the donations before each of its
+/-- The SOL sent to the pool from outside before transaction `j` (it can only grow then). -/
+def Run.donations {w0 : World} (r : Run w0) (j : ℕ) : ℕ :=
+  (r.between j).balances (r.ws j).state.pool - (r.ws j).poolBalance
+
+/-- The SOL sent to the pool from outside during the run: what it gained before each of its
     transactions. -/
 def Run.donated {w0 : World} (r : Run w0) : ℕ :=
   ∑ j ∈ Finset.range r.txs.length, r.donations j
@@ -295,5 +291,77 @@ def LivenessBreak {w0 : World} (r : Run w0) (wit : ℕ → Witness) (witness : W
   ∨ (∃ i, witness.inAmt i ≠ 0 ∧ NullifierTaken r wit witness i)
   ∨ (∃ i, witness.inAmt i = 0 ∧ DummyNullifierTaken r wit witness i)
 
+
+--/////////////////////////////////////////
+-- The security goals, as properties (each stated once; the theorems in `Spec/Statements.lean`
+-- say the spec satisfies them, and the code connection says the code does)
+--/////////////////////////////////////////
+
+/-- **G1a.** In run `r`, with witnesses `wit`, every spend opens a leaf an earlier transaction
+    created, holding exactly the spent note, or a hash break occurs. -/
+def SpendsAreGenuine {w0 : World} (r : Run w0) (wit : ℕ → Witness) : Prop :=
+  ∀ j < r.txs.length, ∀ i : Fin 2, (wit j).inAmt i ≠ 0 →
+    (spentLeaf wit j i < 2 * j ∧ (wit j).inNote i = leafNote wit (spentLeaf wit j i))
+    ∨ SpendBreak r wit j i
+
+/-- **G1b.** In run `r`, two different spends never open the same leaf, or a hash break
+    occurs. -/
+def NoDoubleSpend {w0 : World} (r : Run w0) (wit : ℕ → Witness) : Prop :=
+  ∀ j < r.txs.length, ∀ j' < r.txs.length, ∀ i i' : Fin 2,
+    (wit j).inAmt i ≠ 0 → (wit j').inAmt i' ≠ 0 → (j, i) ≠ (j', i') →
+    spentLeaf wit j i = spentLeaf wit j' i' →
+    SpendBreak r wit j i ∨ SpendBreak r wit j' i' ∨ H1Collision ((wit j).inSk i) ((wit j').inSk i')
+
+/-- **G1c.** At the end of run `r`, the pool's SOL is exactly its rent reserve, plus the value of
+    the notes not yet spent, plus the SOL sent to it from outside, or a hash break occurs. -/
+def PoolBacksNotes (params : InitParams) (r : Run (initWorld params)) (wit : ℕ → Witness) : Prop :=
+  (r.final.poolBalance : ℤ) = params.rentExemptMin + ∑ pos ∈ r.unspent wit, leafValue wit pos + r.donated
+  ∨ BalanceBreak r wit
+
+/-- **G1d.** In run `r`, a spend of a note owned by `H1 skOwner` uses the key `skOwner`, or a
+    hash break occurs. -/
+def OnlyOwnerSpends {w0 : World} (r : Run w0) (wit : ℕ → Witness) : Prop :=
+  ∀ j < r.txs.length, ∀ i : Fin 2, (wit j).inAmt i ≠ 0 →
+    ∀ skOwner, (leafNote wit (spentLeaf wit j i)).ownerPk = H1 skOwner →
+    (wit j).inSk i = skOwner ∨ SpendBreak r wit j i ∨ H1Collision skOwner ((wit j).inSk i)
+
+/-- **G2a.** If the honest, well-formed transaction `T` has the same public inputs as the
+    accepted transaction `T'`, they pay out the same: same recipient, amount, fee, fee
+    recipient, token and encrypted outputs, or `sha256` collides on their external data. -/
+def CopiedProofSamePayout (T T' : TxInputs) : Prop :=
+  externalDataBound T ∧ amountsInRange T.extAmt T.f ∧ encOutsFit T → T.pubInputs = T'.pubInputs →
+    (T.A = T'.A ∧ T.extAmt = T'.extAmt ∧ T.encOut0 = T'.encOut0 ∧ T.encOut1 = T'.encOut1
+      ∧ T.f = T'.f ∧ T.t = T'.t ∧ T.mintAddr = T'.mintAddr)
+    ∨ Sha256Collision (serealizeExternalData T) (serealizeExternalData T')
+
+/-- **G3c.** Once run `r` has `2^25` transactions (the tree's capacity), no further transaction
+    is accepted, whatever happened after the last one. -/
+def FullTreeFreezes {w0 : World} (r : Run w0) : Prop :=
+  2^25 ≤ r.txs.length → ∀ (b : Between) (inputs : TxInputs) (new : World),
+    ¬ transact inputs (r.final.between b) new
+
+/-- **G4a.** In the transaction from `old` to `new`, the pool, the signer, the recipient and the
+    fee recipient (each counted once) end with their total before, minus twice the nullifier
+    rent. -/
+def NoSolCreated (inputs : TxInputs) (old new : World) : Prop :=
+  ∑ k ∈ ({inputs.s, inputs.A, inputs.t, old.state.pool} : Finset Pubkey), (new.balances k : ℤ)
+  = ∑ k ∈ ({inputs.s, inputs.A, inputs.t, old.state.pool} : Finset Pubkey), (old.balances k : ℤ)
+    - 2 * old.nullifierRent
+
+/-- **G4b.** In the transaction from `old` to `new`, every account changes by exactly what it
+    is owed or owes (`balanceDelta`). -/
+def ExactPayouts (inputs : TxInputs) (old new : World) : Prop :=
+  ∀ k, (new.balances k : ℤ) = old.balances k + balanceDelta inputs old.state.pool old.nullifierRent k
+
+/-- **G5.** In every world of run `r`, the config was reached from the initial one by allowed
+    admin changes, both authorities are whoever initialized the pool (the deployment's admin,
+    when it has one), the error margin is at most 10000, and the rent is the initial one. -/
+def ConfigOnlyByAuthority (params : InitParams) (r : Run (initWorld params)) : Prop :=
+  ∀ j ≤ r.txs.length,
+    AdminChanges params.cfg (r.ws j).state.config ∧
+    (r.ws j).state.config.authority = params.initializer ∧
+    (r.ws j).state.config.limitAuthority = params.initializer ∧
+    (r.ws j).state.config.feeMarginError ≤ 10000 ∧
+    (r.ws j).rentExemptMin = params.rentExemptMin
 
 end LeanSpec

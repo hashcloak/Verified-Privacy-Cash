@@ -4,7 +4,7 @@ open Aeneas Aeneas.Std Result PrivacyCash.Model
 
 /-! # Proofs: what the program's verifier guarantees without any syscall assumption
 
-NOT FOR REVIEW: the statements are restated in `Connection/Statements.lean`. -/
+NOT FOR REVIEW: the statements are restated in `Connection/ConnectionTheorems.lean`. -/
 
 namespace Connection
 open zkcash_core

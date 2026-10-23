@@ -44,8 +44,8 @@ without reading the proofs. -/
 /-- info: 'LeanSpec.Goals.balance_changes_exact' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms LeanSpec.Goals.balance_changes_exact
 
-/-- info: 'LeanSpec.Goals.config_constant' depends on axioms: [propext, Classical.choice, Quot.sound] -/
-#guard_msgs in #print axioms LeanSpec.Goals.config_constant
+/-- info: 'LeanSpec.Goals.config_changes_only_by_authority' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms LeanSpec.Goals.config_changes_only_by_authority
 
 /-- info: 'LeanSpec.Goals.NonVacuous.nonvacuous_spend' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms LeanSpec.Goals.NonVacuous.nonvacuous_spend

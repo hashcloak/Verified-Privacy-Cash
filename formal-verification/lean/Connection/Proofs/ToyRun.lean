@@ -5,7 +5,9 @@ open Aeneas Aeneas.Std Result PrivacyCash.Model
 
 Genesis, `initialize`, one deposit, in the toy deployment of `Connection/Proofs/Toy.lean`, with
 a toy PDA derivation (`toyCPA`) that separates the addresses the run uses. Every hypothesis of
-the main result `transact_connection_main` holds for the deposit (`toy_execution`). -/
+`transact_connection` holds for the deposit (`toy_execution`), and every hypothesis of
+`run_connection` for the execution (`toy_bridge_nonvacuous`). `toy_deposit_ok` also describes
+the state after the deposit, from which `Proofs/ToySpend.lean` continues with a withdrawal. -/
 
 namespace Connection.Toy
 open zkcash_core
@@ -337,7 +339,8 @@ theorem execTransact_ok_of {d : Deployment} {s : State} {tx : TxEnv} {a : Transa
       = TL [a.treeAccount, a.nullifier0, a.nullifier1, a.nullifier2, a.nullifier3, a.treeTokenAccount,
           a.globalConfig, a.recipient, a.feeRecipientAccount, a.signer, a.systemProgram]
         (fun k => (s k).lamports.val)) :
-    ∃ s' events, execTransact d s tx a proof ext fee out1 out2 = .ok (s', events) := by
+    ∃ events, execTransact d s tx a proof ext fee out1 out2 = .ok ((s₁.withBalances env'.balances).set
+      a.treeAccount { (s₁.withBalances env'.balances) a.treeAccount with data := .treeAccount tree' }, events) := by
   unfold execTransact
   split
   rotate_left
@@ -367,7 +370,7 @@ theorem execTransact_ok_of {d : Deployment} {s : State} {tx : TxEnv} {a : Transa
   rw [withBalances_set_lamports, hTL, ← totalLamports_eq] at hbal
   have hbal' := (Nat.cast_inj (R := ℤ)).mp hbal
   simp only [hbal']
-  exact ⟨_, _, rfl⟩
+  exact ⟨_, rfl⟩
 
 
 /-! ## The deposit -/
@@ -499,10 +502,18 @@ theorem toy_deposit_ok (s₁ : State) (tree : merkle_tree.MerkleTreeAccount)
     (hTm : tree.max_deposit_amount = admin.DEFAULT_MAX_DEPOSIT_AMOUNT) (hkb : token.bump = 255#u8)
     (hcb : config.bump = 255#u8) (hdr : config.deposit_fee_rate.val = 0)
     (hwr : config.withdrawal_fee_rate.val = 25) (hmr : config.fee_error_margin.val = 500) :
-    ∃ s' events, step toyD s₁ toyTx (.transact depA depProof 1#i64 0#u64 emptySlice emptySlice)
-      = .ok (s', events) := by
+    ∃ s' events tree', step toyD s₁ toyTx (.transact depA depProof 1#i64 0#u64 emptySlice emptySlice)
+      = .ok (s', events) ∧
+      s' treeA = ⟨1#u64, toyD.programId, .treeAccount tree'⟩ ∧
+      s' tokenA = ⟨2#u64, toyD.programId, .treeToken token⟩ ∧
+      s' configA = ⟨1#u64, toyD.programId, .globalConfig config⟩ ∧
+      s' (pk 1#u8) = ⟨994#u64, systemProgram, .empty⟩ ∧
+      (∀ k, k ≠ treeA → k ≠ tokenA → k ≠ configA → k ≠ pk 1#u8 → k ≠ nf0A → k ≠ nf1A → s' k = toyS0 k) ∧
+      (∃ p1 p2 t1, merkle_tree.append toyHasher depProof.output_commitments.val[0]! tree = ok (.Ok p1, t1) ∧
+        merkle_tree.append toyHasher depProof.output_commitments.val[1]! t1 = ok (.Ok p2, tree')) := by
   obtain ⟨a01, a02, a03, a04, a11, a12, a13, a14, a0n1, a21, a22, a23, a24, a31, a32, a33, a34,
     -, -, -, -, -, -, -, -, -, -, hTP, -⟩ := dep_addr
+  obtain ⟨g1, -, g3, g4, g5, g6, -⟩ := addr_facts
   have hPs : s₁ depA.signer = ⟨997#u64, systemProgram, .empty⟩ := hP
   -- the two nullifier inits, paid by the signer
   have z0 : (s₁ depA.nullifier0).lamports.val = 0 := by
@@ -559,23 +570,67 @@ theorem toy_deposit_ok (s₁ : State) (tree : merkle_tree.MerkleTreeAccount)
     · show (s₁ configA).owner = _; rw [hC]
     · show (s₁ configA).data = _; rw [hC]
     · rw [hcb]; rfl
-  exact execTransact_ok_of (by show (s₁ treeA).data = _; rw [hT]) (by show (s₁ tokenA).data = _; rw [hK])
-    (by show (s₁ configA).data = _; rw [hC]) hv rfl (by rw [hA, Option.bind_some, hB]) hh hTL
+  obtain ⟨events, hex⟩ := execTransact_ok_of (by show (s₁ treeA).data = _; rw [hT])
+    (by show (s₁ tokenA).data = _; rw [hK]) (by show (s₁ configA).data = _; rw [hC]) hv rfl
+    (by rw [hA, Option.bind_some, hB]) hh hTL
+  rw [show depA.treeAccount = treeA from rfl] at hex
+  -- the state after the deposit, account by account
+  have hEB : ∀ k, (env'.balances k).val = moveN (fun k => (sB k).lamports.val) (pk 1#u8) tokenA 1 k := by
+    intro k
+    have := congrFun he k
+    rw [show (0#u64 : U64).val = 0 by simp, payN_zero] at this
+    exact this
+  have hsB : ∀ k, k ≠ pk 1#u8 → k ≠ nf0A → k ≠ nf1A → sB k = s₁ k := fun k h1 h2 h3 =>
+    (kB k h1 h3).trans (kA k h1 h2)
+  have hne : tokenA ≠ pk 1#u8 := hTP
+  refine ⟨_, events, tree', hex, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · simp only [State.set_same, State.withBalances]
+    rw [hsB treeA g1 (Ne.symm a01) (Ne.symm a11), hT]
+    refine acct_eq _ _ _ _ ?_ rfl rfl
+    rw [hEB, moveN_other _ _ g1 g4, hsB treeA g1 (Ne.symm a01) (Ne.symm a11), hT]
+  · rw [State.set_other _ _ (Ne.symm g4)]
+    simp only [State.withBalances]
+    rw [hsB tokenA hne (Ne.symm a02) (Ne.symm a12), hK]
+    refine acct_eq _ _ _ _ ?_ rfl rfl
+    rw [hEB]
+    simp only [moveN, Function.update_self, Function.update_of_ne hne]
+    rw [hsB tokenA hne (Ne.symm a02) (Ne.symm a12), hK]; rfl
+  · rw [State.set_other _ _ (Ne.symm g5)]
+    simp only [State.withBalances]
+    rw [hsB configA g3 (Ne.symm a03) (Ne.symm a13), hC]
+    refine acct_eq _ _ _ _ ?_ rfl rfl
+    rw [hEB, moveN_other _ _ g3 (Ne.symm g6), hsB configA g3 (Ne.symm a03) (Ne.symm a13), hC]
+  · rw [State.set_other _ _ (Ne.symm g1)]
+    simp only [State.withBalances]
+    refine acct_eq _ _ _ _ ?_ (by show (sB depA.signer).owner = _; rw [oB, oA, hPs])
+      (by show (sB depA.signer).data = _; rw [dB, dA, hPs])
+    rw [hEB]
+    simp only [moveN, Function.update_of_ne (Ne.symm hne), Function.update_self]
+    show (sB depA.signer).lamports.val - 1 = 994
+    rw [lB']
+  · intro k e1 e2 e3 e4 e5 e6
+    rw [State.set_other _ _ e1]
+    simp only [State.withBalances]
+    rw [hsB k e4 e5 e6, hO k e1 e2 e3 e4]
+    refine acct_eq _ _ _ _ ?_ rfl rfl
+    rw [hEB, moveN_other _ _ e4 e2, hsB k e4 e5 e6, hO k e1 e2 e3 e4]; rfl
+  · exact hok.appends
 
 
-/-! ## The whole toy execution: every hypothesis of the main result holds -/
+/-! ## The whole toy execution: every hypothesis of `transact_connection` holds -/
 
 def toyRent : Nat → U64 := fun _ => 1#u64
 
 theorem toy_execution :
-    ∃ (s : State) (s' : State) (evs : List Event) (events : List CommitmentData),
-      Genesis toyD.programId toyS0 ∧ Run toyD toyS0 evs s ∧ toyD.programId ≠ systemProgram ∧
+    ∃ (s : State) (s' : State) (events : List CommitmentData),
+      step toyD toyS0 toyTx (.initialize toyInitA) = .ok (s, []) ∧
+      Genesis toyD.programId toyS0 ∧ toyD.programId ≠ systemProgram ∧
       step toyD s toyTx (.transact depA depProof 1#i64 0#u64 emptySlice emptySlice) = .ok (s', events) ∧
-      HashesAgree toyD.crypto ∧ SolanaFacts toyRent emptySlice emptySlice ∧ CryptoFacts toyD depProof ∧
+      HashesAgree toyD.crypto ∧ SolanaFacts toyD toyRent toyTx emptySlice emptySlice ∧ CryptoFacts toyD depProof ∧
       OutsideSpecDetail toyD toyRent s toyTx depA depProof := by
   obtain ⟨s₁, tree, token, config, hinit, hT, hK, hC, hP, hO, hshape, hroots, hsubs, hT0, hTn, hTb, hTm,
     hkb, hcb, hdr, hwr, hmr⟩ := toy_init_ok
-  obtain ⟨s', events, hstep⟩ := toy_deposit_ok s₁ tree token config hT hK hC hP hO hshape hroots hsubs hT0
+  obtain ⟨s', events, -, hstep, -⟩ := toy_deposit_ok s₁ tree token config hT hK hC hP hO hshape hroots hsubs hT0
     hTn hTb hTm hkb hcb hdr hwr hmr
   obtain ⟨a01, a02, a03, a04, a11, a12, a13, a14, a0n1, -, -, -, -, -, -, -, -, p3T, p3K, p3C, p4T, p4K, p4C,
     p30, p31, p40, p41, -, -⟩ := dep_addr
@@ -584,9 +639,9 @@ theorem toy_execution :
     rw [hinit]; rfl
   have p1 : pk 3#u8 ≠ pk 1#u8 := pk_ne (by decide)
   have p2 : pk 4#u8 ≠ pk 1#u8 := pk_ne (by decide)
-  refine ⟨s₁, s', [.program toyTx (.initialize toyInitA) []], events, toyGenesis,
-    .program hinitStep (.nil _), by unfold toyD; decide +kernel, hstep, toyHashesAgree,
-    ⟨by simp [toyRent], toyFit⟩, ⟨?_, ?_⟩, ⟨rfl, ?_, ?_⟩⟩
+  refine ⟨s₁, s', events, hinitStep, toyGenesis, by unfold toyD; decide +kernel, hstep, toyHashesAgree,
+    ⟨by simp [toyRent], toyFit, ?_⟩, ⟨?_, ?_⟩, ⟨rfl, ?_, ?_⟩⟩
+  · unfold toyD toyTx poolAddr; decide +kernel
   · show zeros32 ≠ one32; decide +kernel
   · intro x hx y hy hxy
     simp only [Set.mem_insert_iff, Set.mem_singleton_iff] at hx hy
@@ -603,5 +658,66 @@ theorem toy_execution :
       unfold toyS0 at h; rw [if_neg p1] at h; cases h
     · rw [show s₁ depA.feeRecipientAccount = toyS0 (pk 4#u8) from hO _ p4T p4K p4C p2] at h
       unfold toyS0 at h; rw [if_neg p2] at h; cases h
+
+/-! ## Non-vacuity of the two connection theorems -/
+
+/-- `transact_connection`'s hypotheses hold together in the toy execution. -/
+theorem toy_main_nonvacuous :
+    ∃ (d : Deployment) (rent : Nat → U64) (s₀ s s' : State) (evs : List Event) (tx : TxEnv)
+      (a : TransactAccounts) (proof : transact.Proof) (extAmount : I64) (fee : U64)
+      (out1 out2 : Slice U8) (events : List CommitmentData)
+      (C : AltBn128Contracts d.crypto.altBn128 Unit Unit Unit) (laws : PairingLaws C.e),
+      Genesis d.programId s₀ ∧ Run d s₀ evs s ∧ d.programId ≠ systemProgram ∧
+      step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events) ∧ extAmount.val > 0 ∧
+      @HashesAgree toyPoseidon toySpecSha d.crypto ∧ SolanaFacts d rent tx out1 out2 ∧
+      CryptoFacts d proof ∧ OutsideSpecDetail d rent s tx a proof ∧
+      HashesSucceed d.crypto ∧ SyscallsSucceed C ∧ KeyG2Decodes C := by
+  obtain ⟨s, s', events, hinit, h1, h3, h4, h5, h6, h7, h8⟩ := toy_execution
+  exact ⟨toyD, toyRent, toyS0, s, s', _, toyTx, depA, depProof, 1#i64, 0#u64,
+    emptySlice, emptySlice, events, toyC, toyLaws, h1, .program hinit (.nil _), h3, h4, by simp, h5, h6,
+    h7, h8, toyHashesSucceed, toySyscalls, toyKey⟩
+
+/-- The toy's three fixed addresses differ (the toy derivation tells their seeds apart by
+    length). -/
+theorem toy_fixed_addresses : PdaCollisionFree toyD.toAddresses
+    {toyD.pdaInput merkleTreeSeeds, toyD.pdaInput treeTokenSeeds, toyD.pdaInput globalConfigSeeds} := by
+  intro x hx y hy hxy
+  simp only [Set.mem_insert_iff, Set.mem_singleton_iff] at hx hy
+  rcases hx with rfl | rfl | rfl <;> rcases hy with rfl | rfl | rfl <;>
+    first | rfl | (exfalso; revert hxy; unfold toyD; decide +kernel)
+
+/-- The two-event toy execution, split at any program step. -/
+theorem toy_split {e₁ e₂ ev : Event} {pre post : List Event} (h : [e₁, e₂] = pre ++ ev :: post) :
+    (pre = [] ∧ ev = e₁) ∨ (pre = [e₁] ∧ ev = e₂) := by
+  rcases pre with _ | ⟨x, _ | ⟨y, pre⟩⟩
+  · simp at h; exact Or.inl ⟨rfl, h.1.symm⟩
+  · simp at h; exact Or.inr ⟨by rw [h.1], h.2.1.symm⟩
+  · simp at h
+
+/-- The bridge's hypotheses hold together, for an execution with a transaction. -/
+theorem toy_bridge_nonvacuous :
+    ∃ (d : Deployment) (s₀ s : State) (evs : List Event)
+      (C : AltBn128Contracts d.crypto.altBn128 Unit Unit Unit),
+      PairingLaws C.e ∧ Genesis d.programId s₀ ∧ Run d s₀ evs s ∧ d.programId ≠ systemProgram ∧
+      @HashesAgree toyPoseidon toySpecSha d.crypto ∧ ExecutionAssumptions d toyRent s₀ evs ∧
+      runTxs evs ≠ [] := by
+  obtain ⟨s₁, s', events, hinit, hgen, hpid, hstep, hashes, solana, crypto, outside⟩ := toy_execution
+  refine ⟨toyD, toyS0, s', [.program toyTx (.initialize toyInitA) [],
+    .program toyTx (.transact depA depProof 1#i64 0#u64 emptySlice emptySlice) events], toyC, toyLaws,
+    hgen, .program hinit (.program hstep (.nil _)), hpid, hashes, ⟨toy_fixed_addresses, ?_⟩,
+    by simp [runTxs, stepTxs]⟩
+  intro pre post s tx ix em hsplit hpre
+  rcases toy_split hsplit with ⟨rfl, hev⟩ | ⟨rfl, hev⟩
+  · cases hev
+    cases hpre
+    rfl
+  · cases hev
+    -- the state after `initialize` is `s₁`
+    cases hpre with
+    | program h1 hrest =>
+      cases hrest
+      rw [hinit] at h1
+      cases h1
+      exact ⟨solana, crypto, outside.rentFixed⟩
 
 end Connection.Toy

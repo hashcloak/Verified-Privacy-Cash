@@ -1,84 +1,63 @@
 # Connection: code model ↔ spec
 
 `lean/Connection/` connects the code model (`core-model/`: the extracted `zkcash_core` plus the
-hand-written Solana/Anchor model) to the spec (`lean/Spec/`). Open work is in `TODO.md`; how to review is in `REVIEWING.md`.
+hand-written Solana/Anchor model) to the spec (`lean/Spec/`). Open work is in `TODO.md`; how
+to review is in `REVIEWING.md`.
 
-**Review surface** (three files; proofs in `Connection/Proofs/` are not for review):
-- `Mapping.lean`: how code values map to spec values (`toF`, `toPubkey`, `toTree`, `toWorld`, `toInputs`).
-- `Hypotheses.lean`: the main theorem's hypotheses: assumed (`HashesAgree`, `SolanaFacts`,
-  `CryptoFacts`, `PairingLaws`), an invariant proved for every reachable state (`WellFormed`),
-  and Solana details outside the spec's level of detail (`OutsideSpecDetail`).
-- `Statements.lean`: the theorems, each a commuting square (SymCrypt style): run one code
-  function, map inputs and result, compare with the spec.
+**Review surface** (four files; proofs in `Connection/Proofs/` are not for review):
+- `ConnectionTheorems.lean`: the two connection theorems, the security goals stated of the code, and
+  non-vacuity.
+- `Findings.lean`: the differences found (L1, A0), as counterexamples and an exact statement.
+- `Mapping.lean`: how code values map to spec values (`toF`, `toPubkey`, `toTree`, `toWorld`,
+  `toInputs`), and code executions to spec runs (`runTxs`, `IsRunOf`, `IsSpecRun`).
+- `Hypotheses.lean`: the hypotheses, each with its kind (below).
 
-**Scope: safety, plus exact per-function squares.** Code accepts ⟹ spec allows, with the
-spec's effects. The per-function equations also catch wrong rejections (L1); elsewhere they
-are not caught yet. Handler completeness is proved, except at L1 and A0 (`handlerComplete_*`); full
-completeness through Anchor and the runtime, and with it G3a/G3b, is future work. No spec
-invariant is concluded over code executions yet: the highest-priority item in `TODO.md`.
+**Scope: safety.** Code accepts ⟹ spec allows, with the spec's effects. Wrong rejections show
+up as findings where completeness is checked (`Findings.lean`: the handler); full completeness
+through Anchor and the runtime, and with it G3a/G3b, is future work.
 
-## Theorems (`Statements.lean`)
+## Theorems (`ConnectionTheorems.lean`)
 
-Each hypothesis has a kind: **inv** (proved invariant), **asm** (approved assumption),
-**design** (agreed by-design exclusion), or **OPEN** (not yet classified or proved). Premises
-that set up the scenario ("the code accepted", "the tree is full") and the field links of the
-external-data hash are not conditions and are not listed.
+Kinds of hypothesis: **premise** (the situation the theorem is about), **asm** (approved
+assumption), **design** (agreed by-design exclusion). No invariant is a hypothesis: `WellFormed`
+is proved for every reachable state.
 
-| Code | Spec | Hypotheses (kind) |
+| Theorem | Says | Hypotheses (kind) |
 |---|---|---|
-| `check_public_amount` | `pubAmtConsistent` ∧ `amountsInRange`: **FAILS** (L1); counterexample; L1 is the only difference | none |
-| `is_known_root` | `rootBytesKnown` (equal) | tree shape (inv); canonical history (inv: `storedRoots_canonical_reachable`) |
-| `validate_fee` | `feeSufficient` ∧ `amountsInRange` (iff) | rates ≤ 100% (inv) |
-| `calculate_complete_ext_data_hash` | hashes exactly `serealizeExternalData`; `none` iff not `encOutsFit` | fits in a vector (asm, `SolanaFacts`) |
-| `append` | `appendEffects` (if it returns) / `MerkleTreeFull` (no room) | `HashesAgree` (asm); tree shape (inv) |
-| `verify_proof` | the 7 public inputs are canonical | none |
-| `verify_proof` (verifier bridge) | `proofValid` (points decode, `Groth16.verify`) | syscall contracts (asm, core-model); `PairingLaws` (asm) |
-| `step … transact` (`transact_connection_verified`) | `transact` (all preconditions, exact effects) and `WellFormed` again | `WellFormed` (inv); `HashesAgree`, `SolanaFacts`, `CryptoFacts`, syscall contracts, `PairingLaws` (asm); `OutsideSpecDetail` (design) |
-| any execution from genesis (`wellFormed_reachable`) | every reached state is `WellFormed` | program ≠ system program (asm); `HashesAgree` (asm) |
-| `storedRoots_canonical_reachable`, `storedSubtrees_canonical_reachable` | every tree the program owns stores canonical roots and subtrees, in every reachable state | as `wellFormed_reachable` |
-| handler (`handlerComplete_connection_fails`) | `transact` from the handler's view: **FAILS** (L1); counterexample | none |
-| handler (`handlerComplete_without_L1_fails`) | **FAILS** (A0); counterexample | none |
-| handler (`handlerComplete_differs_only_at_L1_A0`) | complete except L1 and A0 (describes the findings) | `HashesAgree`, `HashesSucceed`, `SyscallsSucceed`, `PairingLaws`, `KeyG2Decodes` (asm); tree shape, canonical history and subtrees, rates ≤ 100% (inv); signer is a system account (OPEN: premise or design) |
-| **every `transact` in any execution** (`transact_connection_main`, MAIN RESULT) | `transact`, with the spec's nullifier set = nullifiers spent so far | as `transact_connection_verified`, without `WellFormed` (proved) |
+| `transact_connection` | every `transact` the code accepts satisfies the spec's `transact` (all preconditions, exact effects) | execution, step (premise); program ≠ system program, `HashesAgree`, `SolanaFacts`, `CryptoFacts`, syscall contracts, `PairingLaws` (asm); `OutsideSpecDetail` (design) |
+| `run_connection` | every execution is a run of the spec (`IsSpecRun`), or has not initialized the pool | execution (premise); program ≠ system program, `HashesAgree`, syscall contracts, `PairingLaws` (asm); `ExecutionAssumptions` (asm) |
+| `spendsAreGenuine_code`, `noDoubleSpend_code`, `poolBacksNotes_code`, `onlyOwnerSpends_code`, `fullTreeFreezes_code`, `configOnlyByAuthority_code` | G1a, G1b, G1c, G1d, G3c, G5 (the spec's named properties) hold of the execution's run | as `run_connection`; initialized (premise) |
+| `proofValid_code`, `copiedProofSamePayout_code`, `noSolCreated_code`, `exactPayouts_code` | G1e, G2a, G4a, G4b hold of every transaction the code accepts | as `transact_connection` |
+| `connection_nonvacuous` | every hypothesis of `run_connection` and of the run goals holds in a toy execution (deposit, then a withdrawal spending its note), with witnesses where the spend is non-zero | none |
+| `transact_connection_nonvacuous` | every hypothesis of `transact_connection` holds for an accepted deposit and an accepted withdrawal in one toy deployment | none |
 
-`transact_connection` is the per-step result for any spec instances, with the bridge replaced
-by a hypothesis `hProofValid`. `connection_nonvacuous` exhibits a toy execution (genesis,
-`initialize`, a 1-lamport deposit) accepted by `step` where every hypothesis of the main
-result holds.
-
-All are `sorry`-free and use only Lean's standard axioms.
+Not carried over: G2b (about circuit witnesses only), G3a and G3b (liveness: need
+completeness). All theorems are `sorry`-free and use only Lean's standard axioms.
 
 ## Findings
 
-No code/spec difference is excluded at present. Findings for the program's authors are in
-`FINDINGS.md`.
+Details for the program's authors are in `FINDINGS.md`. No theorem excludes a finding.
 
-- **A0 (informational, completeness only; in `FINDINGS.md`):** the code rejects a
-  proof whose `proof_a` is 64 zero bytes (arkworks rejects (0, 0) in `negate_g1`), which the
-  syscalls, and so the spec, read as the identity point.
+| ID | What | Where in Lean |
+|---|---|---|
+| L1 | the code rejects `extAmt = 0`, the internal transfer the docs describe and the spec allows | `Findings.lean`: counterexamples; one of the two differences at the handler |
+| A0 | the code rejects a proof whose `proof_a` is 64 zero bytes (arkworks rejects what the syscalls read as the identity) | `Findings.lean`: counterexample; the other difference at the handler |
+| I1 | only the circuit keeps the two input nullifiers distinct | the assumption `CryptoFacts.distinctNullifiers` |
+| F7 | a root can be evicted (about 50 transactions) before an honest proof lands | spec: `rootKnown` (a limit on G3a) |
 
-- **L1 (open, code rejects more):** `check_public_amount` rejects `extAmt = 0`, the internal
-  transfer the docs describe and the spec allows. Lean proves the square false, with a
-  counterexample. The composed `transact` theorem (safety) is unaffected.
-- **`i64::MIN` (documentation note in `FINDINGS.md`):** the code rejects
-  `extAmt = −2^63` (`checked_neg` overflows). Reasonable, but not in the docs; the spec's
-  `amountsInRange` now excludes it (marked NOT FROM THE DOCS).
-
-- **F1 (resolved, spec bug):** the spec checked the pool before a deposit's fee,
-  the code after. The code is right (the deposit exceeds the fee); `poolSolvent` now checks
-  after the deposit, and the hypothesis is gone.
-- **F3 (resolved, spec too strict):** `poolIsSeparate` forbade the pool as a payee
-  even where nothing is paid to it. It now forbids only paying the pool from itself, which
-  the runtime's lamport check rules out; the connection proves this from that check.
+Documentation notes (the spec includes the rule, marked NOT FROM THE DOCS): `extAmt = −2^63`
+is rejected; the fee error margin is at most 10000; only the admin key can initialize.
 
 ## Outside the spec's level of detail (excluded by `OutsideSpecDetail`, by design)
 
 The spec is written at the level of the documentation and deliberately leaves these out.
+Only `transact_connection` (exact effects) excludes them; `run_connection` covers them as
+changes the spec allows between transactions.
 
-- **Pre-funded nullifier address** (was F2): Anchor only tops it up, so the signer pays less
-  than `2 * nullifierRent`. Not a security issue (Anchor 0.31.1).
-- **Payee is a nullifier account** (was F4): the payment is locked there; the spec doesn't
-  count nullifier accounts.
+- **Pre-funded nullifier address:** Anchor only tops it up, so the signer pays less than
+  `2 * nullifierRent`. Not a security issue (Anchor 0.31.1).
+- **Payee is a nullifier account:** the payment is locked there; the spec doesn't count
+  nullifier accounts.
 - **Rent fixed:** the spec fixes the rent amounts; the code reads the `Rent` sysvar.
 
 
@@ -86,13 +65,18 @@ The spec is written at the level of the documentation and deliberately leaves th
 
 - `HashesAgree`: Poseidon, zero hashes, SHA-256 are the spec's; Poseidon outputs and the
   zero hashes are canonical.
-- `HashesSucceed`, `SyscallsSucceed` (handler completeness only): the hashes and the
-  `alt_bn128` syscalls return a value on valid input. `KeyG2Decodes`: the syscalls decode
-  the program key's G2 points (true: the setup produced valid points).
-- `SolanaFacts`: rent positive; the transaction's data fits in a vector.
+- `CompletenessAssumptions` (`handler_complete_except_L1_A0` only): `HashesAgree`; the hashes
+  and the `alt_bn128` syscalls return a value on valid input (`HashesSucceed`,
+  `SyscallsSucceed`); the syscalls decode the program key's G2 points (`KeyG2Decodes`).
+- `SolanaFacts`: rent positive; the transaction's data fits in a vector; the pool's address
+  does not sign (a PDA has no key).
+- `ExecutionAssumptions` (`run_connection`): every step's assumptions, as for
+  `transact_connection`; the program's three fixed addresses differ (SHA-256).
 - `CryptoFacts`: distinct nullifiers (circuit only; neither the program nor Anchor checks it,
-  finding I1); the two new nullifier addresses differ (SHA-256).
+  I1); the two new nullifier addresses differ (SHA-256).
 - Verifier bridge: core-model's syscall contracts (`AltBn128Contracts`), and `PairingLaws`
   (the pairing is bilinear, and pairing with `-a` inverts). The spec's groups, pairing and key
   are instantiated from these and the program's key.
-- `WellFormed` is not assumed in the main result: proved for every reachable state.
+- Core-model's own assumptions (`core-model/README.md`), in particular `EnvStep`: nothing
+  outside the program changes the owner or data of its accounts. Double-spend protection
+  rests on it.

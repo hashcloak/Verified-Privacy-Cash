@@ -4,7 +4,7 @@ open Aeneas Aeneas.Std Result PrivacyCash.Model
 
 /-! # Proofs: the verifier bridge
 
-NOT FOR REVIEW: the statements are restated in `Connection/Statements.lean`.
+NOT FOR REVIEW: the statements are restated in `Connection/ConnectionTheorems.lean`.
 
 The program's verifier (extracted `verify_proof` with the extracted key, on the `alt_bn128`
 syscalls) accepts only proofs that satisfy the spec's `Groth16.verify`, once the spec's groups,
@@ -108,7 +108,7 @@ theorem transact_refines_verified [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
     (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
     (hashes : HashesAgree d.crypto)
     (wf : WellFormed d spent s)
-    (solana : SolanaFacts rent out1 out2)
+    (solana : SolanaFacts d rent tx out1 out2)
     (crypto : CryptoFacts d proof)
     (outside : OutsideSpecDetail d rent s tx a proof) :
     letI : LeanSpec.Groups := syscallGroups C
@@ -122,6 +122,33 @@ theorem transact_refines_verified [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
   letI : LeanSpec.Pairing := syscallPairing C laws
   letI : LeanSpec.Deployment := ⟨programKey C⟩
   exact transact_refines hstep hashes wf solana crypto outside
+    (fun hv => verifier_bridge d.crypto C laws proof hv a extAmount fee out1 out2)
+
+/-- `transact_refines_between` with the verifier bridge in place of `hProofValid`. -/
+theorem transact_refines_between_verified [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
+    {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSpec.F} {s s' : State} {tx : TxEnv}
+    {a : TransactAccounts} {proof : zkcash_core.transact.Proof} {extAmount : I64} {fee : U64}
+    {out1 out2 : Slice U8} {events : List CommitmentData}
+    (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
+    (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
+    (hashes : HashesAgree d.crypto)
+    (wf : WellFormed d spent s)
+    (solana : SolanaFacts d rent tx out1 out2)
+    (crypto : CryptoFacts d proof)
+    (rentFixed : tx.minimumBalance = some rent) :
+    letI : LeanSpec.Groups := syscallGroups C
+    letI : LeanSpec.Pairing := syscallPairing C laws
+    letI : LeanSpec.Deployment := ⟨programKey C⟩
+    let inputs := toInputs a proof extAmount fee out1 out2
+    let spent' := spent ∪ {inputs.k0, inputs.k1}
+    ∃ b₁ : LeanSpec.Between, b₁.Allowed (toWorld d rent spent s) ∧ ∃ b₂ : LeanSpec.Between,
+      LeanSpec.transact inputs ((toWorld d rent spent s).between b₁) ((toWorld d rent spent' s').between b₂) ∧
+      (LeanSpec.Between.unchanged (toWorld d rent spent' s')).Allowed ((toWorld d rent spent' s').between b₂) ∧
+      WellFormed d spent' s' := by
+  letI : LeanSpec.Groups := syscallGroups C
+  letI : LeanSpec.Pairing := syscallPairing C laws
+  letI : LeanSpec.Deployment := ⟨programKey C⟩
+  exact transact_refines_between hstep hashes wf solana crypto rentFixed
     (fun hv => verifier_bridge d.crypto C laws proof hv a extAmount fee out1 out2)
 
 end

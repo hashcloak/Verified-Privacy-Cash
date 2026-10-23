@@ -3,7 +3,7 @@ open Aeneas Aeneas.Std Result PrivacyCash.Model
 
 /-! # Proofs of the connection theorems for the program's checks
 
-NOT FOR REVIEW: the statements are restated in `Connection/Statements.lean`. Ported from the
+NOT FOR REVIEW: the statements are restated in `Connection/ConnectionTheorems.lean`. Ported from the
 connection to the earlier `fv_*` model (commit e862db8, `Connection/Basic.lean`); the
 extracted Rust is the same, only names and the Aeneas version changed.
 -/
@@ -107,7 +107,7 @@ theorem checkPublicAmount_not_square :
 /-! ## `is_known_root` ↔ `rootKnown` -/
 
 /-- `PartialEqArray.eq` on bytes is array equality (via Aeneas's slice lemma). -/
-private theorem arrayEqU8Spec {N : Std.Usize} (a0 a1 : Std.Array U8 N) :
+theorem arrayEqU8Spec {N : Std.Usize} (a0 a1 : Std.Array U8 N) :
     core.array.equality.PartialEqArray.eq core.cmp.PartialEqU8 a0 a1 ⦃ (b : Bool) =>
       b = true ↔ a0 = a1 ⦄ := by
   have heq : core.array.equality.PartialEqArray.eq core.cmp.PartialEqU8 a0 a1

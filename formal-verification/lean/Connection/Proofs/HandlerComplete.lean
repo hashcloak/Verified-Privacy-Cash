@@ -4,11 +4,11 @@ open Aeneas Aeneas.Std Result PrivacyCash.Model
 
 /-! # Proofs: handler completeness
 
-NOT FOR REVIEW: the statements are restated in `Connection/Statements.lean`.
+NOT FOR REVIEW: the statements are restated in `Connection/ConnectionTheorems.lean`.
 
 If the spec's preconditions hold, the extracted `transact` handler returns `Ok` with the spec's
 transfer and fee effects. The faithful statement fails (finding L1, and the all-zero `proof_a`,
-see `Statements.lean`); the exact version excludes those two cases. -/
+see `ConnectionTheorems.lean`); the exact version excludes those two cases. -/
 
 namespace Connection
 open zkcash_core PrivacyCash.Proofs.G1 PrivacyCash.Proofs.Groth16

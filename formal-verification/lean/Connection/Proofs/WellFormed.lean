@@ -3,7 +3,7 @@ open Aeneas Aeneas.Std Result PrivacyCash.Model
 
 /-! # Proofs: every reachable state is `WellFormed`
 
-NOT FOR REVIEW: the statements are restated in `Connection/Statements.lean`. -/
+NOT FOR REVIEW: the statements are restated in `Connection/ConnectionTheorems.lean`. -/
 
 namespace Connection
 

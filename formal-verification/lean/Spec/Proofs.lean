@@ -3,7 +3,7 @@ import Spec.Vocabulary
 /-! # Proofs (not for review)
 
 All lemmas and the proofs of the theorems stated in `Spec/Statements.lean`. Lean checks
-them; reviewers don't need to read this file. -/
+them; the statements are enough to know what is guaranteed. -/
 
 namespace LeanSpec
 open PoseidonHashes Sha
@@ -15,6 +15,38 @@ variable [Pairing] [Deployment]
 --/////////////////////////////////////////
 -- Supporting lemmas. Not for review: they only serve the proofs below.
 --/////////////////////////////////////////
+
+-- HELPER: turn `Fin.foldl` loops into plain `ℕ` recursion, so the 26-level folds can be
+-- proved by ordinary induction.
+
+/-- `foldUpTo f n x = f (⋯ (f (f x 0) 1) ⋯) (n-1)`: `Fin.foldl` without the `Fin`
+    (`fin_foldl_eq_foldUpTo`). -/
+def foldUpTo {α : Type} (f : α → ℕ → α) : ℕ → α → α
+  | 0, x => x
+  | k+1, x => f (foldUpTo f k x) k
+
+/-- `Opening.calcRoot`'s per-level combination step, as a function of the plain `ℕ`
+    height. -/
+def stepFn (k : ℕ) (sib : ℕ → F) : F → ℕ → F :=
+  fun acc h => if Nat.testBit k h then H2 (sib h) acc else H2 acc (sib h)
+
+/-- The `H2` input pair at height `h`, used to state an `H2Collision`. -/
+def stepPair (k : ℕ) (sib : ℕ → F) (acc : F) (h : ℕ) : F × F :=
+  if Nat.testBit k h then (sib h, acc) else (acc, sib h)
+
+/-- `O.siblings` as a plain `ℕ → F` (default `0` past height 26, never read). -/
+def OpeningSib (O : Opening) : ℕ → F := O.sibling
+
+lemma nodeAt_eq_foldUpTo (O : Opening) (leaf : F) (h : ℕ) :
+    O.nodeAt leaf h = foldUpTo (stepFn O.index.val (OpeningSib O)) h leaf := by
+  induction h with
+  | zero => rfl
+  | succ h ih => simp only [Opening.nodeAt, foldUpTo, stepFn, OpeningSib, ih]
+
+lemma inputsAt_eq_stepPair (O : Opening) (leaf : F) (h : ℕ) :
+    O.inputsAt leaf h = stepPair O.index.val (OpeningSib O) (foldUpTo (stepFn O.index.val (OpeningSib O)) h leaf) h := by
+  simp only [Opening.inputsAt, stepPair, OpeningSib, nodeAt_eq_foldUpTo]
+
 
 -- LEMMA (used by G1b): one `transact` step strictly grows the nullifier set.
 lemma nullifier_set_monotonicity_step
@@ -220,17 +252,33 @@ lemma sol_balance_correctness_step
   · simp [hf0]
   · rw [if_neg (fun h => htP hfpos h.symm)]; ring
 
--- HELPERS: a donation changes only the pool's balance.
-@[simp] lemma World.donate_state (w : World) (x : ℕ) : (w.donate x).state = w.state := rfl
-@[simp] lemma World.donate_rentExemptMin (w : World) (x : ℕ) :
-    (w.donate x).rentExemptMin = w.rentExemptMin := rfl
-@[simp] lemma World.donate_nullifierRent (w : World) (x : ℕ) :
-    (w.donate x).nullifierRent = w.nullifierRent := rfl
-lemma World.donate_poolBalance (w : World) (x : ℕ) :
-    (w.donate x).poolBalance = w.poolBalance + x := by
-  simp [World.donate, World.poolBalance]
-lemma World.donate_zero (w : World) : w.donate 0 = w := by
-  cases w; simp [World.donate]
+-- HELPERS: what happens between transactions changes only the balances and the config.
+@[simp] lemma World.between_tree (w : World) (b : Between) :
+    (w.between b).state.tree = w.state.tree := rfl
+@[simp] lemma World.between_nullifiers (w : World) (b : Between) :
+    (w.between b).state.nullifiers = w.state.nullifiers := rfl
+@[simp] lemma World.between_pool (w : World) (b : Between) :
+    (w.between b).state.pool = w.state.pool := rfl
+@[simp] lemma World.between_config (w : World) (b : Between) :
+    (w.between b).state.config = b.config := rfl
+@[simp] lemma World.between_balances (w : World) (b : Between) :
+    (w.between b).balances = b.balances := rfl
+@[simp] lemma World.between_rentExemptMin (w : World) (b : Between) :
+    (w.between b).rentExemptMin = w.rentExemptMin := rfl
+@[simp] lemma World.between_nullifierRent (w : World) (b : Between) :
+    (w.between b).nullifierRent = w.nullifierRent := rfl
+/-- Nothing happening between two transactions. -/
+def Between.unchanged (w : World) : Between := ⟨w.balances, w.state.config⟩
+@[simp] lemma World.between_self (w : World) : w.between (Between.unchanged w) = w := by
+  rcases w with ⟨⟨⟩⟩; rfl
+lemma Between.Allowed.self (w : World) : Between.Allowed w (Between.unchanged w) :=
+  ⟨le_rfl, .none _⟩
+/-- The pool's balance just before transaction `j`: after it, plus what was sent to it. -/
+lemma Run.poolBalance_between {w0 : World} (r : Run w0) (j : ℕ) (hj : j < r.txs.length) :
+    ((r.ws j).between (r.between j)).poolBalance = (r.ws j).poolBalance + r.donations j := by
+  have h := (r.allowed j hj).poolGains
+  simp only [World.poolBalance, World.between_balances, World.between_pool, Run.donations] at h ⊢
+  omega
 
 /-- HELPER: `transferEffects` doesn't touch the tree. -/
 lemma transferEffects_tree (inputs: TxInputs) (oldWorld: World) :
@@ -758,7 +806,7 @@ lemma calcRoot_eq_foldUpTo (O : Opening) (leaf : F) :
   unfold Opening.calcRoot
   apply fin_foldl_eq_foldUpTo_plain
   intro x h hh
-  unfold stepFn OpeningSib Opening.accIsRight
+  unfold stepFn OpeningSib Opening.accIsRight Opening.sibling
   rw [dif_pos hh]
 
 
@@ -782,7 +830,8 @@ lemma opening_extractable_or_collision
   rcases telescope O.index.val (OpeningSib O) (OpeningSib (canonicalOpening cs O.index)) c
       (leafAt cs O.index.val) 26 hEq with ⟨hL, _⟩ | ⟨h0, hh0, hcol⟩
   · exact Or.inl hL.symm
-  · exact Or.inr (by unfold PathCollision; exact ⟨⟨h0, hh0⟩, hcol⟩)
+  · refine Or.inr ⟨⟨h0, hh0⟩, ?_⟩
+    rw [inputsAt_eq_stepPair, inputsAt_eq_stepPair]; exact hcol
 
 -- LEMMA (used by G3a): preservation. A written leaf `k` of `cs` keeps a valid opening at
 -- index `k` after more leaves are appended.
@@ -816,17 +865,47 @@ lemma config_and_rent_exempt_min_step
   · rw [heff.config]; unfold transactEffects transferEffects; split_ifs <;> rfl
   · rw [heff.rentExemptMin]; unfold transactEffects transferEffects; split_ifs <;> rfl
 
--- LEMMA (used by G5): the same over any number of steps.
+-- LEMMA (used by G5): allowed admin changes compose.
+lemma AdminChanges.trans {c c' c'' : config} (h₁ : AdminChanges c c') (h₂ : AdminChanges c' c'') :
+    AdminChanges c c'' := by
+  induction h₁ with
+  | none => exact h₂
+  | change ch hap _ ih => exact .change ch hap (ih h₂)
+
+-- LEMMA (used by G5): an allowed admin change keeps the authorities and the margin bound.
+lemma AdminChange.apply_keeps {ch : AdminChange} {c c' : config} (h : ch.apply c = some c') :
+    c'.authority = c.authority ∧ c'.limitAuthority = c.limitAuthority ∧
+      (c.feeMarginError ≤ 10000 → c'.feeMarginError ≤ 10000) := by
+  unfold AdminChange.apply at h
+  split at h
+  · split_ifs at h with hc
+    · cases h; exact ⟨rfl, rfl, fun _ => hc.2⟩
+  · split_ifs at h
+    · cases h; exact ⟨rfl, rfl, id⟩
+
+lemma AdminChanges.keeps {c c' : config} (h : AdminChanges c c') :
+    c'.authority = c.authority ∧ c'.limitAuthority = c.limitAuthority ∧
+      (c.feeMarginError ≤ 10000 → c'.feeMarginError ≤ 10000) := by
+  induction h with
+  | none => exact ⟨rfl, rfl, id⟩
+  | change ch hap _ ih =>
+    obtain ⟨a1, l1, m1⟩ := AdminChange.apply_keeps hap
+    exact ⟨ih.1.trans a1, ih.2.1.trans l1, fun hm => ih.2.2 (m1 hm)⟩
+
+-- LEMMA (used by G5): over any number of steps, the config changes only by allowed admin
+-- changes, and the rent-exempt minimum stays.
 lemma config_and_rent_exempt_min_constant
   (params : InitParams) (w: World)
   (h: ReachableWorld (initWorld params) w)
-  : w.state.config = params.cfg ∧ w.rentExemptMin = params.rentExemptMin := by
+  : AdminChanges params.cfg w.state.config ∧ w.rentExemptMin = params.rentExemptMin := by
   induction h with
-  | noStep => exact ⟨rfl, rfl⟩
-  | extend d inputs _ transact_proof ih =>
+  | noStep => exact ⟨.none _, rfl⟩
+  | extend b inputs _ hallowed transact_proof ih =>
     obtain ⟨ihc, ihr⟩ := ih
     obtain ⟨hc, hr⟩ := config_and_rent_exempt_min_step _ _ inputs transact_proof
-    exact ⟨hc.trans ihc, hr.trans ihr⟩
+    refine ⟨?_, hr.trans ihr⟩
+    rw [hc]
+    exact ihc.trans hallowed.config
 
 
 -- HELPER: a zero input is trivially bounded, so the `≠ 0` hypothesis can be dropped.
@@ -1083,32 +1162,74 @@ lemma Run.reachable {w0 : World} (r : Run w0) :
   intro j
   induction j with
   | zero => intro _; rw [r.start]; exact ReachableWorld.noStep _
-  | succ j ih => intro hj; exact ReachableWorld.extend _ _ (ih (by omega)) (r.step j (by omega))
+  | succ j ih =>
+    intro hj
+    exact ReachableWorld.extend _ _ (ih (by omega)) (r.allowed j (by omega)) (r.step j (by omega))
+
+/-- Two changes between transactions in a row are one: the second replaces what the first set. -/
+@[simp] lemma World.between_between (w : World) (b b' : Between) :
+    (w.between b).between b' = w.between b' := rfl
+
+/-- Two allowed changes in a row are allowed: the pool's balance only grew, and the config only
+    changed by allowed admin changes. -/
+lemma Between.Allowed.trans {w : World} {b b' : Between} (h : b.Allowed w)
+    (h' : b'.Allowed (w.between b)) : b'.Allowed w := by
+  refine ⟨le_trans h.poolGains ?_, h.config.trans ?_⟩
+  · have := h'.poolGains; simpa [World.poolBalance] using this
+  · have := h'.config; simpa using this
+
+/-- A run extended by one more transaction: what happened after its last transaction (allowed),
+    then the transaction. -/
+lemma Run.snoc {w0 : World} (r : Run w0) (b : Between) (hb : b.Allowed r.final) (tx : TxInputs)
+    (w3 : World) (htx : transact tx (r.final.between b) w3) :
+    ∃ r' : Run w0, r'.txs = r.txs ++ [tx] ∧ r'.final = w3 ∧
+      ∀ j ≤ r.txs.length, r'.ws j = r.ws j := by
+  refine ⟨⟨r.txs ++ [tx], fun j => if j ≤ r.txs.length then r.ws j else w3,
+    fun j => if j < r.txs.length then r.between j else b, ?_, ?_, ?_⟩, rfl, ?_, ?_⟩
+  · simp [r.start]
+  · intro j hj
+    simp only [List.length_append, List.length_singleton] at hj
+    by_cases hjn : j < r.txs.length
+    · rw [if_pos (show j ≤ r.txs.length by omega), if_pos hjn]
+      exact r.allowed j hjn
+    · have hjeq : j = r.txs.length := by omega
+      subst hjeq
+      rw [if_pos (le_refl r.txs.length), if_neg (show ¬ r.txs.length < r.txs.length by omega)]
+      exact hb
+  · intro j hj
+    simp only [List.length_append, List.length_singleton] at hj
+    by_cases hjn : j < r.txs.length
+    · rw [List.getElem_append_left hjn, if_pos (show j ≤ r.txs.length by omega),
+        if_pos (show j + 1 ≤ r.txs.length by omega), if_pos hjn]
+      exact r.step j hjn
+    · have hjeq : j = r.txs.length := by omega
+      subst hjeq
+      rw [List.getElem_append_right (by omega), if_pos (le_refl r.txs.length),
+        if_neg (show ¬ r.txs.length + 1 ≤ r.txs.length by omega),
+        if_neg (show ¬ r.txs.length < r.txs.length by omega)]
+      simp only [Nat.sub_self, List.getElem_singleton]
+      exact htx
+  · simp [Run.final]
+  · intro j hj; simp [hj]
+
+/-- The run with no transactions. -/
+def Run.empty (w0 : World) : Run w0 :=
+  ⟨[], fun _ => w0, fun _ => Between.unchanged w0, rfl,
+    fun j h => absurd h (by simp), fun j h => absurd h (by simp)⟩
+
+@[simp] lemma Run.empty_txs (w0 : World) : (Run.empty w0).txs = [] := rfl
+@[simp] lemma Run.empty_final (w0 : World) : (Run.empty w0).final = w0 := rfl
 
 /-- Every reachable world is the final world of some run. -/
 lemma ReachableWorld.exists_run {w0 w : World} (h : ReachableWorld w0 w) :
     ∃ r : Run w0, r.final = w := by
   induction h with
-  | noStep => exact ⟨⟨[], fun _ => _, fun _ => 0, rfl, fun j h => absurd h (by simp)⟩, rfl⟩
-  | @extend w2 w3 d tx _ htx ih =>
+  | noStep => exact ⟨Run.empty _, rfl⟩
+  | @extend w2 w3 b tx _ hb htx ih =>
     obtain ⟨r, hr⟩ := ih
-    refine ⟨⟨r.txs ++ [tx], fun j => if j ≤ r.txs.length then r.ws j else w3,
-      fun j => if j < r.txs.length then r.donations j else d, ?_, ?_⟩, ?_⟩
-    · simp [r.start]
-    · intro j hj
-      simp only [List.length_append, List.length_singleton] at hj
-      by_cases hjn : j < r.txs.length
-      · rw [List.getElem_append_left hjn, if_pos (show j ≤ r.txs.length by omega),
-          if_pos (show j + 1 ≤ r.txs.length by omega), if_pos hjn]
-        exact r.step j hjn
-      · have hjeq : j = r.txs.length := by omega
-        subst hjeq
-        rw [List.getElem_append_right (by omega), if_pos (le_refl r.txs.length),
-          if_neg (show ¬ r.txs.length + 1 ≤ r.txs.length by omega),
-          if_neg (show ¬ r.txs.length < r.txs.length by omega)]
-        simp only [Nat.sub_self, List.getElem_singleton]
-        rw [← hr] at htx; exact htx
-    · simp [Run.final]
+    rw [← hr] at hb htx
+    obtain ⟨r', -, hr', -⟩ := r.snoc b hb tx w3 htx
+    exact ⟨r', hr'⟩
 
 /-- The tree of world `j` holds exactly the leaves of the first `j` transactions, and every
     root in its history is `0` (an untouched slot) or the root of a prefix of those leaves. -/
@@ -1146,7 +1267,7 @@ lemma Run.tree {params : InitParams}
     refine ⟨?_, ?_⟩
     · rw [hagree.tree, hfold, ← hcs]
       simp only [transactEffects, transferEffects_tree, nullifierRentEffects_state, foldAppend, List.foldl_cons,
-        List.foldl_nil, World.donate_state]
+        List.foldl_nil, World.between_tree]
     · intro R hR
       rw [hagree.tree] at hR
       simp only [transactEffects, transferEffects_tree, nullifierRentEffects_state] at hR
@@ -1175,7 +1296,7 @@ lemma Run.cap {params : InitParams}
     2 * j ≤ 2^26 - 2 := by
   have hroom := (r.step j hj).1.treeNotFull
   unfold treeHasRoom at hroom
-  simp only [World.donate_state] at hroom
+  simp only [World.between_tree] at hroom
   rw [(r.tree j hj.le).1, foldAppend_nextIndex, r.leaves_take_length j hj.le] at hroom
   exact hroom
 
@@ -1228,6 +1349,31 @@ lemma Run.nullifier_fresh {w0 : World} (r : Run w0) (j : ℕ) (hj : j < r.txs.le
   · exact hfresh.1
   · exact hfresh.2
 
+/-- **The nullifiers a run spends are all different**: within a transaction (`distinctNullifiers`)
+    and across transactions (an earlier one's are in the nullifier set, a later one's are not). -/
+lemma Run.nullifiers_nodup {w0 : World} (r : Run w0) :
+    (r.txs.flatMap (fun t => [t.k0, t.k1])).Nodup := by
+  rw [List.nodup_flatMap]
+  refine ⟨fun t ht => ?_, ?_⟩
+  · obtain ⟨j, hj, rfl⟩ := List.mem_iff_getElem.mp ht
+    have := (r.step j hj).1.distinctNullifiers
+    simpa [nullifiersDistinct] using this
+  · rw [List.pairwise_iff_getElem]
+    intro j j' hj hj' hlt
+    have h0 := r.nullifier_spent j hj 0 j' hlt hj'.le
+    have h1 := r.nullifier_spent j hj 1 j' hlt hj'.le
+    have f0 := r.nullifier_fresh j' hj' 0
+    have f1 := r.nullifier_fresh j' hj' 1
+    simp only [TxInputs.pubInputs, Matrix.cons_val_zero, Matrix.cons_val_one] at h0 h1 f0 f1
+    show List.Disjoint [r.txs[j].k0, r.txs[j].k1] [r.txs[j'].k0, r.txs[j'].k1]
+    intro x hx hx'
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hx hx'
+    rcases hx with rfl | rfl <;> rcases hx' with e | e
+    · exact f0 (e ▸ h0)
+    · exact f1 (e ▸ h0)
+    · exact f0 (e ▸ h1)
+    · exact f1 (e ▸ h1)
+
 /-- The pool's SOL after the first `j` transactions: rent reserve plus their `extAmt − f`
     plus the donations before them. -/
 lemma Run.poolBalance {params : InitParams}
@@ -1240,7 +1386,7 @@ lemma Run.poolBalance {params : InitParams}
   | zero => intro _; rw [r.start]; simp [initWorld, World.poolBalance]
   | succ j ih =>
     intro hj
-    rw [sol_balance_correctness_step _ _ _ (r.step j (by omega)), World.donate_poolBalance,
+    rw [sol_balance_correctness_step _ _ _ (r.step j (by omega)), r.poolBalance_between j (by omega),
       Nat.cast_add, ih (by omega), r.take_succ j (by omega), Finset.sum_range_succ]
     simp only [List.map_append, List.map_cons, List.map_nil, List.sum_append, List.sum_cons,
       List.sum_nil]
@@ -1410,7 +1556,7 @@ theorem balance
         have hf : (⟨(2 * j + 1) % 2, Nat.mod_lt _ (by norm_num)⟩ : Fin 2) = 1 := Fin.ext (by simp)
         rw [hf, e]
       rw [show 2 * (j+1) = 2 * j + 1 + 1 by ring, Finset.sum_range_succ, Finset.sum_range_succ,
-        Finset.sum_range_succ, Finset.sum_range_succ, hstep, World.donate_poolBalance,
+        Finset.sum_range_succ, Finset.sum_range_succ, hstep, r.poolBalance_between j hjn,
         Nat.cast_add, ih (by omega), hl0, hl1]
       simp only [hinV]
       linarith
@@ -1941,12 +2087,13 @@ theorem unspent_note_is_spendable
 -- PROOF of G3c. Statement and explanation: `Spec/Statements.lean`.
 theorem full_tree_freezes_pool
     (params : InitParams)
-    (r : Run (initWorld params)) (hfull : 2^25 ≤ r.txs.length)
+    (r : Run (initWorld params)) (hfull : 2^25 ≤ r.txs.length) (bw : Between)
     (inputs : TxInputs) (newWorld : World) :
-    ¬ transact inputs r.final newWorld := by
+    ¬ transact inputs (r.final.between bw) newWorld := by
   intro h
   have hroom := h.1.treeNotFull
   unfold treeHasRoom at hroom
+  simp only [World.between_tree] at hroom
   have htree := (r.tree r.txs.length le_rfl).1
   rw [show r.final = r.ws r.txs.length from rfl, htree, foldAppend_nextIndex,
     r.leaves_take_length _ le_rfl] at hroom
@@ -1999,10 +2146,19 @@ theorem balance_changes_exact
 /-! ## G5. Config immutability -/
 
 -- PROOF of G5. Statement and explanation: `Spec/Statements.lean`.
-theorem config_constant
+theorem config_changes_only_by_authority
     (params : InitParams)
     (r : Run (initWorld params)) :
-    ∀ j ≤ r.txs.length, (r.ws j).state.config = params.cfg ∧ (r.ws j).rentExemptMin = params.rentExemptMin :=
-  fun j hj => config_and_rent_exempt_min_constant params _ (r.reachable j hj)
+    ∀ j ≤ r.txs.length,
+      AdminChanges params.cfg (r.ws j).state.config ∧
+      (r.ws j).state.config.authority = params.initializer ∧
+      (r.ws j).state.config.limitAuthority = params.initializer ∧
+      (r.ws j).state.config.feeMarginError ≤ 10000 ∧
+      (r.ws j).rentExemptMin = params.rentExemptMin := by
+  intro j hj
+  obtain ⟨hc, hr⟩ := config_and_rent_exempt_min_constant params _ (r.reachable j hj)
+  obtain ⟨ha, hl, hm⟩ := hc.keeps
+  exact ⟨hc, ha.trans params.authority_init, hl.trans params.limitAuthority_init,
+    hm params.margin_init, hr⟩
 
 end LeanSpec

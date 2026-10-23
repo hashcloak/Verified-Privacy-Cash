@@ -4,7 +4,7 @@ open Aeneas Aeneas.Std PrivacyCash.Model
 
 /-! # Mapping: code-model values to spec values
 
-REVIEW SURFACE. The connection theorems (`Connection/Statements.lean`) say: when the code
+REVIEW SURFACE. The connection theorems (`Connection/ConnectionTheorems.lean`) say: when the code
 model accepts a `transact`, the spec's `transact` holds between the mapped worlds. Its
 meaning depends on these definitions, so each is short and should be checked by reading.
 
@@ -74,10 +74,12 @@ def toTree (t : zkcash_core.merkle_tree.MerkleTreeAccount) : LeanSpec.Tree where
   history i := toF (t.root_history.val[i.val]!)
   rootIndex := ⟨t.root_index.val % 100, Nat.mod_lt _ (by decide)⟩
 
-/-- The config, field by field. The deposit limit lives on the tree account in the code. -/
+/-- The config, field by field. The deposit limit and its authority live on the tree account
+    in the code. -/
 def toConfig (c : zkcash_core.admin.GlobalConfig)
     (t : zkcash_core.merkle_tree.MerkleTreeAccount) : LeanSpec.config where
   authority := toPubkey c.authority
+  limitAuthority := toPubkey t.authority
   depositFeeRate := c.deposit_fee_rate.val
   withdrawalFeeRate := c.withdrawal_fee_rate.val
   feeMarginError := c.fee_error_margin.val
@@ -135,6 +137,68 @@ def toInputs (a : TransactAccounts) (proof : zkcash_core.transact.Proof) (extAmo
   mintAddr := toPubkey zkcash_core.transact.SOL_ADDRESS
   pubInputBytes i := toBytes ((publicInputs proof)[i.val]!).val
 
+/-- **`inputs` carries the code's external data**: its recipient, amount, encrypted outputs, fee,
+    fee recipient and mint are the code's, mapped. -/
+structure HasExternalData (inputs : LeanSpec.TxInputs) (recipient feeRecipient mint : Pubkey)
+    (ext : I64) (out1 out2 : Slice U8) (fee : U64) : Prop where
+  recipient : inputs.A = toPubkey recipient
+  amount : inputs.extAmt = ext.val
+  encOut0 : inputs.encOut0 = toBytes out1.val
+  encOut1 : inputs.encOut1 = toBytes out2.val
+  fee : inputs.f = fee.val
+  feeRecipient : inputs.t = toPubkey feeRecipient
+  mint : inputs.mintAddr = toPubkey mint
+
+/-! ## Executions -/
+
+/-- The spec transactions of one instruction: a `transact`'s mapped inputs; nothing for the
+    other instructions (they are changes between transactions in the spec). -/
+def stepTxs : Instruction → List LeanSpec.TxInputs
+  | .transact a proof ext fee out1 out2 => [toInputs a proof ext fee out1 out2]
+  | _ => []
+
+/-- The spec transactions of an execution, in order. -/
+def runTxs : List Event → List LeanSpec.TxInputs
+  | [] => []
+  | .program _ ix _ :: es => stepTxs ix ++ runTxs es
+  | .env :: es => runTxs es
+
+/-- The program holds its tree, pool and config at their canonical addresses. -/
+def Initialized (d : Deployment) (s : State) : Prop :=
+  (∃ t, HoldsTree d.programId s (treeAddr d) t) ∧ (∃ p, HoldsTreeToken d.programId s (poolAddr d) p) ∧
+    (∃ c, HoldsGlobalConfig d.programId s (configAddr d) c)
+
+/-- No account is the program's tree, pool or config. -/
+def NoProgramAccounts (d : Deployment) (s : State) : Prop :=
+  (∀ k t, ¬ HoldsTree d.programId s k t) ∧ (∀ k p, ¬ HoldsTreeToken d.programId s k p) ∧
+    ∀ k c, ¬ HoldsGlobalConfig d.programId s k c
+
+section
+variable [LeanSpec.PoseidonHashes] [LeanSpec.Sha] [LeanSpec.Groups] [AddCommGroup LeanSpec.G1]
+  [Module LeanSpec.F LeanSpec.G1] [AddCommGroup LeanSpec.G2] [Module LeanSpec.F LeanSpec.G2]
+  [CommGroup LeanSpec.GT] [LeanSpec.Pairing] [LeanSpec.Deployment]
+
+/-- **`r` is the spec run of the execution.** It starts at the start world `initialize` set
+    (`params`: the pool's address, the rent, the admin key), its transactions are the
+    execution's (`txs`), and the code state `s`, with the nullifiers `spent` spent so far, is its
+    final world after an allowed change between transactions (what happened after the last
+    transaction). -/
+def IsRunOf (d : Deployment) (rent : Nat → U64) (spent : Finset LeanSpec.F)
+    (txs : List LeanSpec.TxInputs) (s : State) (params : LeanSpec.InitParams)
+    (r : LeanSpec.Run (LeanSpec.initWorld params)) : Prop :=
+  params.pool = toPubkey (poolAddr d) ∧ params.rentExemptMin = (rent treeTokenAccountSpace).val ∧
+    params.nullifierRent = (rent nullifierAccountSpace).val ∧
+    params.admin = d.adminPubkey.map toPubkey ∧ r.txs = txs ∧
+    ∃ b : LeanSpec.Between, b.Allowed r.final ∧ toWorld d rent spent s = r.final.between b
+
+/-- **The code state `s` is the end of a spec run** (some `r` with `IsRunOf`). -/
+def IsSpecRun (d : Deployment) (rent : Nat → U64) (spent : Finset LeanSpec.F)
+    (txs : List LeanSpec.TxInputs) (s : State) : Prop :=
+  ∃ (params : LeanSpec.InitParams) (r : LeanSpec.Run (LeanSpec.initWorld params)),
+    IsRunOf d rent spent txs s params r
+
+end
+
 /-! ## The handler's view (for handler completeness)
 
 The extracted `transact` handler runs after Anchor's account checks and `init`s, on the
@@ -153,7 +217,7 @@ def handlerEnv (a : TransactAccounts) (s₁ : State) (v : U64) : SolEnv :=
     handler does not read them). MAPPING DECISION: `nullifierRent := 0`, because Anchor has
     already paid the two nullifier accounts' rent before the handler runs; the handler's
     effects are the spec's transfer and fee effects.
-    How it differs from `toWorld` (the main theorem's world): it is taken after Anchor's two
+    How it differs from `toWorld` (the connection theorems' world): it is taken after Anchor's two
     `init`s, not before; it reads every account's raw lamports, nullifier accounts included
     (`toWorld` counts those as 0, `publicBalance`), since the handler never pays them in the
     cases it covers; and its rent is the handler's own `v`. Used only by handler

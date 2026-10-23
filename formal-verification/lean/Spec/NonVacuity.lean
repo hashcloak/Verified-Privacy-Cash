@@ -65,8 +65,8 @@ lemma toy_valid (O : Opening) (c : F) : O.Valid c 1 := by
   unfold stepFn; split_ifs <;> rfl
 
 def toyCfg : config :=
-  { authority := 0, depositFeeRate := 0, withdrawalFeeRate := 0, feeMarginError := 0,
-    maxDepositLimit := 1 }
+  { authority := 0, limitAuthority := 0, depositFeeRate := 0, withdrawalFeeRate := 0,
+    feeMarginError := 0, maxDepositLimit := 1 }
 
 /-- The pool's account. Signer, recipient and fee recipient are all account `0`. -/
 def toyPool : Pubkey := 1
@@ -74,7 +74,8 @@ def toyPool : Pubkey := 1
 lemma toyPool_ne : (0 : Pubkey) ≠ toyPool := by decide
 
 /-- The pool, freshly initialized; every other account holds 1 lamport, rents are `0`. -/
-abbrev toyInit : World := initWorld ⟨toyCfg, fun _ => 1, 0, 0, toyPool⟩
+abbrev toyInit : World :=
+  initWorld ⟨toyCfg, fun _ => 1, 0, 0, toyPool, 0, none, rfl, rfl, (fun _ h => by cases h), (by decide)⟩
 
 /-! ### Transaction 0: a deposit of 1 lamport -/
 
@@ -184,13 +185,14 @@ lemma toy_deposit_step (hCompl : Groth16Complete) :
 noncomputable def toyRun1 (hCompl : Groth16Complete) : Run toyInit where
   txs := [toyDeposit hCompl]
   ws := fun j => if j = 0 then toyInit else W1 hCompl
-  donations := fun _ => 0
+  between := fun j => Between.unchanged (if j = 0 then toyInit else W1 hCompl)
   start := rfl
+  allowed := fun j _ => Between.Allowed.self _
   step := by
     intro j hj
     simp only [List.length_singleton, Nat.lt_one_iff] at hj
     subst hj
-    simpa [World.donate_zero] using toy_deposit_step hCompl
+    simpa [World.between_self] using toy_deposit_step hCompl
 
 lemma toyRun1_final (hCompl : Groth16Complete) : (toyRun1 hCompl).final = W1 hCompl := by
   simp [Run.final, toyRun1]
@@ -432,14 +434,16 @@ noncomputable def toyRun2 (hCompl : Groth16Complete) : Run toyInit where
   txs := [toyDeposit hCompl, toyWithdrawal hCompl]
   ws := fun j => if j = 0 then toyInit else if j = 1 then W1 hCompl
     else transactEffects (toyWithdrawal hCompl) (W1 hCompl)
-  donations := fun _ => 0
+  between := fun j => Between.unchanged (if j = 0 then toyInit else if j = 1 then W1 hCompl
+    else transactEffects (toyWithdrawal hCompl) (W1 hCompl))
   start := rfl
+  allowed := fun j _ => Between.Allowed.self _
   step := by
     intro j hj
     simp only [List.length_cons, List.length_nil] at hj
     rcases (show j = 0 ∨ j = 1 by omega) with rfl | rfl
-    · simpa [World.donate_zero] using toy_deposit_step hCompl
-    · simpa [World.donate_zero] using toy_withdrawal_step hCompl
+    · simpa [World.between_self] using toy_deposit_step hCompl
+    · simpa [World.between_self] using toy_withdrawal_step hCompl
 
 theorem run_with_spend_exists (hCompl : Groth16Complete) :
     ∃ (r : Run toyInit) (wit : ℕ → Witness),

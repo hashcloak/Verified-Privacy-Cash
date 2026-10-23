@@ -4,7 +4,7 @@ open Aeneas Aeneas.Std Result PrivacyCash.Model
 
 /-! # Proofs: the Merkle tree append
 
-NOT FOR REVIEW: the statements are restated in `Connection/Statements.lean`. Ported from the
+NOT FOR REVIEW: the statements are restated in `Connection/ConnectionTheorems.lean`. Ported from the
 connection to the earlier `fv_*` model (commit e862db8, `Connection/TransactSafety.lean`). -/
 
 namespace Connection

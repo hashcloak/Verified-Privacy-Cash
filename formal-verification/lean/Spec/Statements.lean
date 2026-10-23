@@ -2,38 +2,34 @@ import Spec.NonVacuity
 
 /-! # Privacy Cash: security goals and theorem statements
 
-This file is what reviewers read. It holds the security goals, the trusted assumptions, and
-every theorem *statement*, each proved by pointing at its proof in `Spec/Proofs.lean`; Lean
-checks that the statement here is exactly what was proved. Reviewers don't need the proofs.
+The security properties of Privacy Cash, such as "no note is spent twice" and "every unspent
+note is backed by SOL in the pool". They form five goals, G1 Balance to G5 Config authority,
+each a set of theorems about the protocol model in `Spec/Spec.lean`, resting on the trusted
+assumptions T0–T3.
 
-## How to review
+Only the statements are here; each proof is one line pointing into `Spec/Proofs.lean`. Lean
+checks that what is stated is what was proved, so the proofs need not be read.
 
-1. This file: the goals, the trusted assumptions, and each statement with its docstring.
-2. The definitions the statements use: `Spec/Vocabulary.lean` (runs, notes, breaks, the
-   pieces of G3a) and, for the model itself, `Spec/Spec.lean` (state, `transact` and its
-   preconditions, `initWorld`).
-3. The non-vacuity statements at the end of this file: they show the hypotheses can hold.
-4. `Spec/Axioms.lean`: the build fails if any theorem uses `sorry` or an extra axiom.
+## Trusted assumptions
 
-**Where the security argument lives.** Every theorem says "the property holds, OR a named
-hash break occurs at specific values". That is only as strong as the trusted assumptions
-T0–T3 below, which are prose, not Lean. They are the part that needs a cryptographer's
-review. For the theorems that end in a break (G1a–G1d, G2a, G2b, G3a, G3b), the title means
-"..., unless a named hash break occurs", which T2 makes infeasible. G1e, G3c, G4a, G4b and
-G5 have no break: they hold outright.
+T0 Deployment.
+   - The trusted setup was honest: `Deployment.vk` has no known trapdoor and is the key the
+     program uses. Groth16 is complete for it (`Groth16Complete`).
+   - The circom circuit enforces exactly `RelationS`.
+   - Nobody can replace the program.
+   - The pool started from `initWorld`.
+   - The Solana runtime is as modelled: transactions are atomic, instructions conserve
+     lamports, and the per-slot nullifier accounts form one nullifier set.
+T1 Groth16 extraction. Every verifying proof in a run comes with a witness
+   (`r.WitnessesFor wit`): the honest user's own, or one extracted from the attacker who
+   made it, even after the attacker has seen honest proofs (weak simulation
+   extractability, for all proofs of the run).
+T2 Hashes. Nobody can find a collision of `H1`–`H4`, an `H2` or `H4` preimage of `0`, or two
+   byte strings whose `sha256` digests are equal mod `p` (`Sha256Collision`).
+T3 Keys. Secret keys are uniform and kept secret, and `H1 sk` together with the nullifiers
+   (through `signature = H3 sk c idx`) reveal nothing usable about `sk`.
 
-## Who controls each hypothesis
-
-Every hypothesis of every theorem is tagged:
-- `[attacker]`: chosen by an attacker; quantified over all choices.
-- `[owner]`: chosen by the honest owner (honest construction).
-- `[premise]`: the situation the theorem is about (e.g. "this note is unspent").
-- `[policy]`: a program policy check; it can legitimately block a transaction.
-- `[limit]`: a protocol limit; it can legitimately block (root window, tree capacity).
-- `[trust Tn]`: a trusted assumption, see below.
-A fact about the state that is none of these is a bug: it must be derived, not assumed.
-
-## Where the goals come from
+## Desired Security Properties
 
 Privacy Cash is a Zerocash-style shielded pool: notes are commitments in a Merkle tree, a
 spend reveals nullifiers, and a Groth16 proof shows the spend is valid. The security
@@ -51,172 +47,138 @@ owners withdraw, pay out correctly and keep its configuration; [ZC] does not cov
   G1 Balance                    [ZC] Balance; docs: double-spend prevention,    G1a–G1e
                                 amount integrity
   G2 Non-malleability           [ZC] Transaction non-malleability               G2a G2b
-  G3 Liveness                   ours: funds must not get stuck                  G3a G3b G3c
+  G3 Liveness                   additional: funds must not get stuck            G3a G3b G3c
   G4 Correct public payouts     docs: amount integrity                          G4a G4b
-  G5 Config immutability        ours                                            G5
+  G5 Config authority           additional                                      G5
   -  Privacy                    [ZC] Ledger indistinguishability; docs          out of scope
 
-G1 Balance: nobody can end up with more value than they put in.
-G2 Non-malleability: a transaction someone has seen can't be altered or front-run.
-G3 Liveness: an honest owner can spend; nobody can block it; when the pool freezes.
-G4 Correct public payouts: public SOL moves exactly as specified.
-G5 Config immutability: transactions can't change the pool's configuration.
-Each theorem's title and explanation are in its docstring below (and only there).
+## The goals
 
-The informal list in `Spec/theorems.lean` maps as: no double spending, no replay -> G1b;
-value cannot be inflated, only deposited coins can be withdrawn -> G1c; proof binding ->
-G2a; only the owner can spend -> G1d, G1e and G2b; unspent notes can be spent -> G3a and G3b;
-notes cannot be forged -> G1a.
+G1a–G1d, G2a, G2b, G3a and G3b hold unless a hash break occurs (see "How the theorems are
+stated").
 
-## How a goal becomes a theorem
+**G1 Balance.** No value is created or stolen.
+- G1a: a note can be spent only if it exists, belongs to the spender, and only for the
+  amount it holds.
+- G1b: no note is spent twice.
+- G1c: the pool's SOL always backs every unspent note, exactly.
+- G1d: only the owner's secret key can spend a note.
+- G1e: a transaction is accepted only with a proof that verifies.
 
-[ZC] states each goal as a game: no efficient adversary wins except with negligible
-probability, proved by reduction to the primitives. Here a theorem says: for every
-sequence of accepted transactions (a `Run`), whatever inputs and witnesses were used, the
-property holds OR a named hash break occurs (`H1Collision`, `H2Collision` via
-`PathCollision`, `H2ZeroPreimage`, `H3Collision`, `H4Collision`, `H4ZeroPreimage`,
-`Sha256Collision`). Whoever violates the property hands over that break.
+**G2 Non-malleability.** Someone who sees a transaction can't turn it to their advantage.
+- G2a: they can't change its payout (recipient, amounts, fee, fee recipient, token,
+  encrypted outputs). They *can* change the signer: this is intended, for relayers.
+- G2b: they can't spend the same note in a different transaction without the owner's
+  secret key.
 
-A theorem can look strong and still say nothing. Every statement is checked for these
-four ways that happens:
-  - It must be about what actually happened. Bad: "there is some list of transactions
-    whose amounts add up to the pool balance" (one made-up transaction with the right
-    amount satisfies it). Good: "the transactions that were actually applied add up to
-    the pool balance". So lists, tree leaves and indices always come from the `Run`.
-  - A hash break must be at specific values. Bad: "... or there are two inputs with the
-    same hash" (for a real hash such inputs always exist, so this is always true). Good:
-    "... or these two values, computed from the transactions, have the same hash".
-  - Whatever an attacker controls (transaction inputs, witnesses) is "for all", never
-    "there exists": the property must hold whatever the attacker picks.
-  - Facts about the state are proven from the state, not assumed (see the tags above).
+**G3 Liveness.** Funds don't get stuck.
+- G3a: an honest owner's spend is accepted, unless a policy check or a limit (root
+  window, tree capacity) blocks it.
+- G3b: nobody else can block an owner's unspent note.
+- G3c (a finding, not a guarantee): once the tree is full, the pool freezes and every
+  unspent note is locked for good.
 
-## Runs and witnesses
+**G4 Correct public payouts.** Public SOL moves exactly as the transaction says.
+- G4a: no SOL is created or lost, except the rent for the two nullifier accounts.
+- G4b: each account gains or pays exactly what the transaction's amount and fee say;
+  no other account is touched.
 
-Theorems quantify over a `Run` (`Spec/Vocabulary.lean`): the transactions actually applied
-from `initWorld`, the SOL anyone sent to the pool before each (donations, `World.donate`;
-the first is pre-funding), and the world before each. Only G1c mentions donations: every
-other theorem is about the state, the nullifiers or one transaction, which donations don't
-touch. Every reachable world ends some run
-(`ReachableWorld.exists_run`), so nothing is lost, and the code connection
-(`ReachableWorld`) still applies. Witnesses are any `wit` with `r.WitnessesFor wit`, read
-as what a knowledge extractor gets from whoever made the proofs (T1). The theorems hold
-for every such choice.
+**G5 Config authority.** Only the authorities change the pool's configuration.
+- Transactions never change it; between transactions only signed admin changes do.
+- The authorities are whoever initialized the pool (the deployment's admin, when it has
+  one).
 
-## Trusted assumptions
+Each theorem's title and explanation are in its docstring. Each goal the code connection
+carries over is a named property (end of `Spec/Vocabulary.lean`; for G1e, `proofValid`),
+which the connection states of the code.
 
-T0 Deployment. What every theorem silently relies on, and what has actually broken
-   shielded pools:
-   - the trusted setup was honest, so `Deployment.vk` has no known trapdoor (cf. the
-     Zcash Sprout counterfeiting bug, CVE-2019-7167), and the verification key in the
-     program is the one the setup produced. Groth16 completeness for that key
-     (`Groth16Complete`, a hypothesis of G3a only) follows from this;
-   - the circom circuit enforces exactly `RelationS`. This is checked by hand, not
-     mechanised; an under-constrained circuit is the most common ZK bug class;
-   - nobody can replace the program (upgrade authority), or the theorems are moot;
-   - the pool started from `initWorld` (no migration or re-initialization since);
-   - the Solana runtime behaves as modelled: a transaction applies fully or not at all,
-     every instruction conserves lamports (`poolIsSeparate` relies on this), and the
-     per-slot nullifier accounts act as one nullifier set.
-T1 Groth16 extraction. There is no soundness axiom: perfect soundness ("a verifying proof
-   implies a witness exists") is false for Groth16. Instead, every theorem about a run
-   takes as given a witness for each transaction whose proof verifies (`r.WitnessesFor
-   wit`; G1e makes that every accepted transaction). Whose witnesses these are matters:
-   for an honest user's transaction, `wit` is that user's real witness; for an attacker's,
-   it is what an extractor computes from the attacker. The reduction behind "an attacker
-   can't" must simulate honest users' proofs without knowing their keys, and extract only
-   from the attacker's proofs. That is weak simulation extractability: an attacker who has
-   seen honest proofs can still only make proofs for new public inputs if it knows a
-   witness. G1a, G1d, G2b and G3b need it for their "attacker can't" reading. A run has many
-   adaptively chosen proofs, and Groth16's extractor is non-black-box, so extracting all of
-   them needs a composition argument that is assumed here, not given. Groth16 has knowledge
-   soundness and weak simulation extractability in idealized group models: [Gro16] Groth,
-   "On the Size of Pairing-based Non-interactive Arguments", EUROCRYPT 2016; [BKSV21]
-   Baghery, Kohlweiss, Siim, Volkhov, "Another Look at Extraction and Randomization of
-   Groth's zk-SNARK", FC 2021.
-T2 Hash functions: finding an `H1`, `H2`, `H3` or `H4` collision, an `H2` or `H4`
-   preimage of `0`, or two byte strings whose `sha256` digests are equal after reducing
-   mod `p` (`Sha256Collision`, slightly weaker than a plain `sha256` collision) is
-   infeasible. This can't be an axiom in Lean (collisions exist mathematically), so the
-   theorems instead end in "OR this specific break occurs"; T2 is what makes that branch
-   impossible in practice. Every break compares inputs of the same hash function (`H3`
-   with `H3`, `H4` with `H4`), so no separation between the hash functions is assumed.
-T3 Keys. Owners sample their secret keys uniformly at random and keep them secret. The
-   same secret key `sk` goes into the public key `H1 sk` (inside every commitment to the
-   owner) and, through `signature = H3 sk c idx`, into every nullifier the owner reveals.
-   So what one of these values leaks about `sk` matters for the other: the assumption is
-   that, together, they reveal nothing usable about `sk`. Concretely, Poseidon (`H1`–`H4`)
-   is modelled as a random oracle. This is a heuristic: Poseidon is also computed inside
-   the circuit, where an extractor can't see those hash queries. There is precedent: Zcash
-   Orchard's nullifier function is Poseidon-based. Needed to read G1a, G1d, G2b and G3b as
-   "an attacker can't": they show the spender's key is the owner's, and T3 says only the
-   owner knows it. `signature` and `nullifier` both use `H3` with no domain separation;
-   under this model that is fine, because the secret key sits in a different argument
-   position in each and has full entropy.
+## How to read
 
-## Where the proof check enters
+1. This file: the goals, the trusted assumptions, each statement and its docstring.
+2. The definitions they use: `Spec/Vocabulary.lean` (runs, notes, breaks, the pieces of
+   G3a) and `Spec/Spec.lean` (state, `transact` and its preconditions, `initWorld`).
+3. The non-vacuity statements at the end: the hypotheses can hold.
+4. `Spec/Axioms.lean`: the build fails if any theorem uses `sorry` or an extra axiom.
 
-The theorems about a run get each transaction's witness from `r.WitnessesFor wit`, which
-gives a witness only for transactions whose proof verifies (`proofValid`). Every accepted
-transaction's proof verifies (G1e, the `validZKP` precondition), so the witnesses cover
-the whole run. A program that skipped the proof check would not satisfy G1e, and the
-theorems would no longer apply to its transactions. That the code's verifier really
-computes `proofValid` is the connection's Groth16 verifier bridge (not built yet).
+## How the theorems are stated
 
-## Checks against goals
+**Holds or break.** Cryptography states security as "no efficient attacker can make the
+property fail, except with negligible probability". Lean has no notion of efficiency,
+so each theorem here says instead:
 
-Each check of `transact` and constraint of `RelationS`, and the theorem whose proof uses
-it. A check no theorem uses protects something not stated yet, or is redundant.
+    in every history:   the property holds   OR   a hash break occurs at values from it
 
-  knownRoot                                                 G1a
-  canonicalInputs                                           G1a (reads the root from its
-                                                            bytes). NOT FROM THE DOCS (wire
-                                                            format): it rules out input
-                                                            aliasing (bytes of `x + p` sent
-                                                            for `x`), which a model of field
-                                                            elements cannot see; the code
-                                                            connection relies on it
-  treeNotFull                                               G1a, G3c
-  newNullifiers                                             G1b
-  pubAmtConsistency                                         G1c
-  poolSolvency, poolSeparate                                G1c, G4a, G4b
-  amountRange                                               G1c, G2a
-  externalDataBinding                                       G2a
-  signerSolvency                                            G4a, G4b
-  encOutLength                                              G2a
-  RelationS: outputCommitmentIntegrity, correctOpenings     G1a
-  RelationS: nullifierCorrectness                           G1b, G2b, G3b
-  RelationS: noDuplicateNullifiers                          G1b
-  RelationS: amountConservation, outputRangeChecks          G1c
-  validZKP                                                  G1e; through it G1a–G1d,
-                                                            G3a, G3b
-  minimumFee, depositLimit       none: operator rules (fee income, deposit cap); they
-                                 protect no user's funds
-  distinctNullifiers             none: duplicates `RelationS.noDuplicateNullifiers`. The
-                                 program relies on the circuit for it, as we do (T1)
-  balancesFit                    none: Solana's `u64` balances (a payment that would overflow
-                                 is rejected); protects no user's funds
-                                 NOT FROM THE DOCS (wire format); a check of its own in the
-                                 code (the syscalls reject bytes that are not a point)
+A hash break is concrete: e.g. two different inputs, both computed from the history's
+transactions, with the same `H3` hash (`H3Collision a b`). So whoever makes the property
+fail has thereby found a hash collision. That is infeasible (T2), so making the property
+fail is infeasible too. The values must come from the history: "some two inputs have the
+same hash" is always true (a hash compresses) and would make the theorem say nothing.
+
+The breaks are `H1Collision`, `H2Collision` (via `PathCollision`), `H2ZeroPreimage`,
+`H3Collision`, `H4Collision`, `H4ZeroPreimage` and `Sha256Collision`. G1a–G1d, G2a, G2b,
+G3a and G3b end in one; their titles mean "..., unless a hash break occurs". G1e, G3c, G4a,
+G4b and G5 need none: they hold outright.
+
+**Histories (`r : Run (initWorld params)`).** Everything that happened to the pool since it
+was initialized:
+
+    ws 0 ─between 0─▶ · ─txs[0]─▶ ws 1 ─between 1─▶ · ─txs[1]─▶ ws 2  ···  ws n = r.final
+                              │                             │
+                            wit 0                         wit 1
+
+- `ws 0 = initWorld params`: the freshly initialized pool.
+- `txs[j]`: the `j`-th transaction the program accepted (`transact`).
+- `between j`: what happened outside the program before it, limited to what Solana allows
+  (`Between.Allowed`): SOL sent to any account, other accounts spending, config changes
+  signed by the right authority.
+- `ws j`: the world (pool state, balances, config) before `between j`.
+Every world the pool can reach is the end of some history (`ReachableWorld.exists_run`),
+so stating the theorems over histories misses nothing.
+
+**Witnesses (`wit`).** The chain sees a transaction's public inputs and proof only. The
+secrets behind it (the spent notes, their owners' keys, the amounts) are its witness
+`wit j`, and properties such as "the spent note exists" are about them. A theorem takes any
+`wit` with `r.WitnessesFor wit`: for each transaction whose proof verifies, `wit j`
+satisfies the circuit (`RelationS`). The theorems hold for every such `wit`.
+Assuming T1, whoever made transaction `j` knows `wit j`. So when a theorem says
+`wit j` contains the owner's secret key, whoever made transaction `j` knows that key.
+
+## Where each hypothesis comes from
+
+A theorem is only as strong as the reasons its hypotheses hold. So every hypothesis of
+every theorem is tagged with why it is fair to assume:
+- `[attacker]`: the attacker chooses it. The theorem holds for every choice, so this
+  makes the theorem stronger, not weaker.
+- `[owner]`: the honest owner makes it true by following the protocol. Fair to assume,
+  because the guarantee is for that owner.
+- `[premise]`: the situation the theorem is about (e.g. "this note is unspent"). It
+  scopes the claim.
+- `[policy]`: a program policy check (e.g. the deposit limit). It may block a
+  transaction; that is intended.
+- `[limit]`: a protocol limit (root window, tree capacity, `u64` balances). It may block
+  a transaction; that is intended.
+- `[trust Tn]`: a trusted assumption, not proved; see below.
+
+No hypothesis states a fact about the state that an attacker could make false (e.g. "the
+nullifier is unused"): such facts are proved instead. Otherwise an attacker could make the
+hypothesis false and the theorem would say nothing.
 
 ## Out of scope
 
-  - Privacy: needs a probabilistic model.
-  - Config-update instructions (`update_global_config`, `update_deposit_limit`): only
-    `transact` is modeled, so G5 says nothing about their authority checks.
-  - SPL tokens: SOL only for now. For later: `mint` is private in the circuit and is not
-    linked to `mintAddr`, so asset separation must come from per-mint trees and the global
-    nullifier set, not from the note's `mint`.
-  - Solana network fees: charged by the runtime before the program runs, so `balances` are
-    the balances the program sees.
+  - Privacy: a probabilistic property (an indistinguishability game), which this model
+    can't express. It also depends on the anonymity set: deposits and withdrawals are
+    public.
+  - SPL tokens: SOL only. The circuit does not link `mint` to `mintAddr`, so for SPL tokens
+    asset separation must come from per-mint trees and the global nullifier set.
+  - Solana network fees: charged before the program runs; `balances` are what the program
+    sees.
 
-## Known gaps
+## Limitations
 
-  - The program doesn't check that the pool is not paid as recipient or fee recipient; by
-    design it relies on Solana's runtime to reject those transactions (`poolIsSeparate`).
-  - A root stays in the history for about 50 transactions (100 slots, two roots per
-    transaction); G3a needs the spend's root to still be there.
-  - G1e, G4a, G4b and G5 follow from how `transact` is defined. They say something about
-    the code only through the connection.
+  - **A spend must use a recent root.** The tree keeps its last 100 roots, and each
+    transaction adds two (one per output note), so a root expires after about 50
+    transactions. G3a only covers spends whose root has not expired; an owner whose
+    proof is built on an expired root must rebuild it against a newer one (finding F7).
 
 -/
 
@@ -246,12 +208,9 @@ variable [Pairing] [Deployment]
 theorem spends_are_genuine
     (params : InitParams)                                  -- [premise] a freshly initialized pool
     (r : Run (initWorld params))                           -- [attacker] any history
-    (wit : ℕ → Witness) (hwit : r.WitnessesFor wit)        -- [trust T1] the witnesses of its proofs
-    (j : ℕ) (hj : j < r.txs.length) (i : Fin 2)            -- [premise] any input of any transaction
-    (hne : (wit j).inAmt i ≠ 0) :                          -- [premise] ...that spends a note
-    (spentLeaf wit j i < 2 * j ∧ (wit j).inNote i = leafNote wit (spentLeaf wit j i))
-    ∨ SpendBreak r wit j i :=
-  LeanSpec.spends_are_genuine params r wit hwit j hj i hne
+    (wit : ℕ → Witness) (hwit : r.WitnessesFor wit) :      -- [trust T1] the witnesses of its proofs
+    SpendsAreGenuine r wit :=
+  fun j hj i hne => LeanSpec.spends_are_genuine params r wit hwit j hj i hne
 
 /-- **G1b. No note is spent twice.**
     Guards against: spending the same note again, in a later transaction or twice within
@@ -268,38 +227,31 @@ theorem spends_are_genuine
 theorem no_double_spend
     (params : InitParams)                                  -- [premise] a freshly initialized pool
     (r : Run (initWorld params))                           -- [attacker] any history
-    (wit : ℕ → Witness) (hwit : r.WitnessesFor wit)        -- [trust T1] the witnesses of its proofs
-    (j j' : ℕ) (hj : j < r.txs.length) (hj' : j' < r.txs.length) (i i' : Fin 2)
-                                                           -- [premise] any two inputs...
-    (hne : (wit j).inAmt i ≠ 0) (hne' : (wit j').inAmt i' ≠ 0)   -- [premise] ...that spend notes
-    (hdiff : (j, i) ≠ (j', i'))                            -- [premise] ...and are different
-    (hsame : spentLeaf wit j i = spentLeaf wit j' i') :    -- [premise] ...at the same position
-    SpendBreak r wit j i ∨ SpendBreak r wit j' i'
-      ∨ H1Collision ((wit j).inSk i) ((wit j').inSk i') :=
-  LeanSpec.no_double_spend params r wit hwit j j' hj hj' i i' hne hne' hdiff hsame
+    (wit : ℕ → Witness) (hwit : r.WitnessesFor wit) :      -- [trust T1] the witnesses of its proofs
+    NoDoubleSpend r wit :=
+  fun j hj j' hj' i i' hne hne' hdiff hsame =>
+    LeanSpec.no_double_spend params r wit hwit j j' hj hj' i i' hne hne' hdiff hsame
 
 /-- **G1c. Every unspent note is fully backed by SOL in the pool.**
     Guards against: value created from nothing (inflation), which would leave the pool
     unable to pay out all notes; and SOL disappearing from the pool.
 
     How it is stated: in any `Run`, the pool's SOL equals its rent reserve plus the total
-    value of the notes not yet spent plus the SOL donated to the pool during the run
+    value of the notes not yet spent plus the SOL sent to the pool from outside during the run
     (`r.donated`), or a hash break of G1a/G1b occurs (`BalanceBreak`). A note's value comes
     from the witness of the transaction that created it; "not yet spent" means no non-zero
     input opened its leaf.
 
     Why this is the right statement: inflation is private value exceeding the SOL that
     backs it, so the two are compared directly. An equality rules out both directions.
-    Anyone can send SOL to the pool (a donation, `World.donate`), so the pool can hold more
-    than its notes; the donations are counted exactly rather than stating `≥`, which would
-    hide SOL leaking out of the pool while donations cover it. -/
+    Anyone can send SOL to the pool between transactions (`Between.Allowed`), so the pool can
+    hold more than its notes; that SOL is counted exactly rather than stating `≥`, which
+    would hide SOL leaking out of the pool while outside SOL covers it. -/
 theorem balance
     (params : InitParams)                                  -- [premise] a freshly initialized pool
     (r : Run (initWorld params))                           -- [attacker] any history
     (wit : ℕ → Witness) (hwit : r.WitnessesFor wit) :      -- [trust T1] the witnesses of its proofs
-    (r.final.poolBalance : ℤ)
-      = params.rentExemptMin + ∑ pos ∈ r.unspent wit, leafValue wit pos + r.donated
-    ∨ BalanceBreak r wit :=
+    PoolBacksNotes params r wit :=
   LeanSpec.balance params r wit hwit
 
 /-- **G1d. Only the owner's secret key can spend a note.**
@@ -317,13 +269,10 @@ theorem balance
 theorem honest_note_spent_only_with_owner_key
     (params : InitParams)                                  -- [premise] a freshly initialized pool
     (r : Run (initWorld params))                           -- [attacker] any history
-    (wit : ℕ → Witness) (hwit : r.WitnessesFor wit)        -- [trust T1] the witnesses of its proofs
-    (j : ℕ) (hj : j < r.txs.length) (i : Fin 2)            -- [premise] any input of any transaction
-    (hne : (wit j).inAmt i ≠ 0)                            -- [premise] ...that spends a note
-    (skOwner : F)                                          -- [premise] ...owned by `skOwner`:
-    (hOwner : (leafNote wit (spentLeaf wit j i)).ownerPk = H1 skOwner) :   -- [premise]
-    (wit j).inSk i = skOwner ∨ SpendBreak r wit j i ∨ H1Collision skOwner ((wit j).inSk i) :=
-  LeanSpec.honest_note_spent_only_with_owner_key params r wit hwit j hj i hne skOwner hOwner
+    (wit : ℕ → Witness) (hwit : r.WitnessesFor wit) :      -- [trust T1] the witnesses of its proofs
+    OnlyOwnerSpends r wit :=
+  fun j hj i hne skOwner hOwner =>
+    LeanSpec.honest_note_spent_only_with_owner_key params r wit hwit j hj i hne skOwner hOwner
 
 /-- **G1e. A transaction is accepted only with a proof that verifies.**
     Guards against: a program that accepts a spend without checking its proof, so that
@@ -341,9 +290,9 @@ theorem honest_note_spent_only_with_owner_key
     verifier bridge. -/
 theorem transact_requires_valid_proof
     (oldWorld newWorld : World) (inputs : TxInputs)        -- [attacker] any transaction
-    (h : ¬ proofValid inputs) :                            -- [premise] whose proof doesn't verify
-    ¬ transact inputs oldWorld newWorld :=
-  LeanSpec.transact_requires_valid_proof oldWorld newWorld inputs h
+    (h : transact inputs oldWorld newWorld) :              -- [premise] ...accepted
+    proofValid inputs :=
+  Classical.byContradiction fun hn => LeanSpec.transact_requires_valid_proof oldWorld newWorld inputs hn h
 
 /-! ## G2. Non-malleability -/
 
@@ -367,16 +316,10 @@ theorem transact_requires_valid_proof
     deposit and the rent for the two nullifier accounts; the notes, recipient and amounts
     stay as the honest owner chose. This is intended: it lets relayers submit transactions. -/
 theorem same_public_inputs_same_external_data
-    (T : TxInputs)                                         -- [premise] the honest transaction, seen
-    (hT : externalDataBound T ∧ amountsInRange T.extAmt T.f ∧ encOutsFit T)
-                                                           -- [premise] ...well formed
     (T' : TxInputs) (oldWorld' newWorld' : World)          -- [attacker] the attacker's transaction
-    (h' : transact T' oldWorld' newWorld')                 -- [attacker] ...accepted
-    (hSame : T.pubInputs = T'.pubInputs) :                 -- [premise] ...with the same public inputs
-    (T.A = T'.A ∧ T.extAmt = T'.extAmt ∧ T.encOut0 = T'.encOut0 ∧ T.encOut1 = T'.encOut1
-      ∧ T.f = T'.f ∧ T.t = T'.t ∧ T.mintAddr = T'.mintAddr)
-    ∨ Sha256Collision (serealizeExternalData T) (serealizeExternalData T') :=
-  LeanSpec.same_public_inputs_same_external_data T T' oldWorld' newWorld' hT h' hSame
+    (h' : transact T' oldWorld' newWorld') :               -- [attacker] ...accepted
+    ∀ T, CopiedProofSamePayout T T' :=                     -- [premise] any honest transaction seen
+  fun T hT hSame => LeanSpec.same_public_inputs_same_external_data T T' oldWorld' newWorld' hT h' hSame
 
 /-- **G2b. Front-running a spend requires the owner's secret key.**
     Guards against: an attacker who sees an honest transaction and submits their own
@@ -473,11 +416,9 @@ theorem unspent_note_cannot_be_blocked
     Why this is the right statement: it shows exactly when liveness (G3a) ends. -/
 theorem full_tree_freezes_pool
     (params : InitParams)                                  -- [premise] a freshly initialized pool
-    (r : Run (initWorld params))                           -- [attacker] any history
-    (hfull : 2^25 ≤ r.txs.length)                          -- [premise] ...of at least 2^25 transactions
-    (inputs : TxInputs) (newWorld : World) :               -- [attacker] any next transaction
-    ¬ transact inputs r.final newWorld :=
-  LeanSpec.full_tree_freezes_pool params r hfull inputs newWorld
+    (r : Run (initWorld params)) :                         -- [attacker] any history
+    FullTreeFreezes r :=
+  fun hfull b inputs new => LeanSpec.full_tree_freezes_pool params r hfull b inputs new
 
 /-! ## G4. Correct public payouts -/
 
@@ -497,11 +438,7 @@ theorem full_tree_freezes_pool
 theorem no_sol_created
     (oldWorld newWorld : World) (inputs : TxInputs)        -- [attacker] any transaction
     (h : transact inputs oldWorld newWorld) :              -- [premise] ...accepted
-    ∑ k ∈ ({inputs.s, inputs.A, inputs.t, oldWorld.state.pool} : Finset Pubkey),
-        (newWorld.balances k : ℤ)
-    = ∑ k ∈ ({inputs.s, inputs.A, inputs.t, oldWorld.state.pool} : Finset Pubkey),
-        (oldWorld.balances k : ℤ)
-      - 2 * oldWorld.nullifierRent :=
+    NoSolCreated inputs oldWorld newWorld :=
   LeanSpec.no_sol_created oldWorld newWorld inputs h
 
 /-- **G4b. Every account gets exactly what it is owed and pays exactly what it owes.**
@@ -520,37 +457,38 @@ theorem no_sol_created
     program sees: Solana's network fee is charged before the program runs. -/
 theorem balance_changes_exact
     (oldWorld newWorld : World) (inputs : TxInputs)        -- [attacker] any transaction
-    (h : transact inputs oldWorld newWorld)                -- [premise] ...accepted
-    (k : Pubkey) :                                         -- [premise] any account
-    (newWorld.balances k : ℤ)
-      = oldWorld.balances k + balanceDelta inputs oldWorld.state.pool oldWorld.nullifierRent k :=
-  LeanSpec.balance_changes_exact oldWorld newWorld inputs h k
+    (h : transact inputs oldWorld newWorld) :              -- [premise] ...accepted
+    ExactPayouts inputs oldWorld newWorld :=
+  fun k => LeanSpec.balance_changes_exact oldWorld newWorld inputs h k
 
-/-! ## G5. Config immutability -/
+/-! ## G5. Config authority -/
 
-/-- **G5. Transactions can't change the pool's configuration.**
-    Guards against: a transaction changing the fee rates, deposit limit, authority or rent
-    reserve.
+/-- **G5. Only the authorities change the pool's configuration.**
+    Guards against: a transaction or an outsider changing the fee settings, the deposit
+    limit, the authorities or the rent reserve; an error margin above 100%; and anyone but
+    the deployment's admin taking control of the configuration.
 
-    How it is stated: every world reached by a `Run` has the config and rent-exempt minimum
-    the pool was initialized with.
+    How it is stated: every world reached by a `Run` has a config reached from the initial
+    one by allowed admin changes (`AdminChanges`: new fee settings signed by the config's
+    authority, a new deposit limit signed by the limit authority), both authorities are
+    whoever initialized the pool (the deployment's admin, when it has one:
+    `InitParams.admin_init`), the error margin is at most 10000 basis points, and the
+    rent-exempt minimum is the initial one.
 
-    Why this is the right statement: it says exactly that no transaction changes them. It
-    says nothing about the authority-only config update instructions, which are not
-    modeled. -/
-theorem config_constant
+    Why this is the right statement: transactions don't change the config at all, and between
+    transactions only allowed admin changes do. -/
+theorem config_changes_only_by_authority
     (params : InitParams)                                  -- [premise] a freshly initialized pool
     (r : Run (initWorld params)) :                         -- [attacker] any history
-    ∀ j ≤ r.txs.length,
-      (r.ws j).state.config = params.cfg ∧ (r.ws j).rentExemptMin = params.rentExemptMin :=
-  LeanSpec.config_constant params r
+    ConfigOnlyByAuthority params r :=
+  LeanSpec.config_changes_only_by_authority params r
 
 end LeanSpec.Goals
 
 /-! ## Non-vacuity: the hypotheses can hold
 
-Read these statements: vacuity (hypotheses that can never hold together) is the main way a
-theorem can say nothing. In a toy model (`Spec/NonVacuity.lean`), the hypotheses of G1a–G1d
+Vacuity (hypotheses that can never hold together) is the main way a theorem can say
+nothing. In a toy model (`Spec/NonVacuity.lean`), the hypotheses of G1a–G1d
 and of G3a can all hold, and G3a's good outcome happens. The toy model is deliberately broken:
 the hash functions (`toyHashes`, `toySha`) and the groups and pairing (`toyGroups`,
 `toyPairing`: `G1 = G2 = F`, `GT = Unit`, every pairing is `1`, every byte string decodes, the

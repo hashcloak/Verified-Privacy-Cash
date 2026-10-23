@@ -310,7 +310,8 @@ def Groth16Complete : Prop :=
 
 -- Configurations for the privacy-cash contract
 structure config where
-  authority: Pubkey -- the authority that can change the config
+  authority: Pubkey -- may change the fee settings (the global config's authority in the code)
+  limitAuthority: Pubkey -- may change the deposit limit (the tree's authority in the code)
   depositFeeRate: ℕ -- in basis points, e.g. 25 = 0.25%, default = 0
   withdrawalFeeRate: ℕ -- in basis points, default = 0.25%
   feeMarginError: ℕ -- in basis points, default = 500 (5% tolerance)
@@ -683,6 +684,16 @@ structure InitParams where
   rentExemptMin : ℕ
   nullifierRent : ℕ
   pool : Pubkey          -- the pool's account
+  initializer : Pubkey   -- who initialized the pool
+  admin : Option Pubkey  -- the deployment's admin key, if it has one
+  -- Both authorities are whoever initialized the pool.
+  authority_init : cfg.authority = initializer
+  limitAuthority_init : cfg.limitAuthority = initializer
+  -- NOT FROM THE DOCS: only the admin may initialize, when the deployment has an admin key.
+  -- Needed for security: whoever initializes controls the fees and the deposit limit.
+  admin_init : ∀ a, admin = some a → initializer = a
+  -- The fee rule (`feeSufficient`) needs an error margin of at most 100% (see `AdminChange`).
+  margin_init : cfg.feeMarginError ≤ 10000
 
 def initWorld (params : InitParams) : World := {
   state := {
@@ -696,25 +707,70 @@ def initWorld (params : InitParams) : World := {
   nullifierRent := params.nullifierRent
 }
 
-/-- A donation: `x` lamports credited to the pool's account, nothing else changes. On Solana
-    anyone can send SOL to any account at any time, the pool's included, also before
-    `initialize` (Anchor's `init` then only tops the account up to the rent-exempt minimum).
-    The program cannot prevent it and does not see it as a transaction. Other accounts are
-    not modelled: no theorem compares their balances across transactions. -/
-def World.donate (w: World) (x: ℕ) : World :=
-  { w with balances := Function.update w.balances w.state.pool (w.balances w.state.pool + x) }
+-- What may happen between two transactions.
+
+/-- What an admin instruction changes: the fee settings (`update_global_config`) or the
+    deposit limit (`update_deposit_limit`). -/
+inductive AdminAction where
+  | feeSettings (depositFeeRate withdrawalFeeRate feeMarginError : ℕ)
+  | depositLimit (limit : ℕ)
+
+/-- An admin instruction: what it changes, and the signers of its transaction. -/
+structure AdminChange where
+  signers : List Pubkey
+  action : AdminAction
+
+/-- The config after an admin change, or `none` if the change is not allowed. New fee settings
+    need the config's authority among the signers, and an error margin of at most 10000 basis
+    points (NOT FROM THE DOCS: the fee rule `feeSufficient` computes `10000 − margin`, which
+    means nothing above 100%). A new deposit limit needs the limit authority among the
+    signers. Nothing else changes; no admin change touches the authorities. -/
+def AdminChange.apply (ch : AdminChange) (c : config) : Option config :=
+  match ch.action with
+  | .feeSettings d w m =>
+    if c.authority ∈ ch.signers ∧ m ≤ 10000 then
+      some { c with depositFeeRate := d, withdrawalFeeRate := w, feeMarginError := m }
+    else none
+  | .depositLimit l =>
+    if c.limitAuthority ∈ ch.signers then some { c with maxDepositLimit := l } else none
+
+/-- `c'` is reached from `c` by allowed admin changes, one after another. -/
+inductive AdminChanges : config → config → Prop where
+  | none (c : config) : AdminChanges c c
+  | change {c c' c'' : config} (ch : AdminChange) :
+      ch.apply c = some c' → AdminChanges c' c'' → AdminChanges c c''
+
+/-- The balances and the config just before a transaction, after whatever happened since the
+    previous one. -/
+structure Between where
+  balances : Pubkey → ℕ
+  config : config
+
+/-- World `w` with the balances and config of `b`; the tree, the nullifiers, the pool's
+    address and the rent stay as they are. -/
+def World.between (w : World) (b : Between) : World :=
+  { w with state := { w.state with config := b.config }, balances := b.balances }
+
+/-- What may happen between two transactions, as Solana allows it. Anyone can send SOL to any
+    account at any time, so the pool's balance can only grow: only the program can take SOL
+    out of it, and only in a transaction. Every other account can change arbitrarily (its
+    owner can also spend from it). The config changes only by allowed admin changes. -/
+structure Between.Allowed (w : World) (b : Between) : Prop where
+  poolGains : w.poolBalance ≤ b.balances w.state.pool
+  config : AdminChanges w.state.config b.config
 
 -- A claim about a pair of worlds; can we go from w1 to w2?
 --   This lets us reason about "in any number of steps"
 inductive ReachableWorld: World → World → Prop where
   -- No transactions; true for any world
  | noStep(w1: World): ReachableWorld w1 w1
- -- Given a reachable pair w1, w2, a donation `d` to the pool, and
- -- a proof that transact succeeds from w2 (with the donation credited) to w3,
+ -- Given a reachable pair w1, w2, what happened after w2 (`b`, allowed), and
+ -- a proof that transact succeeds from there to w3,
  -- Then obtain proof that w3 is reachable from w1
- | extend{w1 w2 w3: World}(d: ℕ)(txInputs: TxInputs):
+ | extend{w1 w2 w3: World}(b: Between)(txInputs: TxInputs):
       ReachableWorld w1 w2 →
-      transact txInputs (w2.donate d) w3 →
+      b.Allowed w2 →
+      transact txInputs (w2.between b) w3 →
        ReachableWorld w1 w3
 
 end LeanSpec

@@ -134,9 +134,12 @@ def toyHasher : merkle_tree.Hasher Unit := ⟨fun _ _ => ok one32, ok toyZ⟩
 def toySha256 : ext_data.Sha256 Unit := ⟨fun _ => ok zeros32⟩
 @[reducible] def toyCrypto : Crypto := ⟨toyHasher, toySha256, toyAltBn⟩
 
-/-- Spec instances matching the toy hashes: `H2` is constant 1, `sha256` returns 32 zero bytes. -/
+/-- Spec instances matching the toy hashes: `H2` is constant 1, `sha256` returns 32 zero bytes.
+    The code never computes `H1`, `H3`, `H4` (only the circuit does); they are chosen so that
+    the toy run's transactions have circuit witnesses (`Proofs/ToyRun.lean`): `H1` is the
+    identity, `H3` and `H4` add their arguments. -/
 @[reducible] def toyPoseidon : LeanSpec.PoseidonHashes :=
-  ⟨fun a => a, fun _ _ => 1, fun a _ _ => a, fun a _ _ _ => a⟩
+  ⟨fun a => a, fun _ _ => 1, fun a b c => a + b + c, fun a b c d => a + b + c + d⟩
 @[reducible] def toySpecSha : LeanSpec.Sha := ⟨fun _ => List.replicate 32 0⟩
 
 attribute [local instance] toyPoseidon toySpecSha
@@ -423,5 +426,20 @@ theorem toy_refutes_A0 {Q : transact.Appended → SolEnv → merkle_tree.MerkleT
         Q ap e t) : False := by
   obtain ⟨ap, e, t, hh, -⟩ := h toy_pre_A0
   exact toy_A0_rejects ap e t hh
+
+/-- The toy proof of the L1 counterexample (an internal transfer). -/
+abbrev l1Proof : transact.Proof := toyProof verifying_key.VERIFYING_KEY.vk_alpha_g1 zeros32
+/-- The toy proof of the A0 counterexample (`proof_a` the 64 zero bytes). -/
+abbrev a0Proof : transact.Proof := toyProof zeros64 one32
+
+/-- The toy deployment satisfies the completeness assumptions. -/
+theorem toyAssumptions : CompletenessAssumptions toyCrypto toyC :=
+  ⟨toyHashesAgree, toyHashesSucceed, toySyscalls, toyKey⟩
+
+/-- The toy handler context holds. -/
+theorem toyContext (n : U64) :
+    HandlerContext toyAccounts (toyState n) toyTree toyConfig emptySlice emptySlice :=
+  ⟨toyTree_shape, toyTree_hist, toyTree_sub, by simp [toyConfig], by simp [toyConfig],
+    by simp [toyConfig], ⟨rfl, rfl⟩, toyFit⟩
 
 end Connection.Toy
