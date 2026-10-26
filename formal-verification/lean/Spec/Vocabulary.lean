@@ -263,24 +263,20 @@ def DummyNullifierTaken {w0 : World} (r : Run w0) (wit : ℕ → Witness) (w : W
        ∨ H3Collision (w.signatureArgs i) ((wit j).signatureArgs i'))
 
 
-/-! ### The pieces of G3a (liveness)
-
-Each field is tagged with where it comes from (see "Where each hypothesis comes from" in
-`Spec/Statements.lean`). -/
+/-! ### The pieces of G3a (liveness) -/
 
 /-- `RootInWindow r R k`: the spend's root `R` is a real past root of the run that the
     program still accepts.
 
     - **a real past root:** `R` is the root of the tree after its first `k` leaves, for
       some `k` up to the end of the run;
-    - **still accepted:** `R` is still in the 100-slot root history at the end of the
-      run. -/
+    - **still accepted:** `R` is in the 100-slot root history at the end of the run. -/
 structure RootInWindow {w0 : World} (r : Run w0) (R : F) (k : ℕ) : Prop where
-  /-- [owner] The spend uses the tree as it was after its first `k` leaves... -/
+  /-- The spend uses the tree as it was after its first `k` leaves... -/
   isPrefix : k ≤ 2 * r.txs.length
-  /-- [owner] ...and that tree's root. -/
+  /-- ...and that tree's root. -/
   isPrefixRoot : R = (foldAppend (r.firstLeaves k) initTree).root
-  /-- [limit] That root has not left the 100-slot root history yet. -/
+  /-- That root has not left the 100-slot root history yet. -/
   inWindow : R ∈ Set.range r.final.state.tree.history
 
 /-- `OwnsUnspentNotes r wit witness k`: the owner's spend (secrets `witness`) spends real,
@@ -293,21 +289,21 @@ structure RootInWindow {w0 : World} (r : Run w0) (R : F) (k : ℕ) : Prop where
     `wit` are the witnesses of the run. -/
 structure OwnsUnspentNotes {w0 : World} (r : Run w0) (wit : ℕ → Witness) (witness : Witness)
     (k : ℕ) : Prop where
-  /-- [premise] No spend of the run has opened the owner's notes. -/
+  /-- No spend of the run has opened the owner's notes. -/
   unspent : ∀ i, witness.inAmt i ≠ 0 → (witness.openings i).index.val ∈ r.unspent wit
-  /-- [owner] Each note was in the tree under the spend's root (one of the first `k` leaves). -/
+  /-- Each note was in the tree under the spend's root (one of the first `k` leaves). -/
   inTree : ∀ i, witness.inAmt i ≠ 0 → (witness.openings i).index.val < k
-  /-- [owner] The owner states its notes' real contents. -/
+  /-- The owner states its notes' real contents. -/
   isOwnersNote : ∀ i, witness.inAmt i ≠ 0 →
     witness.inNote i = leafNote wit (witness.openings i).index.val
-  /-- [owner] Two non-zero inputs spend two different notes. -/
+  /-- Two non-zero inputs spend two different notes. -/
   different : witness.inAmt 0 ≠ 0 → witness.inAmt 1 ≠ 0 →
     (witness.openings 0).index ≠ (witness.openings 1).index
-  /-- [owner] Each zero-amount input uses a fresh secret key: one no input of the run uses. -/
+  /-- Each zero-amount input uses a fresh secret key: one no input of the run uses. -/
   freshDummyKeys : ∀ i, witness.inAmt i = 0 →
     ∀ j < r.txs.length, ∀ i', (wit j).inSk i' ≠ witness.inSk i
 
-/-- [owner] `BuiltHonestly w inputs witness`: the transaction `inputs` is built honestly
+/-- `BuiltHonestly w inputs witness`: the transaction `inputs` is built honestly
     from the owner's secrets `witness`, in world `w`.
 
     - **computed from the secrets:** the output commitments and nullifiers are computed
@@ -315,18 +311,28 @@ structure OwnsUnspentNotes {w0 : World} (r : Run w0) (wit : ℕ → Witness) (wi
     - **well formed:** the transaction meets the spec's preconditions on ranges,
       encodings, the pool kept separate, and the signer being able to pay. -/
 structure BuiltHonestly (w : World) (inputs : TxInputs) (witness : Witness) : Prop where
+  /-- Each output commitment is computed from the output note's secrets. -/
   outputs : ∀ j, inputs.pubInputs.outCommitments j
     = commit (witness.outAmt j) (witness.outPk j) (witness.outR j) witness.mint
+  /-- Each nullifier is computed from the input note's secrets. -/
   nullifiers : ∀ i, inputs.pubInputs.nullifiers i
     = witness.inNullifier i
+  /-- Inputs plus the public amount equal outputs. -/
   amounts : witness.inAmt 0 + witness.inAmt 1 + inputs.pubInputs.pubAmt
     = witness.outAmt 0 + witness.outAmt 1
+  /-- Each output amount is below `2^248`. -/
   outputRange : ∀ j, (witness.outAmt j).val < 2^248
+  /-- The external data hashes to the value the proof commits to. -/
   externalData : externalDataBound inputs
+  /-- The public amount is `extAmt - fee`. -/
   publicAmount : pubAmtConsistent inputs.extAmt inputs.f inputs.pubAmt
+  /-- The two nullifiers differ. -/
   distinctNullifiers : nullifiersDistinct inputs.k0 inputs.k1
+  /-- `extAmt` fits an `i64` and the fee a `u64`. -/
   amountRange : amountsInRange inputs.extAmt inputs.f
+  /-- Each encrypted output is shorter than `2^32` bytes. -/
   encOutLength : encOutsFit inputs
+  /-- The pool is not named where it would be paid. -/
   poolSeparate : poolIsSeparate inputs w.state.pool
   /-- The signer's account can pay the rent for the two nullifier accounts and the deposit. -/
   signerCanPay : signerSolvent w.balances inputs.s inputs.extAmt w.nullifierRent
@@ -340,17 +346,17 @@ structure BuiltHonestly (w : World) (inputs : TxInputs) (witness : Witness) : Pr
       deposit with a fee leaves the pool its rent reserve;
     - **limits:** the tree has room, and no credited balance overflows a `u64`. -/
 structure PolicyChecksPass (w : World) (inputs : TxInputs) : Prop where
-  /-- [policy] -/
+  /-- The fee is at least the configured rate, minus the error margin. -/
   fee : feeSufficient w.state.config inputs.extAmt inputs.f
-  /-- [policy] -/
+  /-- A deposit does not exceed the configured maximum. -/
   depositLimit : depositWithinLimit w.state.config inputs.extAmt
-  /-- [policy] On a deposit with a fee, the pool (with the deposit) covers the fee and keeps
+  /-- On a deposit with a fee, the pool (with the deposit) covers the fee and keeps
       its rent reserve. -/
   depositFee : inputs.extAmt ≥ 0 ∧ inputs.f > 0 →
     (w.poolBalance : ℤ) + inputs.extAmt ≥ inputs.f + w.rentExemptMin
-  /-- [limit] The tree is not full (G3c). -/
+  /-- The tree is not full (G3c). -/
   treeRoom : treeHasRoom w.state.tree
-  /-- [limit] No balance a payment credits overflows a `u64` (unreachable in practice: 2^64
+  /-- No balance a payment credits overflows a `u64` (unreachable in practice: 2^64
       lamports exceeds the total SOL supply). -/
   balancesFit : balancesFit inputs w
 

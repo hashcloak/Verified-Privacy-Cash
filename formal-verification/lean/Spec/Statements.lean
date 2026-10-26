@@ -442,24 +442,37 @@ attacker-side hash break occurs.
 Guards against: funds getting stuck because the program rejects an honest owner: on the
 proof, the root, the Merkle path, an already-used nullifier, or pool solvency.
 
-How it is stated: after any `Run`, when an honest owner tries to spends notes it owns
-( notes are unspent (`OwnsUnspentNotes`), root is in history (`RootInWindow`), with a
-transaction built honestly (`BuiltHonestly`)), then:
-- If the policy checks pass (`PolicyChecksPass`), the program accepts the transaction (`CanBeAccepted`),
-- OR an attacker-side hash break occurs (`SpendBlockedByBreak`).-/
+How it is stated: after any `Run`, suppose an honest owner tries to spend notes it owns:
+- the notes are unspent (`OwnsUnspentNotes`),
+- the root is in the history window (`RootInWindow`),
+- the transaction is built honestly (`BuiltHonestly`),
+- the policy checks pass (`PolicyChecksPass`).
+
+Then either:
+- the program accepts the transaction (`CanBeAccepted`), or
+- an attacker-side hash break occurs (`SpendBlockedByBreak`) (which by the assumptions is unfeasible).
+
+`SpendBlockedByBreak` is one of:
+- **pool drained** (`BreakInSomeSpend`): some earlier spend withdrew value no note backs
+  (a forged spend or a double spend, G1c);
+- **nullifier used first** (`NullifierTaken`, or `DummyNullifierTaken` for a zero-amount
+  input): an earlier spend revealed the owner's nullifier from a different note, position
+  or key, i.e. an `H3` or `H4` collision (G3b);
+- **root is `0`** (`H2ZeroPreimage`): the tree's two top subtrees hash to `0`, i.e. an
+  `H2` preimage of `0`.-/
 
 /-- **G3a.** An honest owner's spend is accepted, or an attacker-side hash break occurs. -/
 theorem unspent_note_is_spendable
     (params : InitParams)                                  -- [premise] a freshly initialized pool
     (hCompl : Groth16Complete)                             -- [trust T0] Groth16 completeness
     (r : Run (initWorld params))                           -- [attacker] any history
-    (wit : ℕ → Witness) (hwit : r.WitnessesFor wit)        -- [trust T1] the witnesses of its proofs
-    (inputs : TxInputs) (witness : Witness) (k : ℕ)        -- [owner] the owner's transaction, its
+    (wit : ℕ → Witness) (hwit : r.WitnessesFor wit)        -- [trust T1] the witnesses of proofs of the run
+    (inputs : TxInputs) (witness : Witness) (k : ℕ)        -- [owner] the honest owner's transaction, its
                                                            --   secrets, the tree state it uses
-    (hRoot : RootInWindow r inputs.R k)                    -- [owner], [limit]: see the structure
-    (hNotes : OwnsUnspentNotes r wit witness k)            -- [premise], [owner]: see the structure
-    (hHonest : BuiltHonestly r.final inputs witness)       -- [owner]
-    (hPolicy : PolicyChecksPass r.final inputs) :          -- [policy], [limit]: see the structure
+    (hRoot : RootInWindow r inputs.R k)                    -- [owner], [limit]: root is in history window
+    (hNotes : OwnsUnspentNotes r wit witness k)            -- [premise], [owner]: notes are unspent
+    (hHonest : BuiltHonestly r.final inputs witness)       -- [owner]: honest txs
+    (hPolicy : PolicyChecksPass r.final inputs) :          -- [policy], [limit]: policy checks pass
     CanBeAccepted inputs r.final ∨ SpendBlockedByBreak r wit witness k :=
   LeanSpec.unspent_note_is_spendable params hCompl r wit hwit inputs witness k hRoot hNotes
     hHonest hPolicy
