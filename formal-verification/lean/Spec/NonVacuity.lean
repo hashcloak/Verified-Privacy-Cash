@@ -340,7 +340,7 @@ theorem toy_G3a_hypotheses (hCompl : Groth16Complete) :
     simp only [wdWitness, Matrix.cons_val_zero]
     exact one_ne_zero_F
   · exact { isPrefix := by simp [toyRun1]
-            isPrefixRoot := by rw [toy_root _ hcap2]; rfl
+            isPrefixRoot := by rw [Run.firstLeaves, toy_root _ hcap2]; rfl
             inWindow := by rw [hfin]; exact W1_root_mem hCompl }
   · refine { unspent := ?_, inTree := ?_, isOwnersNote := ?_, different := ?_, freshDummyKeys := ?_ }
     · intro i hne; fin_cases i

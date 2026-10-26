@@ -1,18 +1,18 @@
 import Connection.Mapping
 open Aeneas Aeneas.Std Result PrivacyCash.Model
 
-/-! # The hypotheses of the connection theorem for `transact`
+/-! # The hypotheses of the connection theorems
 
 REVIEW SURFACE. Besides "the code model accepted the transaction", the connection theorems
-(`Connection/ConnectionTheorems.lean`) take these hypotheses. They are of different kinds, and should
-be read differently:
+(`Connection/ConnectionTheorems.lean`) take these hypotheses. They are of different kinds,
+and should be read differently:
 
 1. `HashesAgree` (ASSUMED, about the deployment's hash functions): the code's Poseidon, zero
    hashes and SHA-256 compute the spec's `H2`, `Z` and `sha256`; Poseidon's outputs and the
    zero hashes are canonical bytes (below the field modulus).
-2. `WellFormed` (INVARIANT, PROVED): facts about the program's own accounts. Proved for every
-   state an execution reaches from genesis, so no theorem in `ConnectionTheorems.lean` takes it as a
-   hypothesis.
+2. `WellFormed` (INVARIANT, PROVED): facts about the program's own accounts. Proved for
+   every state an execution reaches from genesis, so no theorem in
+   `ConnectionTheorems.lean` takes it as a hypothesis.
 3. `SolanaFacts` (ASSUMED, about the Solana runtime): the rent is positive, the transaction's
    data fits in memory, and the pool's address does not sign.
 4. `CryptoFacts` (ASSUMED, about the circuit and SHA-256, for this transaction): the circuit
@@ -20,14 +20,13 @@ be read differently:
    differ.
 5. `PairingLaws` (ASSUMED, about the `alt_bn128` pairing), with core-model's syscall contracts
    `AltBn128Contracts`: needed by the verifier bridge.
-6. `OutsideSpecDetail` (BY DESIGN): Solana details the spec deliberately does not model, as it
-   is written at the level of the documentation. Each field rules one out; `transact_connection`
-   does not cover transactions where such a detail matters. Not a defect of the code or the
-   spec. `run_connection` does not take it: there these details are changes the spec allows
-   between transactions.
-
-7. For handler completeness only: `HashesSucceed`, `SyscallsSucceed` (ASSUMED: the primitives
-   answer at all), and `KeyG2Decodes` (approved assumption).
+6. `OutsideSpecDetail` (BY DESIGN): Solana details the spec deliberately does not model, as
+   it is written at the level of the documentation. Each field rules one out;
+   `transact_connection` does not cover transactions where such a detail matters. Not a
+   defect of the code or the spec. `run_connection` does not take it: there these details are
+   changes the spec allows between transactions.
+7. For handler completeness only: `HashesSucceed`, `SyscallsSucceed` and `KeyG2Decodes`
+   (ASSUMED: the primitives answer at all, and the key's G2 points decode).
 
 No code/spec difference is currently excluded: no theorem has a `Findings` hypothesis.
 
@@ -41,8 +40,9 @@ namespace Connection
 
 variable [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
 
-/-- **Assumed**: the code's hash functions compute the spec's. Each is stated as "if the code's
-    hash returns `h`, then `h` is the spec's hash", so nothing is claimed about inputs it rejects. -/
+/-- `HashesAgree c` (assumed): the code's hash functions compute the spec's. Each is stated as "if the
+    code's hash returns `h`, then `h` is the spec's hash", so nothing is claimed about inputs
+    it rejects. -/
 structure HashesAgree (c : Crypto) : Prop where
   /-- Poseidon of two tree nodes is the spec's `H2`. -/
   poseidon : ∀ a b h, c.hasher.hash_pair a b = ok h → toF h = LeanSpec.PoseidonHashes.H2 (toF a) (toF b)
@@ -59,9 +59,10 @@ structure HashesAgree (c : Crypto) : Prop where
       (checked by the fork's `zero_bytes_are_empty_subtree_roots` test), and entry 0 is zero. -/
   zeroBytesCanonical : ∃ z, c.hasher.zero_bytes = ok z ∧ ∀ i, i ≤ 26 → Canonical (z.val[i]!)
 
-/-- **Invariant, proved**: facts about the program's own accounts. They hold in every state an
-    execution reaches from genesis, with `spent` the nullifiers that execution spent (proved in
-    `Proofs/WellFormed.lean`), so no theorem in `ConnectionTheorems.lean` assumes it. -/
+/-- `WellFormed d spent s` (invariant, proved): facts about the program's own accounts. They hold in every state
+    an execution reaches from genesis, with `spent` the nullifiers that execution spent
+    (proved in `Proofs/WellFormed.lean`), so no theorem in `ConnectionTheorems.lean`
+    assumes it. -/
 structure WellFormed (d : Deployment) (spent : Finset LeanSpec.F) (s : State) : Prop where
   /-- The program is not the system program (so "owned by the program" and "not yet created"
       are different things). -/
@@ -91,7 +92,9 @@ structure WellFormed (d : Deployment) (spent : Finset LeanSpec.F) (s : State) : 
       handler completeness (Poseidon answers only on canonical inputs). -/
   storedSubtrees : ∀ k t, HoldsTree d.programId s k t → ∀ j : Fin 26, Canonical t.subtrees.val[j.val]!
 
-/-- **Assumed**, about the Solana runtime, for this transaction. -/
+/-- `SolanaFacts d rent tx out1 out2` (assumed, about the Solana runtime, for this
+    transaction): the nullifier rent is positive, the external data fits in memory, and the
+    pool does not sign. -/
 structure SolanaFacts (d : Deployment) (rent : Nat → U64) (tx : TxEnv) (out1 out2 : Slice U8) : Prop where
   /-- A nullifier account's rent-exempt minimum is not zero (true on Solana). -/
   nullifierRentPositive : 0 < (rent nullifierAccountSpace).val
@@ -104,15 +107,18 @@ structure SolanaFacts (d : Deployment) (rent : Nat → U64) (tx : TxEnv) (out1 o
       then nothing else stops the signer from being the pool. -/
   poolDoesNotSign : poolAddr d ∉ tx.signers
 
-/-- **Assumed**, about the circuit and SHA-256, for this transaction. -/
+/-- `CryptoFacts d proof` (assumed, about the circuit and SHA-256, for this transaction):
+    the two input nullifiers differ, and so do the addresses of the two new nullifier
+    accounts. -/
 structure CryptoFacts (d : Deployment) (proof : zkcash_core.transact.Proof) : Prop where
   /-- The two input nullifiers differ. Only the circuit enforces this (spec
-      `nullifiersDistinct`, a case of the circuit-soundness assumption T1). Neither the program
-      nor Anchor checks it: Anchor checks `nullifier2` (the address of `nullifier0` when the two
+      `nullifiersDistinct`; from T0 and T1: a verifying proof has a witness satisfying
+      `RelationS`, which requires `noDuplicateNullifiers`). Neither the program nor Anchor
+      checks it: Anchor checks `nullifier2` (the address of `nullifier0` when the two
       are equal) before creating `nullifier0`. Informational finding I1. -/
   distinctNullifiers : proof.input_nullifiers.val[0]! ≠ proof.input_nullifiers.val[1]!
-  /-- SHA-256 collision resistance for the addresses of the two new nullifier accounts (slot 0
-      of nullifier 0, slot 1 of nullifier 1): they are different addresses. -/
+  /-- The two new nullifier accounts (slot 0 of nullifier 0, slot 1 of nullifier 1) have
+      different addresses (SHA-256 collision resistance of the PDA derivation). -/
   nullifierAddressesDiffer : PdaCollisionFree d.toAddresses
     {d.pdaInput (nullifier0Seeds proof.input_nullifiers.val[0]!),
      d.pdaInput (nullifier1Seeds proof.input_nullifiers.val[1]!)}
@@ -121,9 +127,9 @@ section
 variable {G1 G2 GT : Type} [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGroup G2]
   [Module LeanSpec.F G2] [CommGroup GT]
 
-/-- **Assumed**, about the `alt_bn128` pairing (for the verifier bridge): the spec's bilinearity
-    laws (`LeanSpec.Pairing` requires them) and that pairing with `-a` gives the inverse. All
-    true of the BN254 optimal ate pairing. -/
+/-- `PairingLaws e` (assumed, about the `alt_bn128` pairing, for the verifier bridge): the
+    spec's bilinearity laws (`LeanSpec.Pairing` requires them) and that pairing with `-a` gives the
+    inverse. All true of the BN254 optimal ate pairing. -/
 structure PairingLaws (e : G1 → G2 → GT) : Prop where
   smul_left : ∀ (s : LeanSpec.F) (a : G1) (b : G2), e (s • a) b = (e a b) ^ s.val
   smul_right : ∀ (s : LeanSpec.F) (a : G1) (b : G2), e a (s • b) = (e a b) ^ s.val
@@ -131,7 +137,7 @@ structure PairingLaws (e : G1 → G2 → GT) : Prop where
 
 variable {s : AltBn128}
 
-/-- The spec's pairing: the syscall's. -/
+/-- `syscallPairing C laws`: the spec's pairing is the syscall's. -/
 @[reducible] def syscallPairing (C : AltBn128Contracts s G1 G2 GT) (laws : PairingLaws C.e) :
     @LeanSpec.Pairing (syscallGroups C) _ _ _ _ _ :=
   @LeanSpec.Pairing.mk (syscallGroups C) _ _ _ _ _ C.e laws.smul_left laws.smul_right
@@ -143,8 +149,8 @@ end
 Safety ("code accepts ⟹ spec allows") needs only what a returned answer means. Completeness
 ("spec allows ⟹ code accepts") also needs the primitives to answer at all. -/
 
-/-- **Assumed** (handler completeness only): the hash functions return a value where the
-    program needs one. True of the real libraries: `light-poseidon` fails only on inputs ≥ p,
+/-- `HashesSucceed c` (assumed, handler completeness only): the hash functions return a
+    value where the program needs one. True of the real libraries: `light-poseidon` fails only on inputs ≥ p,
     and the program's Poseidon inputs are canonical (stored subtrees, zero hashes, the
     commitments the verifier range-checked, and Poseidon's own outputs); SHA-256 always
     returns. Separate from `HashesAgree`, which says only what a returned value is. -/
@@ -157,8 +163,8 @@ structure HashesSucceed (c : Crypto) : Prop where
 section
 variable {G1 G2 GT : Type} [AddCommGroup G1] [CommMonoid GT] {s : AltBn128}
 
-/-- **Assumed** (handler completeness only): the `alt_bn128` syscalls return a value on valid
-    points, and the pairing answers 1 exactly when the product of the pairings is 1. The
+/-- `SyscallsSucceed C` (assumed, handler completeness only): the `alt_bn128` syscalls return
+    a value on valid points, and the pairing answers 1 exactly when the product of the pairings is 1. The
     converse of core-model's `AltBn128Contracts`, which only say what a returned answer means.
     True of Solana's syscalls, which fail only on invalid input. To be raised with the
     core-model team (`TODO.md`): if they add it to the contracts, this bundle can go. -/
@@ -183,20 +189,21 @@ structure SyscallsSucceed (C : AltBn128Contracts s G1 G2 GT) : Prop where
     ∃ out, s.pairing input = some out ∧
       (out.val[31]! = 1#u8 ↔ C.e P₁ Q₁ * C.e P₂ Q₂ * C.e P₃ Q₃ * C.e P₄ Q₄ = 1)
 
-/-- **Assumed** (handler completeness only): the syscalls decode the three G2 points of the
-    program's verifying key. True: the trusted setup produced valid points, and the real
-    program verifies real proofs on chain. Needed because
-    `programKey` reads an undecodable key point as `0`, so without it the spec could accept a
-    proof the code rejects. The key's G1 points are checked by computation
-    (`key_alpha_decodes`, `key_ic_decodes`); the G2 decoding is a parameter of core-model's
-    contracts, so it cannot be checked in Lean. -/
+/-- `KeyG2Decodes C` (assumed, handler completeness only): the syscalls decode the three G2
+    points of the program's verifying key. True: the trusted setup produced valid points, and the real
+    program verifies real proofs on chain. Needed because `programKey` reads an undecodable
+    key point as `0`, so without it the spec could accept a proof the code rejects. The
+    key's G1 points are checked by computation (`key_alpha_decodes`, `key_ic_decodes`); the
+    G2 decoding is a parameter of core-model's contracts, so it cannot be checked in Lean. -/
 structure KeyG2Decodes (C : AltBn128Contracts s G1 G2 GT) : Prop where
   beta : C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_beta_g2 ≠ none
   gamma : C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_gamme_g2 ≠ none
   delta : C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_delta_g2 ≠ none
 
-/-- **Assumed** (handler completeness only): the deployment's hashes are the spec's
-    (`HashesAgree`), and its hash and syscall calls return a value on valid input. -/
+/-- `CompletenessAssumptions c C` (assumed, handler completeness only): the deployment's
+    hashes are the spec's (`HashesAgree`), its hash and syscall calls return a value on valid
+    input (`HashesSucceed`, `SyscallsSucceed`), and the key's G2 points decode
+    (`KeyG2Decodes`). -/
 structure CompletenessAssumptions (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT) : Prop where
   hashesAgree : HashesAgree c
   hashesSucceed : HashesSucceed c
@@ -205,8 +212,9 @@ structure CompletenessAssumptions (c : Crypto) (C : AltBn128Contracts c.altBn128
 
 end
 
-/-- **What holds when the handler starts** (handler completeness only), in the state `s₁` after
-    Anchor's checks and `init`s, for the tree and config the handler is given. -/
+/-- `HandlerContext a s₁ tree config out1 out2` (handler completeness only): what holds when
+    the handler starts, in the state `s₁` after Anchor's checks and `init`s, for the tree and
+    config the handler is given. -/
 structure HandlerContext (a : TransactAccounts) (s₁ : State)
     (tree : zkcash_core.merkle_tree.MerkleTreeAccount) (config : zkcash_core.admin.GlobalConfig)
     (out1 out2 : Slice U8) : Prop where
@@ -230,7 +238,7 @@ structure HandlerContext (a : TransactAccounts) (s₁ : State)
   /-- Assumed (`SolanaFacts.fitsInVector`): the serialized external data fits in a vector. -/
   fitsInVector : out1.length + out2.length + 120 ≤ Usize.max
 
-/-- **Outside the spec's level of detail (by design)**: Solana details the spec deliberately
+/-- `OutsideSpecDetail d rent s tx a proof` (by design): Solana details the spec deliberately
     does not model. Each field rules one out; transactions where it matters are not covered. -/
 structure OutsideSpecDetail (d : Deployment) (rent : Nat → U64) (s : State) (tx : TxEnv)
     (a : TransactAccounts) (proof : zkcash_core.transact.Proof) : Prop where
@@ -253,7 +261,7 @@ structure OutsideSpecDetail (d : Deployment) (rent : Nat → U64) (s : State) (t
     a.feeRecipientAccount ≠ d.pda (nullifier0Seeds proof.input_nullifiers.val[0]!) ∧
     a.feeRecipientAccount ≠ d.pda (nullifier1Seeds proof.input_nullifiers.val[1]!)
 
-/-- The assumptions one step of an execution needs: `initialize` and `transact` see the rent
+/-- `StepAssumptions d rent tx ix`: the assumptions one step of an execution needs: `initialize` and `transact` see the rent
     `rent`; a `transact` satisfies the per-transaction assumptions (`SolanaFacts`,
     `CryptoFacts`). -/
 def StepAssumptions (d : Deployment) (rent : Nat → U64) (tx : TxEnv) : Instruction → Prop
@@ -262,15 +270,15 @@ def StepAssumptions (d : Deployment) (rent : Nat → U64) (tx : TxEnv) : Instruc
     SolanaFacts d rent tx out1 out2 ∧ CryptoFacts d proof ∧ tx.minimumBalance = some rent
   | _ => True
 
-/-- **Assumed**, for one execution from `s₀` with events `evs` (used by `run_connection`):
-    every step of it satisfies `StepAssumptions`, and the program's three fixed accounts are
-    different. -/
+/-- `ExecutionAssumptions d rent s₀ evs` (assumed, used by `run_connection`): for the
+    execution from `s₀` with events `evs`, the program's three fixed accounts are different,
+    and every step satisfies `StepAssumptions`. -/
 structure ExecutionAssumptions (d : Deployment) (rent : Nat → U64) (s₀ : State) (evs : List Event) :
     Prop where
-  /-- SHA-256 collision resistance for the program's three fixed addresses (the tree, the pool,
-      the config): they are three different accounts. Same kind of assumption as
-      `CryptoFacts.nullifierAddressesDiffer`. Without it, `initialize` could write two of them
-      to the same account. -/
+  /-- The program's three fixed accounts (the tree, the pool, the config) have different
+      addresses (SHA-256 collision resistance of the PDA derivation, as in
+      `CryptoFacts.nullifierAddressesDiffer`). Without it, `initialize` could write two of
+      them to the same account. -/
   fixedAddressesDiffer : PdaCollisionFree d.toAddresses
     {d.pdaInput merkleTreeSeeds, d.pdaInput treeTokenSeeds, d.pdaInput globalConfigSeeds}
   /-- Every program step of the execution, from the state the execution reached before it,

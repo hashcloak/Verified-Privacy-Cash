@@ -4,8 +4,8 @@ open Aeneas Aeneas.Std PrivacyCash.Model
 
 /-! # Mapping: code-model values to spec values
 
-REVIEW SURFACE. The connection theorems (`Connection/ConnectionTheorems.lean`) say: when the code
-model accepts a `transact`, the spec's `transact` holds between the mapped worlds. Its
+REVIEW SURFACE. The connection theorems (`Connection/ConnectionTheorems.lean`) say: when the
+code model accepts a `transact`, the spec's `transact` holds between the mapped worlds. Their
 meaning depends on these definitions, so each is short and should be checked by reading.
 
 A mapping that throws information away could make the theorem easier to prove but weaker.
@@ -17,56 +17,60 @@ namespace Connection
 
 /-! ## Values -/
 
-/-- A 32-byte public input or hash, as a field element: read big-endian, reduced mod p.
-    (The verifier reads public inputs big-endian, and rejects values `≥ p`.) -/
+/-- `toF b`: a 32-byte public input or hash as a field element: read big-endian, reduced
+    mod p (as the verifier reads public inputs; it rejects values `≥ p`). -/
 def toF (b : Std.Array U8 32#usize) : LeanSpec.F := (beNat b : LeanSpec.F)
 
-/-- Bytes whose big-endian value is below the field modulus, so `toF` loses nothing. -/
+/-- `Canonical b`: the big-endian value of `b` is below the field modulus, so `toF` loses
+    nothing. -/
 def Canonical (b : Std.Array U8 32#usize) : Prop := beNat b < bn254ScalarModulus
 
-/-- Bytes, as the spec's bytes. -/
+/-- `toBytes l`: code bytes as the spec's bytes. -/
 def toBytes (l : List U8) : LeanSpec.Bytes := l.map (·.bv)
 
-/-- The spec's bytes as a code byte slice (empty if too long for a slice, which no real
-    transaction is). Used to say which bytes the code hashes. -/
+/-- `toSlice bs`: the spec's bytes as a code byte slice (empty if too long for a slice,
+    which no real transaction is). Used to say which bytes the code hashes. -/
 def toSlice (bs : LeanSpec.Bytes) : Slice U8 :=
   let l : List U8 := bs.map (fun b => ⟨b⟩)
   if h : l.length ≤ Usize.max then Slice.from l h else Slice.from [] (by simp)
 
-/-- A Solana address, as the spec's `Pubkey`: read little-endian, so that the spec's
-    serialization `PubkeyToBytes` gives back the address's own 32 bytes. -/
+/-- `toPubkey k`: a Solana address as the spec's `Pubkey`, read little-endian, so that the
+    spec's serialization `PubkeyToBytes` gives back the address's own 32 bytes. -/
 def toPubkey (k : Pubkey) : LeanSpec.Pubkey := BitVec.ofNat 256 (leNatOfList k.val)
 
-/-- The inverse of `toPubkey`. -/
+/-- `fromPubkey x`: the inverse of `toPubkey`. -/
 def fromPubkey (x : LeanSpec.Pubkey) : Pubkey :=
   Std.Array.from (leBytes32 x.toNat) (by simp [leBytes32])
 
 /-! ## The program's accounts -/
 
-/-- The SOL tree, the pool and the config live at their canonical addresses. -/
+/-- `treeAddr d`: the canonical address of the SOL tree. -/
 def treeAddr (d : Deployment) : Pubkey := d.pda merkleTreeSeeds
+/-- `poolAddr d`: the canonical address of the pool. -/
 def poolAddr (d : Deployment) : Pubkey := d.pda treeTokenSeeds
+/-- `configAddr d`: the canonical address of the config. -/
 def configAddr (d : Deployment) : Pubkey := d.pda globalConfigSeeds
 
-/-- The tree stored at `k` (all zeros if there is none; `WellFormed` rules that out). -/
+/-- `treeAt s k`: the tree stored at `k` (all zeros if there is none; `WellFormed` rules
+    that out). -/
 def treeAt (s : State) (k : Pubkey) : zkcash_core.merkle_tree.MerkleTreeAccount :=
   match (s k).data with
   | .treeAccount t => t
   | _ => zeroTree
 
-/-- The config stored at `k` (all zeros if there is none). -/
+/-- `configAt s k`: the config stored at `k` (all zeros if there is none). -/
 def configAt (s : State) (k : Pubkey) : zkcash_core.admin.GlobalConfig :=
   match (s k).data with
   | .globalConfig c => c
   | _ => ⟨Std.Array.repeat 32#usize 0#u8, 0#u16, 0#u16, 0#u16, 0#u8⟩
 
-/-- The tree account fields `initialize` sets and no instruction changes: height 26, a
-    history of 100 roots, and a current root index inside it. -/
+/-- `TreeShape t`: the tree account fields `initialize` sets and no instruction changes:
+    height 26, a history of 100 roots, and a current root index inside it. -/
 def TreeShape (t : zkcash_core.merkle_tree.MerkleTreeAccount) : Prop :=
   t.height.val = 26 ∧ t.root_history_size.val = 100 ∧ t.root_index.val < 100
 
-/-- The tree account, field by field. `rootIndex` is reduced mod 100; `WellFormed` says it
-    is already below 100. -/
+/-- `toTree t`: the tree account as the spec's tree, field by field. `rootIndex` is reduced
+    mod 100; `WellFormed` says it is already below 100. -/
 def toTree (t : zkcash_core.merkle_tree.MerkleTreeAccount) : LeanSpec.Tree where
   nextIndex := t.next_index.val
   subtrees i := toF (t.subtrees.val[i.val]!)
@@ -74,8 +78,8 @@ def toTree (t : zkcash_core.merkle_tree.MerkleTreeAccount) : LeanSpec.Tree where
   history i := toF (t.root_history.val[i.val]!)
   rootIndex := ⟨t.root_index.val % 100, Nat.mod_lt _ (by decide)⟩
 
-/-- The config, field by field. The deposit limit and its authority live on the tree account
-    in the code. -/
+/-- `toConfig c t`: the config as the spec's config, field by field. The deposit limit and
+    its authority live on the tree account `t` in the code. -/
 def toConfig (c : zkcash_core.admin.GlobalConfig)
     (t : zkcash_core.merkle_tree.MerkleTreeAccount) : LeanSpec.config where
   authority := toPubkey c.authority
@@ -87,8 +91,8 @@ def toConfig (c : zkcash_core.admin.GlobalConfig)
 
 /-! ## Worlds -/
 
-/-- The balance the spec sees for account `k`: its lamports, except that nullifier accounts
-    count as 0. MAPPING DECISION: the spec's balances are those of public accounts, and the
+/-- `publicBalance s k`: the balance the spec sees for account `k`: its lamports, except
+    that nullifier accounts count as 0. MAPPING DECISION: the spec's balances are those of public accounts, and the
     signer's nullifier rent leaves them (spec G4a: "no SOL is created or lost, except the
     nullifier rent"). On-chain that rent goes to the two new nullifier accounts. -/
 def publicBalance (s : State) (k : Pubkey) : ℕ :=
@@ -96,10 +100,10 @@ def publicBalance (s : State) (k : Pubkey) : ℕ :=
   | .nullifier _ => 0
   | _ => (s k).lamports.val
 
-/-- The spec world a chain state stands for.
-    * `rent`: Solana's rent-exempt minimum for an account of a given size. The spec fixes the
-      two amounts it uses; `OutsideSpecDetail.rentFixed` says each transaction sees this `rent`.
-    * `spent`: the spent nullifiers, tracked alongside the chain. On-chain a nullifier is
+/-- `toWorld d rent spent s`: the spec world the chain state `s` stands for.
+    - **`rent`:** Solana's rent-exempt minimum for an account of a given size. The spec fixes
+      the two amounts it uses; `OutsideSpecDetail.rentFixed` says each transaction sees this.
+    - **`spent`:** the spent nullifiers, tracked alongside the chain. On-chain a nullifier is
       spent when its nullifier account exists; `WellFormed.spentRecorded` links the two. -/
 def toWorld (d : Deployment) (rent : Nat → U64) (spent : Finset LeanSpec.F) (s : State) :
     LeanSpec.World where
@@ -114,9 +118,10 @@ def toWorld (d : Deployment) (rent : Nat → U64) (spent : Finset LeanSpec.F) (s
 
 /-! ## Transactions -/
 
-/-- The spec inputs of a `transact` instruction. The seven public inputs are given twice, as
-    the spec's field elements (`toF`) and as the sender's 32 bytes (`pubInputBytes`, in
-    circuit order, `publicInputs`); the proof is the sender's bytes of its three points. -/
+/-- `toInputs a proof extAmount fee out1 out2`: the spec inputs of a `transact` instruction.
+    The seven public inputs are given twice, as the spec's field elements (`toF`) and as the
+    sender's 32 bytes (`pubInputBytes`, in circuit order); the proof is the sender's bytes of
+    its three points. -/
 def toInputs (a : TransactAccounts) (proof : zkcash_core.transact.Proof) (extAmount : I64)
     (fee : U64) (out1 out2 : Slice U8) : LeanSpec.TxInputs where
   R := toF proof.root
@@ -137,38 +142,27 @@ def toInputs (a : TransactAccounts) (proof : zkcash_core.transact.Proof) (extAmo
   mintAddr := toPubkey zkcash_core.transact.SOL_ADDRESS
   pubInputBytes i := toBytes ((publicInputs proof)[i.val]!).val
 
-/-- **`inputs` carries the code's external data**: its recipient, amount, encrypted outputs, fee,
-    fee recipient and mint are the code's, mapped. -/
-structure HasExternalData (inputs : LeanSpec.TxInputs) (recipient feeRecipient mint : Pubkey)
-    (ext : I64) (out1 out2 : Slice U8) (fee : U64) : Prop where
-  recipient : inputs.A = toPubkey recipient
-  amount : inputs.extAmt = ext.val
-  encOut0 : inputs.encOut0 = toBytes out1.val
-  encOut1 : inputs.encOut1 = toBytes out2.val
-  fee : inputs.f = fee.val
-  feeRecipient : inputs.t = toPubkey feeRecipient
-  mint : inputs.mintAddr = toPubkey mint
-
 /-! ## Executions -/
 
-/-- The spec transactions of one instruction: a `transact`'s mapped inputs; nothing for the
-    other instructions (they are changes between transactions in the spec). -/
+/-- `stepTxs ix`: the spec transactions of one instruction: a `transact`'s mapped inputs;
+    nothing for the other instructions (they are changes between transactions in the spec). -/
 def stepTxs : Instruction → List LeanSpec.TxInputs
   | .transact a proof ext fee out1 out2 => [toInputs a proof ext fee out1 out2]
   | _ => []
 
-/-- The spec transactions of an execution, in order. -/
+/-- `runTxs evs`: the spec transactions of an execution, in order. -/
 def runTxs : List Event → List LeanSpec.TxInputs
   | [] => []
   | .program _ ix _ :: es => stepTxs ix ++ runTxs es
   | .env :: es => runTxs es
 
-/-- The program holds its tree, pool and config at their canonical addresses. -/
+/-- `Initialized d s`: the program holds its tree, pool and config at their canonical
+    addresses. -/
 def Initialized (d : Deployment) (s : State) : Prop :=
   (∃ t, HoldsTree d.programId s (treeAddr d) t) ∧ (∃ p, HoldsTreeToken d.programId s (poolAddr d) p) ∧
     (∃ c, HoldsGlobalConfig d.programId s (configAddr d) c)
 
-/-- No account is the program's tree, pool or config. -/
+/-- `NoProgramAccounts d s`: no account is the program's tree, pool or config. -/
 def NoProgramAccounts (d : Deployment) (s : State) : Prop :=
   (∀ k t, ¬ HoldsTree d.programId s k t) ∧ (∀ k p, ¬ HoldsTreeToken d.programId s k p) ∧
     ∀ k c, ¬ HoldsGlobalConfig d.programId s k c
@@ -178,11 +172,13 @@ variable [LeanSpec.PoseidonHashes] [LeanSpec.Sha] [LeanSpec.Groups] [AddCommGrou
   [Module LeanSpec.F LeanSpec.G1] [AddCommGroup LeanSpec.G2] [Module LeanSpec.F LeanSpec.G2]
   [CommGroup LeanSpec.GT] [LeanSpec.Pairing] [LeanSpec.Deployment]
 
-/-- **`r` is the spec run of the execution.** It starts at the start world `initialize` set
-    (`params`: the pool's address, the rent, the admin key), its transactions are the
-    execution's (`txs`), and the code state `s`, with the nullifiers `spent` spent so far, is its
-    final world after an allowed change between transactions (what happened after the last
-    transaction). -/
+/-- `IsRunOf d rent spent txs s params r`: `r` is the spec run of the execution.
+
+    - **the start:** `r` starts at the world `initialize` set up (`params`: the pool's
+      address, the rent, the admin key);
+    - **the transactions:** its transactions are the execution's (`txs`);
+    - **the end:** the code state `s`, with the nullifiers `spent` spent so far, is its final
+      world after an allowed change (what happened after the last transaction). -/
 def IsRunOf (d : Deployment) (rent : Nat → U64) (spent : Finset LeanSpec.F)
     (txs : List LeanSpec.TxInputs) (s : State) (params : LeanSpec.InitParams)
     (r : LeanSpec.Run (LeanSpec.initWorld params)) : Prop :=
@@ -191,7 +187,8 @@ def IsRunOf (d : Deployment) (rent : Nat → U64) (spent : Finset LeanSpec.F)
     params.admin = d.adminPubkey.map toPubkey ∧ r.txs = txs ∧
     ∃ b : LeanSpec.Between, b.Allowed r.final ∧ toWorld d rent spent s = r.final.between b
 
-/-- **The code state `s` is the end of a spec run** (some `r` with `IsRunOf`). -/
+/-- `IsSpecRun d rent spent txs s`: the code state `s` is the end of a spec run (some `r`
+    with `IsRunOf`). -/
 def IsSpecRun (d : Deployment) (rent : Nat → U64) (spent : Finset LeanSpec.F)
     (txs : List LeanSpec.TxInputs) (s : State) : Prop :=
   ∃ (params : LeanSpec.InitParams) (r : LeanSpec.Run (LeanSpec.initWorld params)),
@@ -205,23 +202,29 @@ The extracted `transact` handler runs after Anchor's account checks and `init`s,
 runtime environment `execTransact` builds. Handler completeness compares it with the spec
 `transact` from the world the handler sees. -/
 
-/-- The runtime environment the handler runs in, exactly as `execTransact` builds it: the state
-    `s₁` after Anchor's two `init`s, the instruction's accounts, the rent-exempt minimum `v`. -/
+/-- `handlerEnv a s₁ v`: the runtime environment the handler runs in, exactly as
+    `execTransact` builds it: the state `s₁` after Anchor's two `init`s, the instruction's
+    accounts, the rent-exempt minimum `v`. -/
 def handlerEnv (a : TransactAccounts) (s₁ : State) (v : U64) : SolEnv :=
   { accounts := s₁, balances := s₁.balances, signer := a.signer,
     treeToken := a.treeTokenAccount, recipient := a.recipient,
     feeRecipient := a.feeRecipientAccount, rentExemptMinimum := some v }
 
-/-- The spec world the handler sees: every account's lamports in `s₁`, the tree and config it
-    is given, the pool's address, the rent-exempt minimum `v`, the nullifiers `spent` (the
-    handler does not read them). MAPPING DECISION: `nullifierRent := 0`, because Anchor has
-    already paid the two nullifier accounts' rent before the handler runs; the handler's
-    effects are the spec's transfer and fee effects.
-    How it differs from `toWorld` (the connection theorems' world): it is taken after Anchor's two
-    `init`s, not before; it reads every account's raw lamports, nullifier accounts included
-    (`toWorld` counts those as 0, `publicBalance`), since the handler never pays them in the
-    cases it covers; and its rent is the handler's own `v`. Used only by handler
-    completeness. -/
+/-- `handlerWorld a s₁ v tree config spent`: the spec world the handler sees (used only by
+    handler completeness): every account's lamports in `s₁`, the tree and config it is
+    given, the pool's address, the rent-exempt minimum `v`, and the nullifiers `spent` (the
+    handler does not read them).
+
+    MAPPING DECISION: `nullifierRent := 0`, because Anchor has already paid the two
+    nullifier accounts' rent before the handler runs; the handler's effects are the spec's
+    transfer and fee effects.
+
+    How it differs from `toWorld` (the connection theorems' world):
+    - **when:** after Anchor's two `init`s, not before;
+    - **balances:** every account's raw lamports, nullifier accounts included (`toWorld`
+      counts those as 0, `publicBalance`), since the handler never pays them in the cases it
+      covers;
+    - **rent:** the handler's own `v`. -/
 def handlerWorld (a : TransactAccounts) (s₁ : State) (v : U64)
     (tree : zkcash_core.merkle_tree.MerkleTreeAccount) (config : zkcash_core.admin.GlobalConfig)
     (spent : Finset LeanSpec.F) : LeanSpec.World where
@@ -240,7 +243,7 @@ The spec's groups, point decoding, pairing and deployed key, for the verifier br
 groups `G1 G2 GT` and the point decoding come from the syscall contracts `C` (core-model's
 `AltBn128Contracts`); the key is the program's extracted `VERIFYING_KEY`. -/
 
-/-- The spec's bytes as an `n`-byte code array, if there are exactly `n` of them. -/
+/-- `toArray n bs`: the spec's bytes as an `n`-byte code array, if there are exactly `n`. -/
 def toArray (n : Usize) (bs : LeanSpec.Bytes) : Option (Std.Array U8 n) :=
   if h : bs.length = n.val then
     some (Std.Array.from (bs.map (fun b => (⟨b⟩ : U8))) (by simp [h]))
@@ -251,14 +254,14 @@ variable {G1 G2 GT : Type} [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGrou
   [Module LeanSpec.F G2] [CommGroup GT] {s : AltBn128}
 open PrivacyCash.Proofs.Groth16 (ic)
 
-/-- The spec's groups and point decoding: the syscalls'. A G1 point is 64 bytes and a G2 point
-    128 bytes, decoded as the syscalls decode them (`C.decodeG1`, `C.decodeG2`); bytes of any
-    other length are not a point. -/
+/-- `syscallGroups C`: the spec's groups and point decoding are the syscalls'. A G1 point is
+    64 bytes and a G2 point 128 bytes, decoded as the syscalls decode them (`C.decodeG1`,
+    `C.decodeG2`); bytes of any other length are not a point. -/
 @[reducible] def syscallGroups (C : AltBn128Contracts s G1 G2 GT) : LeanSpec.Groups :=
   ⟨G1, G2, GT, fun bs => (toArray 64#usize bs).bind C.decodeG1,
     fun bs => (toArray 128#usize bs).bind C.decodeG2⟩
 
-/-- The spec's deployed key: the program's key, as the syscalls decode it. The key is the
+/-- `programKey C`: the spec's deployed key is the program's key, as the syscalls decode it. The key is the
     program's own constant, not sender data; whenever the verifier accepts a proof, every one
     of its points decodes (`programVerifier_groth16`), so the default `0` is never used. -/
 @[reducible] def programKey (C : AltBn128Contracts s G1 G2 GT) :
@@ -273,7 +276,7 @@ end
 
 /-! ## Decidability (so a statement can say the code returns `decide (spec predicate)`) -/
 
-/-- The spec's field and the code's field are the same, `ZMod p` with the same `p`. -/
+/-- `p_eq`: the spec's field and the code's field are the same, `ZMod p` with the same `p`. -/
 theorem p_eq : LeanSpec.p = bn254ScalarModulus := rfl
 
 instance (extAmt : ℤ) (f : ℕ) (pubAmt : LeanSpec.F) :

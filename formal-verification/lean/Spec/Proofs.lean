@@ -466,6 +466,31 @@ lemma treeHash_zero (cs : List F) : ∀ (h idx : ℕ), cs.length ≤ idx * 2^h �
       exact le_trans h1 (Nat.le_add_right _ _)
     rw [treeHash_zero cs h (2*idx) h1, treeHash_zero cs h (2*idx+1) h2]
 
+-- HELPER (moved from the review surface): the real Merkle path as an `Opening`.
+
+/-- `siblingIdx k h`: the index of the sibling, at level `h`, of the node on leaf `k`'s path
+    to the root. E.g. `siblingIdx 6 1 = 2`, in a tree of 8 leaves (numbers are node indices
+    per level; the real tree has height 26):
+
+        level 3:                0
+                          /           \
+        level 2:        0               1
+                      /   \           /   \
+        level 1:     0     1         2     3      ← 3 is on leaf 6's path; its sibling is 2
+                    / \   / \       / \   / \
+        level 0:   0   1 2   3     4   5 6   7 -/
+-- E: ok
+def siblingIdx (k h : ℕ) : ℕ := if Nat.testBit k h then k >>> h - 1 else k >>> h + 1
+
+/-- `canonicalOpening cs k`: the real Merkle path of leaf `k` in the tree with leaves `cs`:
+    at each level `h`, the hash of the sibling node (`siblingIdx k h`).
+
+    `PathCollision` compares a spend's path with this one. It leads to the tree's root
+    (`calcRoot_canonicalOpening`), also for an empty leaf (`k` past the end of `cs`). -/
+def canonicalOpening (cs : List F) (k : Fin (2^26)) : Opening where
+  index := k
+  siblings := fun h => treeHash cs h.val (siblingIdx k.val h.val)
+
 -- HELPER: the canonical opening of any `k` hashes to the tree's root (pure path
 -- arithmetic, independent of `appendEffects`).
 
@@ -516,6 +541,52 @@ lemma calcRoot_canonicalOpening (cs : List F) (k : Fin (2^26)) :
     rw [Nat.shiftRight_eq_div_pow]; exact Nat.div_eq_of_lt k.isLt
   rw [hk0] at haux
   exact haux
+
+-- HELPER: going up the canonical opening, the node reached at level `h` is the tree's node
+-- above leaf `k`; so the pair it hashes at level `h` is `realInputsAt`.
+lemma canonical_nodeAt (cs : List F) (k : Fin (2^26)) : ∀ h, h ≤ 26 →
+    (canonicalOpening cs k).nodeAt (leafAt cs k.val) h = treeHash cs h (k.val >>> h)
+  | 0, _ => by simp [Opening.nodeAt, treeHash]
+  | h+1, hh => by
+    have hs : (canonicalOpening cs k).sibling h = treeHash cs h (siblingIdx k.val h) := by
+      simp [Opening.sibling, canonicalOpening, show h < 26 by omega]
+    show (if Nat.testBit (canonicalOpening cs k).index.val h
+          then H2 ((canonicalOpening cs k).sibling h) ((canonicalOpening cs k).nodeAt (leafAt cs k.val) h)
+          else H2 ((canonicalOpening cs k).nodeAt (leafAt cs k.val) h) ((canonicalOpening cs k).sibling h))
+        = treeHash cs (h+1) (k.val >>> (h+1))
+    rw [canonical_nodeAt cs k h (by omega), hs]
+    have haux := calcRoot_canonicalOpening_aux cs k.val (h+1)
+    rw [← haux]
+    show _ = (fun acc h =>
+        if Nat.testBit k.val h then H2 (treeHash cs h (siblingIdx k.val h)) acc
+        else H2 acc (treeHash cs h (siblingIdx k.val h)))
+      (foldUpTo (fun acc h =>
+        if Nat.testBit k.val h then H2 (treeHash cs h (siblingIdx k.val h)) acc
+        else H2 acc (treeHash cs h (siblingIdx k.val h))) h (leafAt cs k.val)) h
+    rw [calcRoot_canonicalOpening_aux cs k.val h]
+    rfl
+
+lemma canonical_inputsAt (cs : List F) (k : Fin (2^26)) (h : ℕ) (hh : h < 26) :
+    (canonicalOpening cs k).inputsAt (leafAt cs k.val) h = realInputsAt cs k.val h := by
+  have hs : (canonicalOpening cs k).sibling h = treeHash cs h (siblingIdx k.val h) := by
+    simp [Opening.sibling, canonicalOpening, hh]
+  unfold Opening.inputsAt realInputsAt
+  rw [canonical_nodeAt cs k h (by omega), hs, ← Nat.shiftRight_eq_div_pow]
+  have htb := testBit_shiftRight_eq k.val h
+  have hshift := shiftRight_succ_eq k.val h
+  show (if Nat.testBit k.val h then _ else _) = _
+  by_cases hb : Nat.testBit k.val h = true
+  · have h2 : (k.val >>> h) % 2 = 1 := of_decide_eq_true (htb.symm.trans hb)
+    have hidx : siblingIdx k.val h = 2 * (k.val >>> (h+1)) := by
+      unfold siblingIdx; rw [if_pos hb]; omega
+    have hown : k.val >>> h = 2 * (k.val >>> (h+1)) + 1 := by omega
+    simp only [hb, if_true, hidx, hown]
+  · have hbf : Nat.testBit k.val h = false := by simpa using hb
+    have h2 : (k.val >>> h) % 2 ≠ 1 := of_decide_eq_false (htb.symm.trans hbf)
+    have hidx : siblingIdx k.val h = 2 * (k.val >>> (h+1)) + 1 := by
+      unfold siblingIdx; rw [if_neg hb]; omega
+    have hown : k.val >>> h = 2 * (k.val >>> (h+1)) := by omega
+    simp [hbf, hidx, hown]
 
 -- HELPER: `appendEffects` is correct: appending `y` gives the `treeHash` root, and
 -- updates exactly the right `subtrees` slots, each to its completed block (the standard
@@ -831,7 +902,8 @@ lemma opening_extractable_or_collision
       (leafAt cs O.index.val) 26 hEq with ⟨hL, _⟩ | ⟨h0, hh0, hcol⟩
   · exact Or.inl hL.symm
   · refine Or.inr ⟨⟨h0, hh0⟩, ?_⟩
-    rw [inputsAt_eq_stepPair, inputsAt_eq_stepPair]; exact hcol
+    rw [← canonical_inputsAt cs O.index h0 hh0, inputsAt_eq_stepPair, inputsAt_eq_stepPair]
+    exact hcol
 
 -- LEMMA (used by G3a): preservation. A written leaf `k` of `cs` keeps a valid opening at
 -- index `k` after more leaves are appended.
@@ -1403,8 +1475,8 @@ theorem spends_are_genuine
     (params : InitParams)
     (r : Run (initWorld params)) (wit : ℕ → Witness) (hwit : r.WitnessesFor wit)
     (j : ℕ) (hj : j < r.txs.length) (i : Fin 2) (hne : (wit j).inAmt i ≠ 0) :
-    (spentLeaf wit j i < 2 * j ∧ (wit j).inNote i = leafNote wit (spentLeaf wit j i))
-    ∨ SpendBreak r wit j i := by
+    (openedPos wit j i < 2 * j ∧ (wit j).inNote i = leafNote wit (openedPos wit j i))
+    ∨ HashBreakInSpend r wit j i := by
   obtain ⟨hpre, _⟩ := r.step j hj
   have hRel := hwit.relation j hj
   obtain ⟨_, hhist⟩ := r.tree j hj.le
@@ -1418,24 +1490,24 @@ theorem spends_are_genuine
     rw [← hRk]; exact hRel.correctOpenings i hne
   have hklen : (cs.take k).length = k := by rw [List.length_take]; omega
   rcases opening_extractable_or_collision (cs.take k) (by omega) _ _ hValid with hleaf | hcol
-  · by_cases hposk : spentLeaf wit j i < k
-    · have hm : spentLeaf wit j i / 2 < r.txs.length := by omega
-      have hleaf' : leafAt (leaves r.txs) (spentLeaf wit j i) = (wit j).inC i := by
+  · by_cases hposk : openedPos wit j i < k
+    · have hm : openedPos wit j i / 2 < r.txs.length := by omega
+      have hleaf' : leafAt (leaves r.txs) (openedPos wit j i) = (wit j).inC i := by
         have hsplit : leaves r.txs = cs ++ leaves (r.txs.drop j) := by
           rw [hcs_def, ← leaves_append, List.take_append_drop]
         rw [hsplit, leafAt_append_left _ _ _ (by omega), ← leafAt_take _ _ _ hposk]
         exact hleaf
-      have hpos : spentLeaf wit j i = 2 * (spentLeaf wit j i / 2)
-          + (⟨spentLeaf wit j i % 2, Nat.mod_lt _ (by norm_num)⟩ : Fin 2).val := by
+      have hpos : openedPos wit j i = 2 * (openedPos wit j i / 2)
+          + (⟨openedPos wit j i % 2, Nat.mod_lt _ (by norm_num)⟩ : Fin 2).val := by
         simp only; omega
       rw [hpos, leafAt_leaves _ _ hm, (hwit.relation _ hm).outputCommitmentIntegrity] at hleaf'
       rcases commitment_determines_value_or_collision _ _ _ _ _ _ _ _ hleaf'.symm with heq | hcoll
       · exact Or.inl ⟨by omega, heq⟩
       · exact Or.inr (Or.inr (Or.inr hcoll))
     · refine Or.inr (Or.inr (Or.inl ⟨?_⟩))
-      have hz : leafAt (cs.take k) (spentLeaf wit j i) = 0 := by
+      have hz : leafAt (cs.take k) (openedPos wit j i) = 0 := by
         unfold leafAt; rw [dif_neg (by omega)]; rfl
-      unfold spentLeaf at hz
+      unfold openedPos at hz
       rw [hz] at hleaf
       exact hleaf.symm
   · exact Or.inr (Or.inl ⟨k, hk, hcol⟩)
@@ -1446,8 +1518,8 @@ theorem no_double_spend
     (r : Run (initWorld params)) (wit : ℕ → Witness) (hwit : r.WitnessesFor wit)
     (j j' : ℕ) (hj : j < r.txs.length) (hj' : j' < r.txs.length) (i i' : Fin 2)
     (hne : (wit j).inAmt i ≠ 0) (hne' : (wit j').inAmt i' ≠ 0)
-    (hdiff : (j, i) ≠ (j', i')) (hsame : spentLeaf wit j i = spentLeaf wit j' i') :
-    SpendBreak r wit j i ∨ SpendBreak r wit j' i'
+    (hdiff : (j, i) ≠ (j', i')) (hsame : openedPos wit j i = openedPos wit j' i') :
+    HashBreakInSpend r wit j i ∨ HashBreakInSpend r wit j' i'
       ∨ H1Collision ((wit j).inSk i) ((wit j').inSk i') := by
   rcases spends_are_genuine params r wit hwit j hj i hne with ⟨_, hn⟩ | hb
   swap; · exact Or.inl hb
@@ -1487,46 +1559,45 @@ theorem balance
     (r : Run (initWorld params)) (wit : ℕ → Witness) (hwit : r.WitnessesFor wit) :
     (r.final.poolBalance : ℤ)
       = params.rentExemptMin + ∑ pos ∈ r.unspent wit, leafValue wit pos + r.donated
-    ∨ BalanceBreak r wit := by
+    ∨ BreakInSomeSpend r wit := by
   classical
   have hBound : ∀ j (h : j < r.txs.length), r.txs[j].extAmt.natAbs < 2^248 ∧ r.txs[j].f < 2^248 := by
     intro j hj
     obtain ⟨h1, h2, h3⟩ := (r.step j hj).1.amountRange
     constructor <;> omega
-  by_cases hB1 : ∃ j < r.txs.length, ∃ i, (wit j).inAmt i ≠ 0 ∧ SpendBreak r wit j i
-  · exact Or.inr (by unfold BalanceBreak; exact Or.inl hB1)
-  by_cases hB2 : ∃ j < r.txs.length, ∃ j' < r.txs.length, ∃ i i', (wit j).inAmt i ≠ 0
-      ∧ (wit j').inAmt i' ≠ 0 ∧ (j, i) ≠ (j', i') ∧ spentLeaf wit j i = spentLeaf wit j' i'
+  by_cases hB1 : ∃ j < r.txs.length, ∃ i, (wit j).inAmt i ≠ 0 ∧ HashBreakInSpend r wit j i
+  · exact Or.inr (by unfold BreakInSomeSpend; exact Or.inl hB1)
+  by_cases hB2 : ∃ j < r.txs.length, ∃ j' < r.txs.length, ∃ i i', DoubleSpend wit j i j' i'
       ∧ H1Collision ((wit j).inSk i) ((wit j').inSk i')
-  · exact Or.inr (by unfold BalanceBreak; exact Or.inr hB2)
+  · exact Or.inr (by unfold BreakInSomeSpend; exact Or.inr hB2)
   left
   -- With no breaks, G1a and G1b hold outright.
   have hgen : ∀ j (hj : j < r.txs.length) i, (wit j).inAmt i ≠ 0 →
-      spentLeaf wit j i < 2 * j ∧ (wit j).inNote i = leafNote wit (spentLeaf wit j i) := by
+      openedPos wit j i < 2 * j ∧ (wit j).inNote i = leafNote wit (openedPos wit j i) := by
     intro j hj i hne
     rcases spends_are_genuine params r wit hwit j hj i hne with h | h
     · exact h
     · exact absurd ⟨j, hj, i, hne, h⟩ hB1
   have hinj : ∀ j (hj : j < r.txs.length) j' (hj' : j' < r.txs.length) i i',
       (wit j).inAmt i ≠ 0 → (wit j').inAmt i' ≠ 0 →
-      spentLeaf wit j i = spentLeaf wit j' i' → (j, i) = (j', i') := by
+      openedPos wit j i = openedPos wit j' i' → (j, i) = (j', i') := by
     intro j hj j' hj' i i' hne hne' hsame
     by_contra hdiff
     rcases no_double_spend params r wit hwit j j' hj hj' i i' hne hne' hdiff
         hsame with h | h | h
     · exact hB1 ⟨j, hj, i, hne, h⟩
     · exact hB1 ⟨j', hj', i', hne', h⟩
-    · exact hB2 ⟨j, hj, j', hj', i, i', hne, hne', hdiff, hsame, h⟩
+    · exact hB2 ⟨j, hj, j', hj', i, i', ⟨hdiff, hne, hne', hsame⟩, h⟩
   -- Each spent amount is the value of the note it opens, hence below 2^248.
   have hinval : ∀ j (hj : j < r.txs.length) i, (wit j).inAmt i ≠ 0 →
-      (((wit j).inAmt i).val : ℤ) = leafValue wit (spentLeaf wit j i)
+      (((wit j).inAmt i).val : ℤ) = leafValue wit (openedPos wit j i)
       ∧ ((wit j).inAmt i).val < 2^248 := by
     intro j hj i hne
     obtain ⟨hlt, hnote⟩ := hgen j hj i hne
-    have hamt : (wit j).inAmt i = (leafNote wit (spentLeaf wit j i)).amount := congrArg Note.amount hnote
+    have hamt : (wit j).inAmt i = (leafNote wit (openedPos wit j i)).amount := congrArg Note.amount hnote
     refine ⟨by rw [hamt]; rfl, ?_⟩
     rw [hamt]
-    exact (hwit.relation (spentLeaf wit j i / 2) (by omega)).outputRangeChecks _
+    exact (hwit.relation (openedPos wit j i / 2) (by omega)).outputRangeChecks _
   set inV : ℕ → Fin 2 → ℤ := fun x i => (((wit x).inAmt i).val : ℤ) with hinV
   -- After `j` transactions: pool = rent + value created − value spent + donations.
   have hA : ∀ j ≤ r.txs.length, ((r.ws j).poolBalance : ℤ)
@@ -1563,7 +1634,7 @@ theorem balance
   -- The spent leaves, and the spent value as a sum over them.
   set S : Finset (ℕ × Fin 2) :=
     (Finset.range r.txs.length ×ˢ Finset.univ).filter (fun p => (wit p.1).inAmt p.2 ≠ 0) with hS
-  set g : ℕ × Fin 2 → ℕ := fun p => spentLeaf wit p.1 p.2 with hg
+  set g : ℕ × Fin 2 → ℕ := fun p => openedPos wit p.1 p.2 with hg
   have hB : ∑ x ∈ Finset.range r.txs.length, (inV x 0 + inV x 1) = ∑ pos ∈ S.image g, leafValue wit pos := by
     rw [Finset.sum_image]
     · rw [hS, Finset.sum_filter, Finset.sum_product]
@@ -1615,8 +1686,8 @@ theorem honest_note_spent_only_with_owner_key
     (params : InitParams)
     (r : Run (initWorld params)) (wit : ℕ → Witness) (hwit : r.WitnessesFor wit)
     (j : ℕ) (hj : j < r.txs.length) (i : Fin 2) (hne : (wit j).inAmt i ≠ 0)
-    (skOwner : F) (hOwner : (leafNote wit (spentLeaf wit j i)).ownerPk = H1 skOwner) :
-    (wit j).inSk i = skOwner ∨ SpendBreak r wit j i ∨ H1Collision skOwner ((wit j).inSk i) := by
+    (skOwner : F) (hOwner : (leafNote wit (openedPos wit j i)).ownerPk = H1 skOwner) :
+    (wit j).inSk i = skOwner ∨ HashBreakInSpend r wit j i ∨ H1Collision skOwner ((wit j).inSk i) := by
   rcases spends_are_genuine params r wit hwit j hj i hne
       with ⟨_, hnote⟩ | hb
   · have hpk : H1 ((wit j).inSk i) = H1 skOwner := by
@@ -1627,12 +1698,6 @@ theorem honest_note_spent_only_with_owner_key
     · exact Or.inl hsk
     · exact Or.inr (Or.inr ⟨Ne.symm hsk, hpk.symm⟩)
   · exact Or.inr (Or.inl hb)
-
--- PROOF of G1e. Statement and explanation: `Spec/Statements.lean`.
-theorem transact_requires_valid_proof
-    (oldWorld newWorld : World) (inputs : TxInputs) (h : ¬ proofValid inputs) :
-    ¬ transact inputs oldWorld newWorld :=
-  fun ht => h ht.1.validZKP
 
 /-! ## G2. Non-malleability -/
 
@@ -1837,7 +1902,7 @@ theorem unspent_note_cannot_be_blocked
       have : w.inAmt i = (wit j).inAmt i' := congrArg Note.amount heq
       rw [← this]; exact hne
     simp only [Run.unspent, Finset.mem_filter] at hpos
-    exact hpos.2 ⟨j, hj, i', hamt, by simp only [spentLeaf]; rw [hIdx]⟩
+    exact hpos.2 ⟨j, hj, i', hamt, by simp only [openedPos]; rw [hIdx]⟩
   · exact Or.inr hH4
 
 -- LEMMA (used by G3a): a dummy input whose secret key no input of the run uses has a fresh
@@ -1887,7 +1952,7 @@ lemma withdrawal_solvent
     (hRange : amountsInRange inputs.extAmt inputs.f) :
     (inputs.extAmt < 0 →
       (r.final.poolBalance : ℤ) ≥ |inputs.extAmt| + inputs.f + r.final.rentExemptMin)
-    ∨ BalanceBreak r wit := by
+    ∨ BreakInSomeSpend r wit := by
   classical
   rcases balance params r wit hwit with hbal | hbrk
   swap; · exact Or.inr hbrk
@@ -1986,7 +2051,7 @@ lemma spendable_core
     (hFit: balancesFit inputs r.final) :
     (∃ π, transact { inputs with π := π } r.final (transactEffects { inputs with π := π } r.final))
     ∨ H2ZeroPreimage (treeHash ((leaves r.txs).take k) 25 0, treeHash ((leaves r.txs).take k) 25 1)
-    ∨ BalanceBreak r wit
+    ∨ BreakInSomeSpend r wit
     ∨ (∃ i, witness.inAmt i ≠ 0 ∧ NullifierTaken r wit witness i)
     ∨ (∃ i, witness.inAmt i = 0 ∧ DummyNullifierTaken r wit witness i) := by
   classical
@@ -2003,7 +2068,7 @@ lemma spendable_core
     show H2 (treeHash ((leaves r.txs).take k) 25 0) (treeHash ((leaves r.txs).take k) 25 1) = 0
     rw [← h26]
     exact hroot.symm
-  by_cases hB : BalanceBreak r wit
+  by_cases hB : BreakInSomeSpend r wit
   · exact Or.inr (Or.inr (Or.inl hB))
   by_cases hT : ∃ i, witness.inAmt i ≠ 0 ∧ NullifierTaken r wit witness i
   · exact Or.inr (Or.inr (Or.inr (Or.inl hT)))
@@ -2073,7 +2138,7 @@ theorem unspent_note_is_spendable
     (hNotes : OwnsUnspentNotes r wit witness k)
     (hHonest : BuiltHonestly r.final inputs witness)
     (hPolicy : PolicyChecksPass r.final inputs) :
-    CanBeAccepted inputs r.final ∨ LivenessBreak r wit witness k := by
+    CanBeAccepted inputs r.final ∨ SpendBlockedByBreak r wit witness k := by
   rcases spendable_core params hCompl r wit hwit inputs witness k hRoot.isPrefix hRoot.isPrefixRoot
       hRoot.inWindow (fun i hne => ⟨hNotes.inTree i hne, hNotes.unspent i hne, hNotes.isOwnersNote i hne⟩)
       hNotes.different hNotes.freshDummyKeys hHonest.outputs hHonest.nullifiers
@@ -2082,7 +2147,10 @@ theorem unspent_note_is_spendable
       hHonest.poolSeparate hPolicy.fee hPolicy.depositLimit hPolicy.depositFee
       hHonest.signerCanPay hPolicy.treeRoom hHonest.encodings hPolicy.balancesFit with h | h
   · exact Or.inl h
-  · exact Or.inr h
+  · -- `spendable_core` lists the zero-root case first; `SpendBlockedByBreak` lists it last.
+    rcases h with h | h | h | h
+    exacts [Or.inr (Or.inr (Or.inr (Or.inr h))), Or.inr (Or.inl h), Or.inr (Or.inr (Or.inl h)),
+      Or.inr (Or.inr (Or.inr (Or.inl h)))]
 
 -- PROOF of G3c. Statement and explanation: `Spec/Statements.lean`.
 theorem full_tree_freezes_pool

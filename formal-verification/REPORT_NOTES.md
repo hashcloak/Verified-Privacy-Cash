@@ -43,7 +43,7 @@ Lean does not warn about this.
 inputs and of the proof points, and requires canonical encodings, so the check against input
 aliasing is a spec requirement the connection proves the code enforces.
 
-**Some goals hold by definition.** G1e, G4a and G4b restate a precondition or effect of the
+**Some goals hold by definition.** G4a and G4b restate a precondition or effect of the
 spec's `transact`, and G5 restates `Between.Allowed`. They check that the spec says what we
 intend; their value for the code comes entirely from the connection theorems. The other goals
 (G1a–G1d, G2, G3) are consequences that take real proof.

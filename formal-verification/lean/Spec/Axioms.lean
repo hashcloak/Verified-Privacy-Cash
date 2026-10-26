@@ -20,9 +20,6 @@ without reading the proofs. -/
 /-- info: 'LeanSpec.Goals.honest_note_spent_only_with_owner_key' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms LeanSpec.Goals.honest_note_spent_only_with_owner_key
 
-/-- info: 'LeanSpec.Goals.transact_requires_valid_proof' depends on axioms: [propext, Classical.choice, Quot.sound] -/
-#guard_msgs in #print axioms LeanSpec.Goals.transact_requires_valid_proof
-
 /-- info: 'LeanSpec.Goals.same_public_inputs_same_external_data' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms LeanSpec.Goals.same_public_inputs_same_external_data
 

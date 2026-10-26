@@ -27,7 +27,7 @@ is proved for every reachable state.
 | `transact_connection` | every `transact` the code accepts satisfies the spec's `transact` (all preconditions, exact effects) | execution, step (premise); program ≠ system program, `HashesAgree`, `SolanaFacts`, `CryptoFacts`, syscall contracts, `PairingLaws` (asm); `OutsideSpecDetail` (design) |
 | `run_connection` | every execution is a run of the spec (`IsSpecRun`), or has not initialized the pool | execution (premise); program ≠ system program, `HashesAgree`, syscall contracts, `PairingLaws` (asm); `ExecutionAssumptions` (asm) |
 | `spendsAreGenuine_code`, `noDoubleSpend_code`, `poolBacksNotes_code`, `onlyOwnerSpends_code`, `fullTreeFreezes_code`, `configOnlyByAuthority_code` | G1a, G1b, G1c, G1d, G3c, G5 (the spec's named properties) hold of the execution's run | as `run_connection`; initialized (premise) |
-| `proofValid_code`, `copiedProofSamePayout_code`, `noSolCreated_code`, `exactPayouts_code` | G1e, G2a, G4a, G4b hold of every transaction the code accepts | as `transact_connection` |
+| `samePayout_code`, `noSolCreated_code`, `exactPayouts_code` | G2a, G4a, G4b hold of every transaction the code accepts | as `transact_connection` |
 | `connection_nonvacuous` | every hypothesis of `run_connection` and of the run goals holds in a toy execution (deposit, then a withdrawal spending its note), with witnesses where the spend is non-zero | none |
 | `transact_connection_nonvacuous` | every hypothesis of `transact_connection` holds for an accepted deposit and an accepted withdrawal in one toy deployment | none |
 

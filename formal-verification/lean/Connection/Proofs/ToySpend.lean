@@ -462,7 +462,7 @@ theorem toy_spend_nonvacuous :
       (runTxs evs).length = 2 ∧
       ∃ wit : ℕ → LeanSpec.Witness,
         (∀ j (h : j < (runTxs evs).length), LeanSpec.RelationS (runTxs evs)[j].pubInputs (wit j)) ∧
-        (wit 1).inAmt 0 ≠ 0 ∧ LeanSpec.spentLeaf wit 1 0 = 0 ∧
+        (wit 1).inAmt 0 ≠ 0 ∧ LeanSpec.openedPos wit 1 0 = 0 ∧
         (wit 1).inNote 0 = LeanSpec.leafNote wit 0 := by
   obtain ⟨s₁, s₂, s₃, e₂, e₃, h1, h2, h3, hi₁, crypto, -⟩ := toy_spend_execution
   obtain ⟨-, -, -, -, -, -, -, -, solana, depCrypto, -⟩ := toy_execution

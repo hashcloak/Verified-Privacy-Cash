@@ -570,12 +570,10 @@ def signerSolvent (balances: Pubkey → ℕ) (s: Pubkey) (extAmt: ℤ) (nullifie
 def treeHasRoom (T: Tree): Prop :=
   T.nextIndex ≤ 2^26 - 2
 
--- `extAmt` fits an i64 and the fee a u64, as in the code (`ext_amount: i64`, `fee: u64`).
--- Without it the spec allows e.g. `extAmt = −p`: the proof sees `pubAmt = −f` (mod `p`),
--- yet `p` lamports are withdrawn.
--- NOT FROM THE DOCS: `extAmt = −2^63` (`i64::MIN`) is excluded. A withdrawal's amount is
--- `−extAmt`, which does not fit an i64 there; the code rejects it. The docs should say so.
--- No real withdrawal is affected: `2^63` lamports exceeds the total SOL supply.
+-- `extAmt` fits an i64 and the fee a u64. Needed because amounts are mod `p` in the proof:
+-- without it, `extAmt = −p` would look like a zero withdrawal to the proof yet pay out `p`.
+-- ADDED, DOCS SILENT: `extAmt = −2^63` is excluded too, since its withdrawal amount `2^63`
+-- doesn't fit an i64 (the code rejects it; no real amount is that large).
 def amountsInRange (extAmt: ℤ) (f: ℕ): Prop :=
   -2^63 < extAmt ∧ extAmt < 2^63 ∧ f < 2^64
 

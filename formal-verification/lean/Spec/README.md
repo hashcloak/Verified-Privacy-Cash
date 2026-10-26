@@ -4,8 +4,10 @@ A hand-written Lean model of the protocol, from the documentation (SOL only). It
 only Mathlib. The files, in order:
 
 - `Spec.lean`: the model: state, `transact`, its preconditions and effects, `initWorld`.
-- `Vocabulary.lean`: the definitions the theorem statements use.
-- `Statements.lean`: the review surface: goals, trusted assumptions, theorem statements.
+- `Vocabulary.lean`: the building blocks the statements use (runs, notes, hash breaks, the
+  pieces of G3a).
+- `Statements.lean`: the review surface: goals (each a property and its theorem), trusted
+  assumptions.
   Start here ("How to review" at its top).
 - `Proofs.lean`: lemmas and proofs (not for review).
 - `NonVacuity.lean`: toy-model checks that the hypotheses can hold.
