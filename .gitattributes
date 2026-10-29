@@ -1,0 +1,16 @@
+# Generated files, committed because the build and the drift checks need them.
+# Marked so GitHub collapses them in diffs and leaves them out of language stats.
+
+# core-model/scripts/extract.sh (Charon + Aeneas)
+formal-verification/core-model/PrivacyCash/Extracted/Types.lean linguist-generated=true
+formal-verification/core-model/PrivacyCash/Extracted/Funs.lean linguist-generated=true
+formal-verification/core-model/PrivacyCash/Extracted/FunsExternal_Template.lean linguist-generated=true
+# core-model/scripts/gen_idl_lean.py (checked by check_idl.sh)
+formal-verification/core-model/PrivacyCash/Model/Idl.lean linguist-generated=true
+# core-model/scripts/check_conformance.sh --write
+formal-verification/core-model/Tests/ConformanceTraces.lean linguist-generated=true
+# core-model/scripts/check_vectors.sh
+formal-verification/core-model/Tests/*Vectors.lean linguist-generated=true
+formal-verification/core-model/Tests/AccountSpaces.lean linguist-generated=true
+# core-model/scripts/gen_proofs.sh
+formal-verification/conformance/proofs/proofs.json linguist-generated=true
