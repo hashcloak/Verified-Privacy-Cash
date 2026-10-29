@@ -68,6 +68,19 @@ or the runtime's "only the owner may debit" rule. That is sound for safety
 properties (anything Solana allows, the model allows) but not for liveness ones.
 Which Anchor check rejects an account is not modelled (`.accounts`).
 
+**Positive rent.** Solana deletes accounts left with 0 lamports; the model
+keeps them. The two agree when the rent-exempt minimum is positive, so a run's
+program steps must have positive rent (`TxEnv.RentPositive` in `Run`), as on
+every Solana cluster. The program's accounts are always rent-exempt (`init`
+funds each with its rent-exempt minimum, at least 1 lamport; the pool always
+keeps at least the minimum; nothing else debits them), so with positive rent
+they never reach 0 lamports, and the only accounts a step can leave at 0 are
+system-owned accounts with no data, which are what deletion would leave
+anyway. Accounts below their rent-exempt minimum but above 0 are not deleted
+(rent collection is disabled on mainnet), so they need no special treatment. Without it, the model would keep a
+0-lamport nullifier account that Solana deletes, re-opening its note
+(`Model/Execution.lean`).
+
 **Cryptography** (hypotheses a theorem takes, never axioms; see
 `Model/Crypto.lean`, `Model/Bn254.lean`, `Model/Pda.lean`):
 - Groth16 soundness for the program's key (`Groth16EquationSound`): a proof
