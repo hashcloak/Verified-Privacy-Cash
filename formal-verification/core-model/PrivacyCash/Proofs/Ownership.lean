@@ -192,7 +192,7 @@ theorem Run.keepsOwned {d : Deployment} {s s' : State} {events : List Event}
     (h : Run d s events s') : KeepsOwned d.programId s s' := by
   induction h with
   | nil s => exact KeepsOwned.refl s
-  | program hstep _ ih => exact (step_keepsOwned hstep).trans ih
+  | program hstep _ _ ih => exact (step_keepsOwned hstep).trans ih
   | env henv _ ih => exact henv.keepsOwned.trans ih
 
 end PrivacyCash.Model
