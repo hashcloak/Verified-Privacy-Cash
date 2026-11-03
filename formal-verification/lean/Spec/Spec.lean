@@ -5,27 +5,24 @@ import Mathlib.Tactic.LinearCombination
 import Mathlib.Tactic.Linarith
 import Mathlib.Algebra.BigOperators.Fin
 
---///////// Note: SOL ONLY. In Phase 2 we'll distinguish between SOL and SPL.
+--///////// Note: SOL ONLY.
 
--- Everything below lives in `LeanSpec`, not the root namespace: several names here
--- (`Tree`, `Byte`, ...) are generic enough to collide with Mathlib/Aeneas root-level
--- declarations once a file imports both this spec and the code model (exactly what the
--- connection does). The connection refers to spec names as `LeanSpec.name`.
 namespace LeanSpec
+
+-- Labels for what the spec adds beyond the documentation:
+-- ADDED MANUALLY (docs silent): a rule the documentation does not state; listed in
+-- FINDINGS.md.
+-- SOLANA FACT: how Solana behaves, which the documentation leaves implicit; listed in
+-- REPORT_NOTES.md.
 
 --/////////////////////////////////////////
 -- Definitions
 --/////////////////////////////////////////
 def p: ℕ := 21888242871839275222246405745257275088548364400416034343698204186575808495617
 
-/-- `[NeZero p]` for the field-to-`ℤ` lifting lemmas used by G1c (`p` is a `def`, so the
-    instance is not found automatically). -/
-instance : NeZero p := ⟨by decide⟩
-
 -- Type aliases with `abbrev`
 abbrev F := ZMod p
 abbrev Pubkey := BitVec 256 -- Public key from Solana
-abbrev Bits:= List Bool
 abbrev Byte := BitVec 8
 abbrev Bytes := List Byte
 
@@ -55,10 +52,9 @@ def canonicalEncoding (bs : Bytes) (x : F) : Prop :=
 
 -- open the namespaces defined by the class definition
 open PoseidonHashes Sha
-/-
-Supply instances of PoseidonHashes and Sha
 
-This makes sure we can just use H1, H2, sha256 etc.
+/-
+Supply instances of PoseidonHashes and Sha; this makes sure we can just use H1, H2, sha256 etc.
 https://lean-lang.org/doc/reference/4.26.0/Namespaces-and-Sections/#Lean___Parser___Command___variable
 "Section variables are parameters that are automatically added to declarations that mention them."
 -/
@@ -115,7 +111,7 @@ structure H4ZeroPreimage (a : Note) : Prop where
   preimage : H4 a.amount a.ownerPk a.blinding a.mint = 0
 
 /-- An `H2` preimage of `0`: a pair that `H2` hashes to `0`. A Merkle root equal to `0`
-    (which `rootKnown` rejects) needs one. Used by G3a. -/
+    (which `rootKnown` rejects) needs one. Used by G3. -/
 structure H2ZeroPreimage (a : F × F) : Prop where
   preimage : H2 a.1 a.2 = 0
 
@@ -295,26 +291,21 @@ class Deployment where
 
 variable [Deployment]
 
--- No soundness axiom. Perfect soundness ("a verifying proof implies a witness exists") is
--- false for Groth16: for any statement a verifying proof exists mathematically, it is only
--- infeasible to find. So the theorems take the witnesses as data instead (`wit`, read as
--- the knowledge extractor's output; trusted assumption T1 in `Spec/Statements.lean`).
-
-/-- Groth16 completeness for the deployed key: every statement with a witness has a proof,
-    sent as bytes, whose points decode and which verifies. True for an honestly generated key
-    (Groth16 has perfect completeness; the prover writes the points it computes in the
-    format the decoders read). A hypothesis of G3a only. -/
-def Groth16Complete : Prop :=
-  ∀ x w, RelationS x w → ∃ πb : Groth16.ProofBytes, ∃ π,
-    πb.decode = some π ∧ Groth16.verify Deployment.vk π x
+-- No soundness axiom. Groth16 has only computational (knowledge) soundness, not perfect
+-- soundness ("a verifying proof implies a witness exists"). So the theorems take the
+-- witnesses as data instead (`wit`, read as the knowledge extractor's output; trusted
+-- assumption T1 in `Spec/Statements.lean`).
 
 -- Configurations for the privacy-cash contract
 structure config where
+  -- ADDED MANUALLY (docs silent): two authorities, `authority` over the fee settings and
+  -- `limitAuthority` over the deposit limit. Taken from the code (the global config's authority
+  -- and the tree's authority). The spec needs it to state who may change the config.
   authority: Pubkey -- may change the fee settings (the global config's authority in the code)
   limitAuthority: Pubkey -- may change the deposit limit (the tree's authority in the code)
   depositFeeRate: ℕ -- in basis points, e.g. 25 = 0.25%, default = 0
   withdrawalFeeRate: ℕ -- in basis points, default = 0.25%
-  feeMarginError: ℕ -- in basis points, default = 500 (5% tolerance)
+  feeErrorMargin: ℕ -- in basis points, default = 500 (5% tolerance)
   -- NOTE: In solana code the max deposit limit in declared in the Merkle Tree but we have kept in here.
   maxDepositLimit: ℕ -- maximum deposit amount in lamports
 
@@ -341,10 +332,10 @@ structure State where
 structure World where
   state: State
   balances: Pubkey → ℕ -- balances of (public) Solana accounts in lamports
-  -- the minimum lamport balance an account must have to keep existing without paying rent
+  -- SOLANA FACT: the pool's rent-exempt minimum, the lamports it must keep to keep existing
   rentExemptMin: ℕ
-  -- the lamports the signer pays (the rent-exempt minimum) for each nullifier account a
-  -- transaction creates
+  -- SOLANA FACT: the lamports the signer pays (the rent-exempt minimum) for each nullifier
+  -- account a transaction creates
   nullifierRent: ℕ
 
 --/////////////////////////////////////////
@@ -510,12 +501,11 @@ def rootBytesKnown (T: Tree) (bs: Bytes): Prop :=
 def externalDataBound (inputs: TxInputs): Prop :=
   externalDataHash inputs = inputs.extDataHash
 
--- The fee is at least the configured rate, minus the allowed error margin.
+-- The fee is at least the configured rate, minus the allowed fee error margin.
 def feeSufficient (cfg: config) (extAmt: ℤ) (f: ℕ): Prop :=
-  let feeErrorMargin := cfg.feeMarginError
   let feeRate := if extAmt > 0 then cfg.depositFeeRate else cfg.withdrawalFeeRate
   let expectedFee := (extAmt.natAbs * feeRate) / 10000
-  let minAcceptableFee := (expectedFee * (10000 - feeErrorMargin)) / 10000
+  let minAcceptableFee := (expectedFee * (10000 - cfg.feeErrorMargin)) / 10000
   f ≥ minAcceptableFee
 
 -- The public amount the proof commits to is extAmt - fee, and extAmt is in range.
@@ -534,9 +524,10 @@ def proofValid (inputs: TxInputs): Prop :=
 
 -- Each of the seven public inputs is sent as its canonical encoding: 32 bytes whose
 -- big-endian value is below `p` and is the field element the spec uses.
--- NOT FROM THE DOCS: it is the wire format. Guards against input aliasing: without it the
--- bytes of `x + p` would be accepted as `x`, so one nullifier could be sent as two different
--- byte strings (two different nullifier accounts on-chain) while the spec sees one.
+-- ADDED MANUALLY (docs silent): the canonical encoding check, big-endian value < p. Taken from
+-- the code (`prepare_inputs`). The spec needs it because without it the bytes of `x + p` would
+-- be accepted as `x`, so one nullifier could be sent as two different byte strings (two different
+-- nullifier accounts on-chain) while the spec sees one.
 def publicInputsEncoded (inputs: TxInputs): Prop :=
   ∀ i, canonicalEncoding (inputs.pubInputBytes i) (Groth16.toVector inputs.pubInputs i)
 
@@ -572,19 +563,20 @@ def treeHasRoom (T: Tree): Prop :=
 
 -- `extAmt` fits an i64 and the fee a u64. Needed because amounts are mod `p` in the proof:
 -- without it, `extAmt = −p` would look like a zero withdrawal to the proof yet pay out `p`.
--- ADDED, DOCS SILENT: `extAmt = −2^63` is excluded too, since its withdrawal amount `2^63`
--- doesn't fit an i64 (the code rejects it; no real amount is that large).
+-- ADDED MANUALLY (docs silent): the check extAmt ≠ −2^63. Taken from the code
+-- (`check_public_amount`, `validate_fee`). The spec needs it because the withdrawal amount `2^63`
+-- doesn't fit an i64 (no real amount is that large).
 def amountsInRange (extAmt: ℤ) (f: ℕ): Prop :=
   -2^63 < extAmt ∧ extAmt < 2^63 ∧ f < 2^64
 
--- Each encrypted output is shorter than `2^32` bytes. Borsh writes a vector's length as a
+-- SOLANA FACT: each encrypted output is shorter than `2^32` bytes. Borsh writes a vector's length as a
 -- `u32` and fails on longer vectors (`u32::try_from`); Solana's transaction size limit
 -- (1232 bytes) keeps them far below that anyway.
 def encOutsFit (inputs: TxInputs): Prop :=
   inputs.encOut0.length < 2^32 ∧ inputs.encOut1.length < 2^32
 
 -- The pool's account is not the signer, and is not paid as recipient or fee recipient.
--- NOT FROM THE DOCS: a modelling precondition. It makes the pool's balance change by exactly
+-- SOLANA FACT: a modelling precondition. It makes the pool's balance change by exactly
 -- `extAmt − f` (`sol_balance_correctness_step`), which G1c (every unspent note is backed by SOL
 -- in the pool) and G4a (no SOL is created or lost) rely on: a withdrawal paid to the pool
 -- would spend notes while the SOL stays in the pool. It holds on Solana: the signer can't be
@@ -600,7 +592,7 @@ def poolIsSeparate (inputs: TxInputs) (pool: Pubkey): Prop :=
 -- transaction credits (`balanceDelta` positive) ends below 2^64, and so does the pool right
 -- after a deposit, before the fee is paid from it (`transactEffects` moves the deposit
 -- first). Solana balances are `u64`; a payment that would overflow is rejected.
--- NOT FROM THE DOCS. No real transaction is affected: 2^64 lamports exceeds the total SOL
+-- SOLANA FACT. No real transaction is affected: 2^64 lamports exceeds the total SOL
 -- supply. The pool between deposit and fee is the only intermediate balance that can exceed
 -- a final one (every other payment only adds to its payee's final balance).
 def balancesFit (inputs: TxInputs) (w: World): Prop :=
@@ -664,7 +656,7 @@ def initTree : Tree := {
   nextIndex := 0
   subtrees := fun i => Z i.val
   root:= Z 26
-  -- Matches `MerkleTree::initialize` (merkle_tree.rs): only slot 0 is set to the
+  -- SOLANA FACT: matches `MerkleTree::initialize` (merkle_tree.rs): only slot 0 is set to the
   -- zero-tree root; the rest are left at Solana's zero-initialized account bytes, i.e.
   -- the field element `0`, never `Z 26`. `is_known_root` explicitly rejects `root = 0`
   -- first, precisely because these untouched slots must not be mistaken for real roots.
@@ -672,26 +664,38 @@ def initTree : Tree := {
   rootIndex := 0
 }
 
--- The pool account is created holding exactly its rent-exempt minimum (Anchor `init` funds
--- it). Its balance counts the pool's total lamports, rent reserve included -- the same
--- reading `poolSolvent` uses (`poolBalance ≥ … + rentExemptMin`).
+-- SOLANA FACT: the pool account is created holding exactly its rent-exempt minimum (Anchor
+-- `init` funds it).
 /-- The parameters of a freshly initialized pool. -/
 structure InitParams where
+  -- The pool's initial configuration.
   cfg : config
-  balances : Pubkey → ℕ  -- every account's balance (the pool's is overwritten below)
+  -- Every account's balance (the pool's is overwritten below).
+  balances : Pubkey → ℕ
+  -- SOLANA FACT: two rent-exempt minimums: Solana's minimum grows with account size, and the
+  -- pool account and a nullifier account have different sizes.
   rentExemptMin : ℕ
   nullifierRent : ℕ
-  pool : Pubkey          -- the pool's account
-  initializer : Pubkey   -- who initialized the pool
-  admin : Option Pubkey  -- the deployment's admin key, if it has one
-  -- Both authorities are whoever initialized the pool.
+  -- The pool's account.
+  pool : Pubkey
+  -- Who initialized the pool.
+  initializer : Pubkey
+  -- ADDED MANUALLY (docs silent): the deployment's admin key, if it has one (test builds have
+  -- none). Taken from the code (`ADMIN_PUBKEY`). The spec needs it to state `admin_init`.
+  admin : Option Pubkey
+  -- Fee settings authority
   authority_init : cfg.authority = initializer
+  -- Deposit limit authority
   limitAuthority_init : cfg.limitAuthority = initializer
-  -- NOT FROM THE DOCS: only the admin may initialize, when the deployment has an admin key.
-  -- Needed for security: whoever initializes controls the fees and the deposit limit.
+  -- ADDED MANUALLY (docs silent): the check initializer = admin, when the deployment has an
+  -- admin key. Taken from the code (`check_admin`). The spec needs it for security: whoever
+  -- initializes controls the fees and the deposit limit.
   admin_init : ∀ a, admin = some a → initializer = a
-  -- The fee rule (`feeSufficient`) needs an error margin of at most 100% (see `AdminChange`).
-  margin_init : cfg.feeMarginError ≤ 10000
+  -- ADDED MANUALLY (docs silent): the fee error margin limit cfg.feeErrorMargin ≤ 10000 on the
+  -- initial config. In the code it holds without a check: `initialize` sets it to 500. The spec
+  -- needs it because `feeSufficient` computes `10000 − feeErrorMargin`, which means nothing
+  -- above 100%.
+  feeErrorMargin_init : cfg.feeErrorMargin ≤ 10000
 
 def initWorld (params : InitParams) : World := {
   state := {
@@ -700,6 +704,11 @@ def initWorld (params : InitParams) : World := {
     pool := params.pool
     config := params.cfg
   }
+  -- Function.update from Lean Mathlib
+  -- https://leanprover-community.github.io/mathlib4_docs/Mathlib/Logic/Function/Basic.html#Function.update
+  -- "Function.update f a' v a = if h : a = a' then ⋯ ▸ v else f a"
+  -- So it keeps value of params.balances everywhere, except when the input is the pool,
+  -- then it returns rentExemptMin
   balances := Function.update params.balances params.pool params.rentExemptMin
   rentExemptMin := params.rentExemptMin
   nullifierRent := params.nullifierRent
@@ -707,10 +716,12 @@ def initWorld (params : InitParams) : World := {
 
 -- What may happen between two transactions.
 
-/-- What an admin instruction changes: the fee settings (`update_global_config`) or the
-    deposit limit (`update_deposit_limit`). -/
+/-- What an admin instruction can change: the fee settings (`update_global_config`) or the
+    deposit limit (`update_deposit_limit`).
+    ADDED MANUALLY (docs silent): the documentation doesn't state which settings admins can
+    change, so this is the working from the code -/
 inductive AdminAction where
-  | feeSettings (depositFeeRate withdrawalFeeRate feeMarginError : ℕ)
+  | feeSettings (depositFeeRate withdrawalFeeRate feeErrorMargin : ℕ)
   | depositLimit (limit : ℕ)
 
 /-- An admin instruction: what it changes, and the signers of its transaction. -/
@@ -718,57 +729,84 @@ structure AdminChange where
   signers : List Pubkey
   action : AdminAction
 
-/-- The config after an admin change, or `none` if the change is not allowed. New fee settings
-    need the config's authority among the signers, and an error margin of at most 10000 basis
-    points (NOT FROM THE DOCS: the fee rule `feeSufficient` computes `10000 − margin`, which
-    means nothing above 100%). A new deposit limit needs the limit authority among the
-    signers. Nothing else changes; no admin change touches the authorities. -/
-def AdminChange.apply (ch : AdminChange) (c : config) : Option config :=
+/-- The result of an admin change: accepted, with the new config, or rejected. -/
+inductive AdminResult where
+  | accepted (newConfig : config)
+  | rejected
+
+/-- `ch.apply c`: whether admin change `ch` is accepted on config `c`, and the new config if so.
+
+    - **New fee settings:** the config's authority must be among the signers, and the fee error
+      margin must be at most 10000 basis points (100%).
+      ADDED MANUALLY (docs silent): the fee error margin limit check m ≤ 10000. Taken from the
+      code (`update_global_config`). The spec needs it because `feeSufficient` computes
+      `10000 − feeErrorMargin`, which means nothing above 100%.
+    - **New deposit limit:** the limit authority must be among the signers.
+
+    Nothing else changes; no admin change touches the authorities. -/
+def AdminChange.apply (ch : AdminChange) (c : config) : AdminResult :=
   match ch.action with
   | .feeSettings d w m =>
     if c.authority ∈ ch.signers ∧ m ≤ 10000 then
-      some { c with depositFeeRate := d, withdrawalFeeRate := w, feeMarginError := m }
-    else none
+      .accepted { c with depositFeeRate := d, withdrawalFeeRate := w, feeErrorMargin := m }
+    else .rejected
   | .depositLimit l =>
-    if c.limitAuthority ∈ ch.signers then some { c with maxDepositLimit := l } else none
+    if c.limitAuthority ∈ ch.signers then .accepted { c with maxDepositLimit := l } else .rejected
 
-/-- `c'` is reached from `c` by allowed admin changes, one after another. -/
-inductive AdminChanges : config → config → Prop where
-  | none (c : config) : AdminChanges c c
-  | change {c c' c'' : config} (ch : AdminChange) :
-      ch.apply c = some c' → AdminChanges c' c'' → AdminChanges c c''
+/-- `ReachableByAdminChanges c1 c2`: can accepted admin changes take the config from `c1` to
+    `c2`, in any number of steps? Built the same way as `ReachableWorld` below. -/
+inductive ReachableByAdminChanges : config → config → Prop where
+  -- No admin changes; true for any config
+  | noChange (c1 : config) : ReachableByAdminChanges c1 c1
+  -- Given a reachable pair c1, c2, and an admin change accepted on c2 that gives c3,
+  -- Then obtain proof that c3 is reachable from c1
+  | extend {c1 c2 c3 : config} (ch : AdminChange) :
+      ReachableByAdminChanges c1 c2 →
+      ch.apply c2 = .accepted c3 →
+      ReachableByAdminChanges c1 c3
 
-/-- The balances and the config just before a transaction, after whatever happened since the
-    previous one. -/
-structure Between where
+/-- `UpdatedValuesBetweenTransacts`: the new balances and config after activity outside
+    `transact`.
+
+    The world doesn't stand still between two `transact`s: anyone can send SOL, account owners
+    can spend, and admins can change the config. The tree and the nullifiers stay as they are,
+    because only `transact` changes them.
+
+    This records the outcome, not the activity: for example, the pool's new total balance, not
+    the amount someone sent. (`Allowed` below says which outcomes are possible.) -/
+structure UpdatedValuesBetweenTransacts where
   balances : Pubkey → ℕ
   config : config
 
-/-- World `w` with the balances and config of `b`; the tree, the nullifiers, the pool's
-    address and the rent stay as they are. -/
-def World.between (w : World) (b : Between) : World :=
+/-- `w.withUpdatedValues b`: world `w` with the balances and config of `b`; the tree, the
+    nullifiers, the pool's address and the rent stay as they are. -/
+def World.withUpdatedValues (w : World) (b : UpdatedValuesBetweenTransacts) : World :=
   { w with state := { w.state with config := b.config }, balances := b.balances }
 
-/-- What may happen between two transactions, as Solana allows it. Anyone can send SOL to any
-    account at any time, so the pool's balance can only grow: only the program can take SOL
-    out of it, and only in a transaction. Every other account can change arbitrarily (its
-    owner can also spend from it). The config changes only by allowed admin changes. -/
-structure Between.Allowed (w : World) (b : Between) : Prop where
+/-- `b.Allowed w`: the updated values `b` can follow world `w`, as Solana allows it.
+
+    Allowed changes:
+    - Anyone can send SOL to any account at any time, so the pool's balance can only grow: only
+    the program can take SOL out of it, and only in a transaction. Every other account can
+    change arbitrarily (its owner can also spend from it).
+    - The config changes only by allowed admin changes. -/
+structure UpdatedValuesBetweenTransacts.Allowed (w : World) (b : UpdatedValuesBetweenTransacts) :
+    Prop where
   poolGains : w.poolBalance ≤ b.balances w.state.pool
-  config : AdminChanges w.state.config b.config
+  config : ReachableByAdminChanges w.state.config b.config
 
 -- A claim about a pair of worlds; can we go from w1 to w2?
 --   This lets us reason about "in any number of steps"
 inductive ReachableWorld: World → World → Prop where
   -- No transactions; true for any world
  | noStep(w1: World): ReachableWorld w1 w1
- -- Given a reachable pair w1, w2, what happened after w2 (`b`, allowed), and
+ -- Given a reachable pair w1, w2, the updated values after w2 (`b`, allowed), and
  -- a proof that transact succeeds from there to w3,
  -- Then obtain proof that w3 is reachable from w1
- | extend{w1 w2 w3: World}(b: Between)(txInputs: TxInputs):
+ | extend{w1 w2 w3: World}(b: UpdatedValuesBetweenTransacts)(txInputs: TxInputs):
       ReachableWorld w1 w2 →
       b.Allowed w2 →
-      transact txInputs (w2.between b) w3 →
+      transact txInputs (w2.withUpdatedValues b) w3 →
        ReachableWorld w1 w3
 
 end LeanSpec

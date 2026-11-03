@@ -23,7 +23,9 @@ def treeHash (cs : List F) : ℕ → ℕ → F
   | h+1, idx => H2 (treeHash cs h (2*idx)) (treeHash cs h (2*idx+1))
 
 /-- `realInputsAt cs k h`: the two values the real Merkle path of leaf `k` hashes at level
-    `h`, in the tree with leaves `cs`: the two children of its node at level `h+1`. -/
+    `h`, in the tree with leaves `cs`.
+
+    `m` is the path's node at level `h+1`; the two values are its children. -/
 def realInputsAt (cs : List F) (k h : ℕ) : F × F :=
   let m := k / 2^(h+1)
   (treeHash cs h (2*m), treeHash cs h (2*m+1))
@@ -54,8 +56,9 @@ def Opening.inputsAt (O : Opening) (leaf : F) (h : ℕ) : F × F :=
 
     At some level `h`, two paths feed different pairs to `H2` with the same
     output:
-    - **the claimed path:** opening `O`, going up from the claimed leaf `c`;
-    - **the real path:** in the tree with leaves `cs`, at the same position.
+    - **the claimed path** (`O.inputsAt c h`): opening `O`, going up from the claimed leaf `c`;
+    - **the real path** (`realInputsAt cs O.index h`): in the tree with leaves `cs`, at the
+      same position.
     All values are fixed by `cs`, `O` and `c`, so this is one specific collision. -/
 def PathCollision (cs : List F) (O : Opening) (c : F) : Prop :=
   ∃ h : Fin 26, H2Collision (O.inputsAt c h)
@@ -69,35 +72,57 @@ def PathCollision (cs : List F) (O : Opening) (c : F) : Prop :=
     accepted, in order, and what happened between them.
 
     - **the transactions** (`txs`): the accepted transactions, in order;
-    - **the worlds** (`ws`): `ws j` is the world before transaction `j` (so `ws 0 = w0`),
-      and `ws txs.length` is the final world;
-    - **what happened in between** (`between j`, just before transaction `j`): SOL sent to
-      the pool or to other accounts, other accounts spent from, admin changes to the
-      config. `allowed`: Solana and the program allow it (`Between.Allowed`). `between 0`
-      includes SOL sent to the pool before `initialize`;
+    - **the worlds** (`ws`): `ws j` is the world right after transaction `j - 1`, before
+      `updatedValues j` (so `ws 0 = w0`), and `ws txs.length` is the final world;
+    - **the balances and config before each transaction** (`updatedValues j`): their values
+      after what happened outside `transact` since the previous transaction: SOL sent to the
+      pool or to other accounts, other accounts spent from, admin changes to the config.
+      `allowed`: Solana and the program allow it (`UpdatedValuesBetweenTransacts.Allowed`).
+      `updatedValues 0` includes the part of any SOL sent to the pool before `initialize`
+      that exceeds the pool's rent (`initialize` only tops the account up to its rent);
     - **each step is accepted** (`step`): transaction `j` is accepted (`transact`) from
-      world `j` updated by `between j`, and leads to world `j + 1`.
+      world `j` with `updatedValues j`, and leads to world `j + 1`.
     What happens after the last transaction is not part of the run.
 
     How the theorems use it: each quantifies over all runs from `initWorld params`, so it
     holds whatever transactions were submitted and whatever happened between them. (`w0`
     is a parameter only so some lemmas need fewer arguments.) A run is ghost data: the
-    program doesn't store it; it exists only to state the theorems. -/
+    program doesn't store it; it exists only to state the theorems.
+
+    Example. The order, for a run of two transactions:
+
+        ws 0 = w0  (`start`)
+          │  the balances and config become `updatedValues 0`
+          ▼
+        (ws 0).withUpdatedValues (updatedValues 0)
+          │  step 0: transaction `txs[0]`, accepted by `transact`
+          ▼
+        ws 1
+          │  the balances and config become `updatedValues 1`
+          ▼
+        (ws 1).withUpdatedValues (updatedValues 1)
+          │  step 1: transaction `txs[1]`, accepted by `transact`
+          ▼
+        ws 2 = the final world -/
 structure Run (w0 : World) where
   txs : List TxInputs
   ws : ℕ → World
-  between : ℕ → Between
+  updatedValues : ℕ → UpdatedValuesBetweenTransacts
   start : ws 0 = w0
-  allowed : ∀ j < txs.length, (between j).Allowed (ws j)
-  step : ∀ j (h : j < txs.length), transact txs[j] ((ws j).between (between j)) (ws (j+1))
+  allowed : ∀ j < txs.length, (updatedValues j).Allowed (ws j)
+  step : ∀ j (h : j < txs.length),
+    transact txs[j] ((ws j).withUpdatedValues (updatedValues j)) (ws (j+1))
 
-/-- `r.donations j`: the SOL sent to the pool from outside just before transaction `j`
-    (the pool can only gain then). -/
+/-- `r.donations j`: the SOL sent to the pool from outside just before transaction `j`.
+
+    The pool's balance in `updatedValues j` minus its balance in `ws j`. The pool can only gain
+    then (`allowed`), so the subtraction loses nothing. -/
 def Run.donations {w0 : World} (r : Run w0) (j : ℕ) : ℕ :=
-  (r.between j).balances (r.ws j).state.pool - (r.ws j).poolBalance
+  (r.updatedValues j).balances (r.ws j).state.pool - (r.ws j).poolBalance
 
 /-- `r.donated`: the SOL sent to the pool from outside during the run, summed over the
-    gaps before each transaction. -/
+    gaps before each transaction. SOL sent before `initialize` counts only above the
+    pool's rent (see `Run`). -/
 def Run.donated {w0 : World} (r : Run w0) : ℕ :=
   ∑ j ∈ Finset.range r.txs.length, r.donations j
 
@@ -123,7 +148,7 @@ def Run.firstLeaves {w0 : World} (r : Run w0) (k : ℕ) : List F := (leaves r.tx
     The theorems use `wit` to talk about which notes a transaction spends and with which
     keys; since we assume T1, whoever made transaction `j` knows `wit j`. -/
 def Run.WitnessesFor {w0 : World} (r : Run w0) (wit : ℕ → Witness) : Prop :=
-  -- For all transactions in the run, if the proof if valid => relation S holds for witness for j
+  -- For all transactions in the run, if the proof is valid => relation S holds for witness for j
   ∀ j (h : j < r.txs.length), proofValid r.txs[j] → RelationS r.txs[j].pubInputs (wit j)
 
 /-- `w.inNote i`: the note input `i` of witness `w` spends: amount, owner public key,
@@ -136,10 +161,14 @@ def Witness.inNote (w : Witness) (i : Fin 2) : Note :=
 def Witness.outNote (w : Witness) (o : Fin 2) : Note :=
   ⟨w.outAmt o, w.outPk o, w.outR o, w.mint⟩
 
+/-- `w.openedPos i`: the tree position that input `i` of `w` opens, i.e. the leaf index of that
+    input's Merkle opening. -/
+def Witness.openedPos (w : Witness) (i : Fin 2) : ℕ := (w.openings i).index.val
+
 /-- `openedPos wit j i`: the tree position that input `i` of transaction `j` opens, i.e. the
     leaf index of that input's Merkle opening. For a non-zero input, the position of the
     note it spends; for a dummy (zero-amount) input, an arbitrary position. -/
-def openedPos (wit : ℕ → Witness) (j : ℕ) (i : Fin 2) : ℕ := ((wit j).openings i).index.val
+def openedPos (wit : ℕ → Witness) (j : ℕ) (i : Fin 2) : ℕ := (wit j).openedPos i
 
 /-- `leafNote wit pos`: the note stored at tree position `pos`, as created by the
     transaction that added it.
@@ -156,6 +185,23 @@ def leafNote (wit : ℕ → Witness) (pos : ℕ) : Note :=
 
 /-- `leafValue wit pos`: the amount of the note at tree position `pos`, as an integer. -/
 def leafValue (wit : ℕ → Witness) (pos : ℕ) : ℤ := ((leafNote wit pos).amount.val : ℤ)
+
+/-- `GenuineInput wit w i bound`: input `i` of `w` spends a real note the spender is entitled
+    to. One field per attack it rules out:
+    - a made-up note: `inTree`;
+    - someone else's note: `ownsNote`;
+    - a real note for more than it holds: `knowsNote`.
+    Whether the note was already spent is a separate question (G1b). -/
+structure GenuineInput (wit : ℕ → Witness) (w : Witness) (i : Fin 2) (bound : ℕ) : Prop where
+  /-- It opens one of the first `bound` leaves. -/
+  inTree : w.openedPos i < bound
+  /-- The spender holds the note's secret key: the public key of the note stored at this position
+      is `H1` of the spender's secret key. -/
+  ownsNote : (leafNote wit (w.openedPos i)).ownerPk = H1 (w.inSk i)
+  /-- The spender states the stored note's real amount, blinding factor and mint. -/
+  knowsNote :
+    let storedNote := leafNote wit (w.openedPos i)
+    storedNote.amount = w.inAmt i ∧ storedNote.blinding = w.inR i ∧ storedNote.mint = w.mint
 
 /-- `HashBreakInSpend r wit j i`: one of three specific hash breaks occurs at the spend
     by input `i` of transaction `j`.
@@ -184,16 +230,19 @@ noncomputable def Run.unspent {w0 : World} (r : Run w0) (wit : ℕ → Witness) 
   (Finset.range (2 * r.txs.length)).filter
     (fun pos => ¬ ∃ j < r.txs.length, ∃ i, (wit j).inAmt i ≠ 0 ∧ openedPos wit j i = pos)
 
+/-- `DoubleSpendInputs w i w' i'`: input `i` of `w` and input `i'` of `w'` are both real spends of
+    the same tree position. -/
+abbrev DoubleSpendInputs (w : Witness) (i : Fin 2) (w' : Witness) (i' : Fin 2) : Prop :=
+  -- both real spends (input amount not 0),
+  w.inAmt i ≠ 0 ∧ w'.inAmt i' ≠ 0
+  -- that open the same position in the tree
+  ∧ w.openedPos i = w'.openedPos i'
+
 /-- `DoubleSpend wit j i j' i'`: input `i` of transaction `j` and input `i'` of transaction
     `j'` are two different real spends of the same tree position. -/
-    -- E: ok
 def DoubleSpend (wit : ℕ → Witness) (j : ℕ) (i : Fin 2) (j' : ℕ) (i' : Fin 2) : Prop :=
   -- two different inputs (possibly of the same transaction),
-  (j, i) ≠ (j', i')
-  -- both real spends (input amount not 0),
-  ∧ (wit j).inAmt i ≠ 0 ∧ (wit j').inAmt i' ≠ 0
-  -- that open the same position in the tree
-  ∧ openedPos wit j i = openedPos wit j' i'
+  (j, i) ≠ (j', i') ∧ DoubleSpendInputs (wit j) i (wit j') i'
 
 /-- `BreakInSomeSpend r wit`: one of the breaks of G1a or G1b occurs at some spend of the
     run: a forged spend or a double spend. It is G1c's failure case.
@@ -221,148 +270,122 @@ def Witness.nullifierArgs (w : Witness) (i : Fin 2) : F × F × F :=
 
 /-- `w.inNullifier i`: the nullifier input `i` of witness `w` reveals. -/
 def Witness.inNullifier (w : Witness) (i : Fin 2) : F :=
-  nullifier (w.inC i) (w.sign i) (w.openings i).index
+  let (c, pos, sign) := w.nullifierArgs i
+  H3 c pos sign
 
 /-- `NullifierCollision w i w' i'`: input `i` of `w` and input `i'` of `w'` reveal the same
     nullifier without being the same note at the same position. A nullifier is
     `H3 (commitment, position, signature)`, so this needs one of:
     - **different `H3` inputs** (`H3Collision`): the two triples differ but hash to the same
       nullifier;
-    - **equal `H3` inputs, different notes** (`H4Collision`): the commitments are equal, but
-      the notes behind them differ. -/
+    - **different notes, same commitment** (`H4Collision`): the two inputs' notes differ but
+      have the same commitment. -/
 def NullifierCollision (w : Witness) (i : Fin 2) (w' : Witness) (i' : Fin 2) : Prop :=
   H3Collision (w.nullifierArgs i) (w'.nullifierArgs i') ∨ H4Collision (w.inNote i) (w'.inNote i')
 
-/-- `NullifierTaken r wit w i`: the nullifier of an owner's real note (input `i` of `w`) was
-    already revealed in the run through a hash collision, without the note being spent: some
-    input `i'` of some transaction `j` revealed it, with a `NullifierCollision`. -/
-def NullifierTaken {w0 : World} (r : Run w0) (wit : ℕ → Witness) (w : Witness) (i : Fin 2) : Prop :=
-  ∃ j, ∃ (hj : j < r.txs.length), ∃ i',
+/-- `NullifierTakenByCollision r wit w`: an input of run `r` revealed the nullifier of an input of
+    the owner's spend `w` first, through an `H3` collision, so the program rejects the spend.
+
+    It takes a collision because of `inputNotUsedBefore`: no input of the run has that input's
+    commitment at that position, so an equal nullifier must come from different hashed values.
+
+    `wit`: the witnesses of the run's transactions. -/
+def NullifierTakenByCollision {w0 : World} (r : Run w0) (wit : ℕ → Witness) (w : Witness) : Prop :=
+  -- For some input `i` of `w`, there is an input `i'` of a transaction `j` of the run
+  ∃ i, ∃ j, ∃ (hj : j < r.txs.length), ∃ i',
+    -- that revealed the same nullifier as input `i` of `w`,
     r.txs[j].pubInputs.nullifiers i' = w.inNullifier i
-    ∧ NullifierCollision w i (wit j) i'
-
-/-- `w.signatureArgs i`: the three values hashed (`H3`) into the signature of input `i`:
-    the secret key, the note commitment and its tree position. -/
-def Witness.signatureArgs (w : Witness) (i : Fin 2) : F × F × F :=
-  (w.inSk i, w.inC i, (w.openings i).index)
-
-/-- `DummyNullifierTaken r wit w i`: the nullifier of a zero-amount ("dummy") input `i` of
-    `w`, whose secret key no input of the run uses, was already revealed in the run through
-    a hash collision.
-
-    Some input `i'` of some transaction `j` revealed that nullifier, and
-    either:
-    - **same nullifier, different arguments** (`H3`): the two inputs' nullifier arguments
-      collide; or
-    - **same signature, different arguments** (`H3`): the two inputs' signature arguments
-      collide. -/
-def DummyNullifierTaken {w0 : World} (r : Run w0) (wit : ℕ → Witness) (w : Witness) (i : Fin 2) : Prop :=
-  ∃ j, ∃ (hj : j < r.txs.length), ∃ i',
-    r.txs[j].pubInputs.nullifiers i' = w.inNullifier i
-    ∧ (H3Collision (w.nullifierArgs i) ((wit j).nullifierArgs i')
-       ∨ H3Collision (w.signatureArgs i) ((wit j).signatureArgs i'))
+    -- but from different values (commitment, position, signature):
+    -- so an `H3` collision must have happened to make this possible
+    ∧ H3Collision (w.nullifierArgs i) ((wit j).nullifierArgs i')
 
 
-/-! ### The pieces of G3a (liveness) -/
+/-! ### The pieces of G3 (liveness) -/
 
-/-- `RootInWindow r R k`: the spend's root `R` is a real past root of the run that the
-    program still accepts.
-
-    - **a real past root:** `R` is the root of the tree after its first `k` leaves, for
-      some `k` up to the end of the run;
-    - **still accepted:** `R` is in the 100-slot root history at the end of the run. -/
-structure RootInWindow {w0 : World} (r : Run w0) (R : F) (k : ℕ) : Prop where
+/-- `RootIsPast r inputs k`: the spend's root is a real past root of `r`: the root of the
+    tree after its first `k` leaves. -/
+structure RootIsPast {w0 : World} (r : Run w0) (inputs : TxInputs) (k : ℕ) : Prop where
   /-- The spend uses the tree as it was after its first `k` leaves... -/
   isPrefix : k ≤ 2 * r.txs.length
-  /-- ...and that tree's root. -/
-  isPrefixRoot : R = (foldAppend (r.firstLeaves k) initTree).root
-  /-- That root has not left the 100-slot root history yet. -/
-  inWindow : R ∈ Set.range r.final.state.tree.history
+  /-- ...and its root. -/
+  isPrefixRoot : inputs.R = (foldAppend (r.firstLeaves k) initTree).root
 
-/-- `OwnsUnspentNotes r wit witness k`: the owner's spend (secrets `witness`) spends real,
-    unspent notes of the run, in the tree under the spend's root (the first `k` leaves).
-
-    One field each:
-    - **real notes** (non-zero inputs): unspent, in the tree under the root, with the
-      note's real contents, and two inputs spend different notes;
-    - **dummy inputs** (zero amount): each uses a fresh secret key.
-    `wit` are the witnesses of the run. -/
-structure OwnsUnspentNotes {w0 : World} (r : Run w0) (wit : ℕ → Witness) (witness : Witness)
-    (k : ℕ) : Prop where
-  /-- No spend of the run has opened the owner's notes. -/
-  unspent : ∀ i, witness.inAmt i ≠ 0 → (witness.openings i).index.val ∈ r.unspent wit
-  /-- Each note was in the tree under the spend's root (one of the first `k` leaves). -/
-  inTree : ∀ i, witness.inAmt i ≠ 0 → (witness.openings i).index.val < k
-  /-- The owner states its notes' real contents. -/
-  isOwnersNote : ∀ i, witness.inAmt i ≠ 0 →
-    witness.inNote i = leafNote wit (witness.openings i).index.val
-  /-- Two non-zero inputs spend two different notes. -/
-  different : witness.inAmt 0 ≠ 0 → witness.inAmt 1 ≠ 0 →
-    (witness.openings 0).index ≠ (witness.openings 1).index
-  /-- Each zero-amount input uses a fresh secret key: one no input of the run uses. -/
-  freshDummyKeys : ∀ i, witness.inAmt i = 0 →
-    ∀ j < r.txs.length, ∀ i', (wit j).inSk i' ≠ witness.inSk i
-
-/-- `BuiltHonestly w inputs witness`: the transaction `inputs` is built honestly
-    from the owner's secrets `witness`, in world `w`.
-
-    - **computed from the secrets:** the output commitments and nullifiers are computed
-      from `witness`, and the amounts balance;
-    - **well formed:** the transaction meets the spec's preconditions on ranges,
-      encodings, the pool kept separate, and the signer being able to pay. -/
-structure BuiltHonestly (w : World) (inputs : TxInputs) (witness : Witness) : Prop where
-  /-- Each output commitment is computed from the output note's secrets. -/
-  outputs : ∀ j, inputs.pubInputs.outCommitments j
-    = commit (witness.outAmt j) (witness.outPk j) (witness.outR j) witness.mint
-  /-- Each nullifier is computed from the input note's secrets. -/
-  nullifiers : ∀ i, inputs.pubInputs.nullifiers i
-    = witness.inNullifier i
-  /-- Inputs plus the public amount equal outputs. -/
-  amounts : witness.inAmt 0 + witness.inAmt 1 + inputs.pubInputs.pubAmt
-    = witness.outAmt 0 + witness.outAmt 1
-  /-- Each output amount is below `2^248`. -/
-  outputRange : ∀ j, (witness.outAmt j).val < 2^248
+/-- `TxWellFormed inputs pool`: the transaction's own fields are filled in correctly, and it
+    carries a valid proof. Each field is the precondition of the same meaning in
+    `transactPreconditions`. `pool`: the pool's address. -/
+structure TxWellFormed (inputs : TxInputs) (pool : Pubkey) : Prop where
+  /-- The proof verifies. -/
+  validProof : proofValid inputs
   /-- The external data hashes to the value the proof commits to. -/
   externalData : externalDataBound inputs
   /-- The public amount is `extAmt - fee`. -/
   publicAmount : pubAmtConsistent inputs.extAmt inputs.f inputs.pubAmt
-  /-- The two nullifiers differ. -/
-  distinctNullifiers : nullifiersDistinct inputs.k0 inputs.k1
   /-- `extAmt` fits an `i64` and the fee a `u64`. -/
   amountRange : amountsInRange inputs.extAmt inputs.f
   /-- Each encrypted output is shorter than `2^32` bytes. -/
   encOutLength : encOutsFit inputs
-  /-- The pool is not named where it would be paid. -/
-  poolSeparate : poolIsSeparate inputs w.state.pool
-  /-- The signer's account can pay the rent for the two nullifier accounts and the deposit. -/
-  signerCanPay : signerSolvent w.balances inputs.s inputs.extAmt w.nullifierRent
   /-- The seven public inputs are sent as their canonical encodings. -/
   encodings : publicInputsEncoded inputs
+  /-- The pool is not named where it would be paid. -/
+  poolSeparate : poolIsSeparate inputs pool
 
-/-- `PolicyChecksPass w inputs`: the program's policy checks and limits pass for `inputs` in
-    world `w`. These are the checks that can legitimately block a spend.
+/-- `InputUsedInRun r wit w i`: some input of the run has the same commitment at the same
+    position as input `i` of `w`. -/
+def InputUsedInRun {w0 : World} (r : Run w0) (wit : ℕ → Witness) (w : Witness) (i : Fin 2) : Prop :=
+  ∃ j < r.txs.length, ∃ earlier,
+    (wit j).inC earlier = w.inC i ∧ (wit j).openedPos earlier = w.openedPos i
 
-    - **policy checks:** the fee is sufficient, the deposit is within the limit, and a
-      deposit with a fee leaves the pool its rent reserve;
-    - **limits:** the tree has room, and no credited balance overflows a `u64`. -/
-structure PolicyChecksPass (w : World) (inputs : TxInputs) : Prop where
-  /-- The fee is at least the configured rate, minus the error margin. -/
-  fee : feeSufficient w.state.config inputs.extAmt inputs.f
-  /-- A deposit does not exceed the configured maximum. -/
-  depositLimit : depositWithinLimit w.state.config inputs.extAmt
-  /-- On a deposit with a fee, the pool (with the deposit) covers the fee and keeps
-      its rent reserve. -/
-  depositFee : inputs.extAmt ≥ 0 ∧ inputs.f > 0 →
-    (w.poolBalance : ℤ) + inputs.extAmt ≥ inputs.f + w.rentExemptMin
-  /-- The tree is not full (G3c). -/
+/-- `HonestSpend r wit inputs witness k`: everything the owner controls: after run `r`, the owner
+    builds `inputs` honestly from the secrets `witness`, spending notes they really can spend.
+
+    Each input is a real note (`inAmt i ≠ 0`) or a dummy (`inAmt i = 0`).
+    Real notes are `genuine` (G1a) and not double spent (`notDoubleSpend`, G1b);
+    both must satisfy `inputNotUsedBefore`.
+    The rest is the transaction: `root`, `circuit`, `wellFormed` and `signerCanPay`.
+
+    `k`: the spend's root is the tree's root after its first `k` leaves. `wit`: the witnesses
+    of the run's transactions. -/
+structure HonestSpend {w0 : World} (r : Run w0) (wit : ℕ → Witness) (inputs : TxInputs)
+    (witness : Witness) (k : ℕ) : Prop where
+  /-- Each real note is genuine (G1a's notion), among the first `k` leaves. -/
+  genuine : ∀ i, witness.inAmt i ≠ 0 → GenuineInput wit witness i k
+  /-- The current spend's two inputs don't double spend a note (G1b's notion). -/
+  notDoubleSpend : ¬ DoubleSpendInputs witness 0 witness 1
+  /-- No input of this spend has been used before, so its nullifier is new, unless an `H3`
+      collision occurs. -/
+  inputNotUsedBefore : ∀ i, ¬ InputUsedInRun r wit witness i
+  /-- The spend's root is a real past root. -/
+  root : RootIsPast r inputs k
+  /-- The owner's witness satisfies the circuit. -/
+  circuit : RelationS inputs.pubInputs witness
+  /-- The transaction's own fields are correct, and it carries a valid proof. -/
+  wellFormed : TxWellFormed inputs r.final.state.pool
+  /-- The signer's account can pay the rent for the two nullifier accounts and the deposit. -/
+  signerCanPay : signerSolvent r.final.balances inputs.s inputs.extAmt r.final.nullifierRent
+
+/-- `LimitsNotHit w inputs`: what can legitimately block the spend `inputs` in world `w`, and the
+    owner can't ensure: an attacker or an admin can make these false.
+
+    Attacker, by sending transactions or SOL: `inWindow`, `treeRoom` and `balancesFit`.
+    Admin, by changing the config: `fee` and `depositLimit`. -/
+structure LimitsNotHit (w : World) (inputs : TxInputs) : Prop where
+  /-- The spend's root has not left the 100-slot root history yet. -/
+  inWindow : inputs.R ∈ Set.range w.state.tree.history
+  /-- The tree is not full. -/
   treeRoom : treeHasRoom w.state.tree
   /-- No balance a payment credits overflows a `u64` (unreachable in practice: 2^64
       lamports exceeds the total SOL supply). -/
   balancesFit : balancesFit inputs w
+  /-- The fee is at least the configured rate, minus the fee error margin. -/
+  fee : feeSufficient w.state.config inputs.extAmt inputs.f
+  /-- A deposit does not exceed the configured maximum. -/
+  depositLimit : depositWithinLimit w.state.config inputs.extAmt
 
-/-- `CanBeAccepted inputs w`: the program accepts `inputs` in world `w`, with some proof. -/
+/-- `CanBeAccepted inputs w`: the program accepts `inputs` in world `w`, with its own proof.
+
+    The spec's `transact` holds from `w` to the world `transactEffects` computes. -/
 def CanBeAccepted (inputs : TxInputs) (w : World) : Prop :=
-  ∃ π, transact { inputs with π := π } w (transactEffects { inputs with π := π } w)
+  transact inputs w (transactEffects inputs w)
 
 /-- `SpendBlockedByBreak r wit witness k`: an attacker blocked the owner's honest spend
     (`witness`, against the root of the first `k` leaves), which needs a hash break.
@@ -371,10 +394,9 @@ def CanBeAccepted (inputs : TxInputs) (w : World) : Prop :=
     - **drain the pool** (`BreakInSomeSpend`): to leave too little SOL for the owner's
       withdrawal, the attacker must withdraw value no note backs: forge a spend or spend a
       note twice (G1c);
-    - **use up the owner's nullifier** (`NullifierTaken` for a real note,
-      `DummyNullifierTaken` for a zero-amount input): the program rejects a nullifier
-      already used. To use it first, the attacker must reveal it from a different note,
-      position or key, i.e. find an `H3` or `H4` collision (G3b);
+    - **use up the owner's nullifier** (`NullifierTakenByCollision`): the program rejects a
+      nullifier already used. To use it first, the attacker must reveal it from different
+      arguments, i.e. find an `H3` collision;
     - **make the root `0`** (`H2ZeroPreimage`): the program rejects the root `0`. To make
       the tree's root `0`, the attacker must add leaves whose two top subtrees hash to `0`,
       i.e. find an `H2` preimage of `0`. -/
@@ -382,9 +404,8 @@ def SpendBlockedByBreak {w0 : World} (r : Run w0) (wit : ℕ → Witness) (witne
   -- Drain pool by breaking spending
   BreakInSomeSpend r wit
   -- or, already use the nullifiers
-  ∨ (∃ i, witness.inAmt i ≠ 0 ∧ NullifierTaken r wit witness i)
-  ∨ (∃ i, witness.inAmt i = 0 ∧ DummyNullifierTaken r wit witness i)
-  -- or the 2 last nodes hash together to obtain 0
+  ∨ NullifierTakenByCollision r wit witness
+  -- or the 2 last nodes hash together to obtain 0 for root
   ∨ H2ZeroPreimage (treeHash (r.firstLeaves k) 25 0, treeHash (r.firstLeaves k) 25 1)
 
 end LeanSpec

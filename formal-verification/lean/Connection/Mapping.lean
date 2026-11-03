@@ -86,7 +86,7 @@ def toConfig (c : zkcash_core.admin.GlobalConfig)
   limitAuthority := toPubkey t.authority
   depositFeeRate := c.deposit_fee_rate.val
   withdrawalFeeRate := c.withdrawal_fee_rate.val
-  feeMarginError := c.fee_error_margin.val
+  feeErrorMargin := c.fee_error_margin.val
   maxDepositLimit := t.max_deposit_amount.val
 
 /-! ## Worlds -/
@@ -185,7 +185,8 @@ def IsRunOf (d : Deployment) (rent : Nat → U64) (spent : Finset LeanSpec.F)
   params.pool = toPubkey (poolAddr d) ∧ params.rentExemptMin = (rent treeTokenAccountSpace).val ∧
     params.nullifierRent = (rent nullifierAccountSpace).val ∧
     params.admin = d.adminPubkey.map toPubkey ∧ r.txs = txs ∧
-    ∃ b : LeanSpec.Between, b.Allowed r.final ∧ toWorld d rent spent s = r.final.between b
+    ∃ b : LeanSpec.UpdatedValuesBetweenTransacts, b.Allowed r.final ∧
+      toWorld d rent spent s = r.final.withUpdatedValues b
 
 /-- `IsSpecRun d rent spent txs s`: the code state `s` is the end of a spec run (some `r`
     with `IsRunOf`). -/

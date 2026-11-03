@@ -64,11 +64,26 @@ mention, so users and integrators cannot know it.
   `validate_fee` reject it. This is reasonable: `2^63` lamports is about 9.2 billion SOL,
   more than the total SOL supply, so no real withdrawal is affected. Our specification
   includes this rule, but it is not in the documentation, which should state it.
-- **The fee error margin is at most 100%.** `update_global_config` refuses a margin above
-  10000 basis points. Our specification includes this rule, because its fee rule computes
-  `10000 − margin`; the documentation gives the default (5%) but no bound, and should state it.
+- **The fee error margin is at most 100%.** `update_global_config` refuses a fee error margin
+  above 10000 basis points. Our specification includes this rule, because its fee rule computes
+  `10000 − feeErrorMargin`; the documentation gives the default (5%) but no bound, and should
+  state it.
 - **Only the admin key can initialize the pool.** `initialize` checks the caller against a
   hard-coded admin key; whoever initializes becomes the authority over fees and the deposit
   limit. In the localnet and test builds there is no admin key, so anyone can initialize.
   Our specification includes this rule; the documentation should state it, and that deployments
   must use a build with the admin key set.
+- **Two authorities: one over the fee settings, one over the deposit limit.** The global
+  config's authority may change the fees (`update_global_config`); the Merkle tree's authority
+  may change the deposit limit (`update_deposit_limit`). `initialize` sets both to the
+  initializer, and nothing changes them afterwards. Our specification includes this rule; the
+  documentation should state who controls what.
+- **Admins can change only the fee settings and the deposit limit.** No other setting has an
+  admin instruction: `update_global_config` covers the fee rates and the fee error margin, and
+  `update_deposit_limit` covers the deposit limit. Our specification includes this rule; the
+  documentation should state what admins can change.
+- **Public inputs must be canonically encoded.** Each of the seven public inputs is 32
+  big-endian bytes whose value must be below the field modulus `p`; the code rejects larger
+  values. Without this, `x` and `x + p` would be two encodings of the same field element, so
+  one nullifier could be sent as two different byte strings. Our specification includes this
+  rule; the documentation should state the wire format.

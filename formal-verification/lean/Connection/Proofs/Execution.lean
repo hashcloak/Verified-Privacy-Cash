@@ -8,7 +8,8 @@ NOT FOR REVIEW: the statements are in `Connection/ConnectionTheorems.lean`. The 
 execution from genesis one event at a time, keeping a spec run that matches it so far. Before
 `initialize` no program step can succeed. `initialize` starts the spec run at `initWorld`.
 Each `transact` extends it by one transaction (the main per-step theorem). Admin instructions
-and outside actions are changes allowed between transactions (`LeanSpec.Between.Allowed`).
+and outside actions are changes allowed between transactions
+(`LeanSpec.UpdatedValuesBetweenTransacts.Allowed`).
 -/
 
 namespace Connection
@@ -46,23 +47,27 @@ theorem env_initialized {d : Deployment} {s s' : State} (h : EnvStep d.programId
 
 /-- Two states with the same spec tree map to worlds that differ only in their balances and
     config. -/
-theorem toWorld_between_of_same_tree {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSpec.F}
+theorem toWorld_withUpdatedValues_of_same_tree {d : Deployment} {rent : Nat → U64}
+    {spent : Finset LeanSpec.F}
     {s s' : State} (ht : toTree (treeAt s' (treeAddr d)) = toTree (treeAt s (treeAddr d))) :
-    toWorld d rent spent s' = (toWorld d rent spent s).between
-      (LeanSpec.Between.unchanged (toWorld d rent spent s')) := by
-  simp only [toWorld, LeanSpec.World.between, LeanSpec.Between.unchanged, ht]
+    toWorld d rent spent s' = (toWorld d rent spent s).withUpdatedValues
+      (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent spent s')) := by
+  simp only [toWorld, LeanSpec.World.withUpdatedValues,
+    LeanSpec.UpdatedValuesBetweenTransacts.unchanged, ht]
 
 /-- **Outside actions are changes allowed between transactions.** The program's data is
     untouched, and the pool only gains lamports. -/
 theorem env_between {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSpec.F} {s s' : State}
     (h : EnvStep d.programId s s') (hi : Initialized d s) :
-    toWorld d rent spent s' = (toWorld d rent spent s).between
-        (LeanSpec.Between.unchanged (toWorld d rent spent s')) ∧
-      (LeanSpec.Between.unchanged (toWorld d rent spent s')).Allowed (toWorld d rent spent s) := by
+    toWorld d rent spent s' = (toWorld d rent spent s).withUpdatedValues
+        (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent spent s')) ∧
+      (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent spent s')).Allowed
+        (toWorld d rent spent s) := by
   obtain ⟨⟨t, ht⟩, ⟨p, hp⟩, ⟨c, hc⟩⟩ := hi
   have dt := ((h _).1 ht.1).2.1
   have dc := ((h _).1 hc.1).2.1
-  have hw := toWorld_between_of_same_tree (d := d) (rent := rent) (spent := spent) (s := s) (s' := s')
+  have hw := toWorld_withUpdatedValues_of_same_tree (d := d) (rent := rent) (spent := spent)
+    (s := s) (s' := s')
     (by simp only [treeAt, dt])
   refine ⟨hw, ⟨?_, ?_⟩⟩
   · obtain ⟨-, dp, lp⟩ := (h _).1 hp.1
@@ -73,13 +78,13 @@ theorem env_between {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSp
     exact lp
   · have : (toWorld d rent spent s').state.config = (toWorld d rent spent s).state.config := by
       simp only [toWorld, treeAt, configAt, dt, dc]
-    show LeanSpec.AdminChanges _ (toWorld d rent spent s').state.config
-    rw [this]; exact .none _
+    show LeanSpec.ReachableByAdminChanges _ (toWorld d rent spent s').state.config
+    rw [this]; exact .noChange _
 
 /-! ## Admin instructions -/
 
 /-- What `update_global_config` computes: each given setting replaces the old one, and the
-    error margin, when given, is at most 10000. -/
+    fee error margin, when given, is at most 10000. -/
 theorem ugc_spec (c c' : zkcash_core.admin.GlobalConfig) (dep wd m : Option U16)
     (h : zkcash_core.admin.update_global_config c dep wd m = ok (.Ok (), c')) :
     c' = { c with deposit_fee_rate := dep.getD c.deposit_fee_rate,
@@ -103,15 +108,16 @@ theorem set_data_lamports {s : State} {key : Pubkey} {dt : AccountData} (k : Pub
   · simp [State.set, hk]
 
 /-- **`update_global_config` is an allowed admin change.** It sets the fee settings, signed by
-    the config's authority, with an error margin of at most 10000; nothing else changes. -/
+    the config's authority, with a fee error margin of at most 10000; nothing else changes. -/
 theorem ugc_between {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSpec.F} {s s' : State}
     {tx : TxEnv} {a : UpdateGlobalConfigAccounts} {dep wd m : Option U16}
     (wf : WellFormed d spent s) (hi : Initialized d s)
     (h : execUpdateGlobalConfig d s tx a dep wd m = .ok s') :
     Initialized d s' ∧
-      toWorld d rent spent s' = (toWorld d rent spent s).between
-        (LeanSpec.Between.unchanged (toWorld d rent spent s')) ∧
-      (LeanSpec.Between.unchanged (toWorld d rent spent s')).Allowed (toWorld d rent spent s) := by
+      toWorld d rent spent s' = (toWorld d rent spent s).withUpdatedValues
+        (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent spent s')) ∧
+      (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent spent s')).Allowed
+        (toWorld d rent spent s) := by
   unfold execUpdateGlobalConfig at h
   split at h
   swap; · cases h
@@ -138,7 +144,7 @@ theorem ugc_between {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSp
   have htree : treeAt s' (treeAddr d) = treeAt s (treeAddr d) := by
     simp only [treeAt, keep _ hne]
   refine ⟨⟨⟨t, by unfold HoldsTree; rw [keep _ hne]; exact ht⟩, ⟨p, by unfold HoldsTreeToken; rw [keep _ hpne]; exact hp⟩,
-    ⟨config', ?_⟩⟩, toWorld_between_of_same_tree (by rw [htree]), ⟨?_, ?_⟩⟩
+    ⟨config', ?_⟩⟩, toWorld_withUpdatedValues_of_same_tree (by rw [htree]), ⟨?_, ?_⟩⟩
   · unfold HoldsGlobalConfig; rw [← hka, hkey]; exact ⟨hval.globalConfig.1.1, rfl⟩
   · -- balances: unchanged
     show publicBalance s (fromPubkey (toPubkey (poolAddr d)))
@@ -149,19 +155,20 @@ theorem ugc_between {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSp
       simp only [configAt, ← hka, hval.globalConfig.1.2]
     have hcfg' : configAt s' (configAddr d) = config' := by
       simp only [configAt, ← hka, hkey]
-    show LeanSpec.AdminChanges (toConfig (configAt s (configAddr d)) (treeAt s (treeAddr d)))
+    show LeanSpec.ReachableByAdminChanges
+      (toConfig (configAt s (configAddr d)) (treeAt s (treeAddr d)))
       (toConfig (configAt s' (configAddr d)) (treeAt s' (treeAddr d)))
     rw [hcfg, hcfg', htree]
-    refine .change ⟨tx.signers.map toPubkey,
+    refine .extend ⟨tx.signers.map toPubkey,
       .feeSettings (dep.getD config.deposit_fee_rate).val (wd.getD config.withdrawal_fee_rate).val
-        (m.getD config.fee_error_margin).val⟩ ?_ (.none _)
+        (m.getD config.fee_error_margin).val⟩ (.noChange _) ?_
     have hsig : toPubkey config.authority ∈ tx.signers.map toPubkey := by
       rw [hval.globalConfig.2.2]; exact List.mem_map_of_mem hval.authority
-    have hmarg : (m.getD config.fee_error_margin).val ≤ 10000 := by
+    have hErrorMargin : (m.getD config.fee_error_margin).val ≤ 10000 := by
       rcases m with _ | v
       · exact hm0
       · exact hmv v rfl
-    simp only [LeanSpec.AdminChange.apply, toConfig, if_pos (And.intro hsig hmarg), hc']
+    simp only [LeanSpec.AdminChange.apply, toConfig, if_pos (And.intro hsig hErrorMargin), hc']
 
 /-- **`update_deposit_limit` is an allowed admin change.** It sets the deposit limit, signed by
     the tree's authority; the spec's tree and everything else are unchanged. -/
@@ -170,9 +177,10 @@ theorem udl_between {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSp
     (wf : WellFormed d spent s) (hi : Initialized d s)
     (h : execUpdateDepositLimit d s tx a newLimit = .ok s') :
     Initialized d s' ∧
-      toWorld d rent spent s' = (toWorld d rent spent s).between
-        (LeanSpec.Between.unchanged (toWorld d rent spent s')) ∧
-      (LeanSpec.Between.unchanged (toWorld d rent spent s')).Allowed (toWorld d rent spent s) := by
+      toWorld d rent spent s' = (toWorld d rent spent s).withUpdatedValues
+        (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent spent s')) ∧
+      (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent spent s')).Allowed
+        (toWorld d rent spent s) := by
   unfold execUpdateDepositLimit at h
   split at h
   swap; · cases h
@@ -201,15 +209,16 @@ theorem udl_between {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSp
   have hC : configAt s' (configAddr d) = configAt s (configAddr d) := by
     simp only [configAt, keep _ hcne]
   refine ⟨⟨⟨tree', ?_⟩, ⟨p, by unfold HoldsTreeToken; rw [keep _ hpne]; exact hp⟩, ⟨c, by unfold HoldsGlobalConfig; rw [keep _ hcne]; exact hc⟩⟩,
-    toWorld_between_of_same_tree (by rw [hT, hT', ht']; rfl), ⟨?_, ?_⟩⟩
+    toWorld_withUpdatedValues_of_same_tree (by rw [hT, hT', ht']; rfl), ⟨?_, ?_⟩⟩
   · unfold HoldsTree; rw [← hka, hkey]; exact ⟨hval.treeAccount.1.1, rfl⟩
   · show publicBalance s (fromPubkey (toPubkey (poolAddr d)))
       ≤ publicBalance s' (fromPubkey (toPubkey (poolAddr d)))
     simp only [fromPubkey_toPubkey, publicBalance, keep _ hpne, le_refl]
-  · show LeanSpec.AdminChanges (toConfig (configAt s (configAddr d)) (treeAt s (treeAddr d)))
+  · show LeanSpec.ReachableByAdminChanges
+      (toConfig (configAt s (configAddr d)) (treeAt s (treeAddr d)))
       (toConfig (configAt s' (configAddr d)) (treeAt s' (treeAddr d)))
     rw [hC, hT, hT', ht']
-    refine .change ⟨tx.signers.map toPubkey, .depositLimit newLimit.val⟩ ?_ (.none _)
+    refine .extend ⟨tx.signers.map toPubkey, .depositLimit newLimit.val⟩ (.noChange _) ?_
     have hsig : toPubkey tree.authority ∈ tx.signers.map toPubkey := by
       rw [hval.treeAccount.2.2]; exact List.mem_map_of_mem hval.authority
     simp only [LeanSpec.AdminChange.apply, toConfig, if_pos hsig]
@@ -485,7 +494,7 @@ theorem initAccount_lamports {pid : Pubkey} {s s' : State} {mb : Nat → U64} {p
     omega
 
 /-- What `admin::initialize` returns when it succeeds: the tree `init_tree` wrote, a pool and a
-    config whose authority is the caller, with fee rates 0 and 25 and error margin 500. -/
+    config whose authority is the caller, with fee rates 0 and 25 and fee error margin 500. -/
 theorem adminInitialize_values {H : zkcash_core.merkle_tree.Hasher Unit}
     {t0 t : zkcash_core.merkle_tree.MerkleTreeAccount} {tk0 tk : zkcash_core.admin.TreeTokenAccount}
     {c0 c : zkcash_core.admin.GlobalConfig} {auth : Pubkey} {b1 b2 b3 : U8}
@@ -518,7 +527,7 @@ theorem adminInitialize_values {H : zkcash_core.merkle_tree.Hasher Unit}
 
 /-- **`initialize` starts the spec's run.** The state right after it is the spec's start world
     `initWorld`, for the parameters it set: both authorities are the caller, who is the admin
-    when the deployment has one, the error margin is 500, the tree is the spec's empty tree. SOL
+    when the deployment has one, the fee error margin is 500, the tree is the spec's empty tree. SOL
     already at the pool's address counts as sent to it before the first transaction (allowed). -/
 theorem init_between [LeanSpec.PoseidonHashes] {d : Deployment} {rent : Nat → U64} {s s' : State}
     {tx : TxEnv} {a : InitializeAccounts}
@@ -530,9 +539,10 @@ theorem init_between [LeanSpec.PoseidonHashes] {d : Deployment} {rent : Nat → 
       params.pool = toPubkey (poolAddr d) ∧ params.rentExemptMin = (rent treeTokenAccountSpace).val ∧
       params.nullifierRent = (rent nullifierAccountSpace).val ∧
       params.admin = d.adminPubkey.map toPubkey ∧
-      toWorld d rent ∅ s' = (LeanSpec.initWorld params).between
-        (LeanSpec.Between.unchanged (toWorld d rent ∅ s')) ∧
-      (LeanSpec.Between.unchanged (toWorld d rent ∅ s')).Allowed (LeanSpec.initWorld params) := by
+      toWorld d rent ∅ s' = (LeanSpec.initWorld params).withUpdatedValues
+        (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent ∅ s')) ∧
+      (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent ∅ s')).Allowed
+        (LeanSpec.initWorld params) := by
   unfold execInitialize at h
   split at h
   · cases h
@@ -611,19 +621,21 @@ theorem init_between [LeanSpec.PoseidonHashes] {d : Deployment} {rent : Nat → 
     intro x hx
     obtain ⟨k, hk, rfl⟩ := Option.map_eq_some_iff.mp hx
     rw [hadmin k hk]
-  have pm : (toConfig config tree).feeMarginError ≤ 10000 := by simp [toConfig, hc]
+  have pm : (toConfig config tree).feeErrorMargin ≤ 10000 := by simp [toConfig, hc]
   refine ⟨hinit, ⟨toConfig config tree, (toWorld d rent ∅ s').balances, (rent treeTokenAccountSpace).val,
     (rent nullifierAccountSpace).val, toPubkey (poolAddr d), toPubkey a.authority,
     d.adminPubkey.map toPubkey, pa, pl, pad, pm⟩, rfl, rfl, rfl, rfl, ?_, ?_, ?_⟩
-  · simp only [toWorld, LeanSpec.initWorld, LeanSpec.World.between, LeanSpec.Between.unchanged, hT,
+  · simp only [toWorld, LeanSpec.initWorld, LeanSpec.World.withUpdatedValues,
+      LeanSpec.UpdatedValuesBetweenTransacts.unchanged, hT,
       htree]
   · -- the pool gained at least nothing
     show (LeanSpec.initWorld _).poolBalance ≤ publicBalance s' (fromPubkey (toPubkey (poolAddr d)))
     simp only [LeanSpec.World.poolBalance, LeanSpec.initWorld, Function.update_self,
       fromPubkey_toPubkey, publicBalance, dP]
     rw [← hpA, (hs'k _).2.1]; exact hpl
-  · show LeanSpec.AdminChanges (toConfig config tree) (toWorld d rent ∅ s').state.config
-    rw [hcfg]; exact .none _
+  · show LeanSpec.ReachableByAdminChanges (toConfig config tree)
+      (toWorld d rent ∅ s').state.config
+    rw [hcfg]; exact .noChange _
 
 /-! ## Before and after `initialize` -/
 
@@ -701,9 +713,10 @@ theorem IsSpecRun.between {d : Deployment} {rent : Nat → U64}
       letI : LeanSpec.Pairing := syscallPairing C laws
       letI : LeanSpec.Deployment := ⟨programKey C⟩
       IsSpecRun d rent spent txs s)
-    (hw : toWorld d rent spent s' = (toWorld d rent spent s).between
-      (LeanSpec.Between.unchanged (toWorld d rent spent s')))
-    (ha : (LeanSpec.Between.unchanged (toWorld d rent spent s')).Allowed (toWorld d rent spent s)) :
+    (hw : toWorld d rent spent s' = (toWorld d rent spent s).withUpdatedValues
+      (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent spent s')))
+    (ha : (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent spent s')).Allowed
+      (toWorld d rent spent s)) :
     letI : LeanSpec.Groups := syscallGroups C
     letI : LeanSpec.Pairing := syscallPairing C laws
     letI : LeanSpec.Deployment := ⟨programKey C⟩
@@ -712,7 +725,8 @@ theorem IsSpecRun.between {d : Deployment} {rent : Nat → U64}
   letI : LeanSpec.Pairing := syscallPairing C laws
   letI : LeanSpec.Deployment := ⟨programKey C⟩
   obtain ⟨params, r, h1, h2, h3, h4, htx, b, hb, heq⟩ := h
-  refine ⟨params, r, h1, h2, h3, h4, htx, LeanSpec.Between.unchanged (toWorld d rent spent s'), ?_, ?_⟩
+  refine ⟨params, r, h1, h2, h3, h4, htx,
+    LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent spent s'), ?_, ?_⟩
   · rw [heq] at ha
     exact hb.trans ha
   · rw [hw, heq]; rfl
@@ -760,7 +774,7 @@ theorem bridge_step {d : Deployment} {rent : Nat → U64}
     obtain ⟨-, rfl, rfl⟩ := hn
     refine ⟨wf', Or.inr ⟨hi', ?_⟩⟩
     refine ⟨params, LeanSpec.Run.empty _, hp1, hp2, hp3, hp4, by simp [stepTxs],
-      LeanSpec.Between.unchanged (toWorld d rent ∅ s'), ha, ?_⟩
+      LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent ∅ s'), ha, ?_⟩
     simpa [stepSpent] using heq
   · cases ix with
     | «initialize» a => exact (initialized_no_initialize hpid hi h).elim
@@ -785,13 +799,15 @@ theorem bridge_step {d : Deployment} {rent : Nat → U64}
       have hi' := transact_initialized wf hi h
       obtain ⟨params, r, hp1, hp2, hp3, hp4, htxs, b, hb, heq⟩ := hr
       rw [heq] at htx hb₁
-      rw [LeanSpec.World.between_between] at htx
+      rw [LeanSpec.World.withUpdatedValues_twice] at htx
       obtain ⟨r', hr'tx, hr'f, -⟩ := r.snoc b₁ (hb.trans hb₁) _ _ htx
-      refine ⟨wf', Or.inr ⟨hi', params, r', hp1, hp2, hp3, hp4, ?_, LeanSpec.Between.unchanged
+      refine ⟨wf', Or.inr ⟨hi', params, r', hp1, hp2, hp3, hp4, ?_,
+        LeanSpec.UpdatedValuesBetweenTransacts.unchanged
         (toWorld d rent (spent ∪ stepSpent (.transact a proof ext fee out1 out2)) s'), ?_, ?_⟩⟩
       · rw [hr'tx, htxs]; rfl
       · rw [hr'f]; exact hb₂
-      · rw [hr'f, LeanSpec.World.between_between]; exact (LeanSpec.World.between_self _).symm
+      · rw [hr'f, LeanSpec.World.withUpdatedValues_twice]
+        exact (LeanSpec.World.withUpdatedValues_self _).symm
 
 /-- **The invariant holds along any execution**, from any state where it holds. -/
 theorem bridge_run {d : Deployment} {rent : Nat → U64}

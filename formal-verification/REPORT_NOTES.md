@@ -18,6 +18,12 @@ gains), other accounts spent from, and admin changes signed by the right authori
 Solana details `transact_connection` excludes (a pre-funded nullifier address, a payee that is
 a nullifier account) are covered here: they are such allowed changes.
 
+**Admin fee updates: the code is stricter than the spec.** The code rejects a deposit or
+withdrawal fee rate above 10000 basis points; the spec limits only the fee error margin
+(`AdminChange.apply`). This doesn't affect safety, since the spec allows every update the code
+accepts, and the spec doesn't need the extra rule. The spec's results therefore also cover fee
+rates the code can never set.
+
 **A difference between code and spec shows up as a theorem that fails.** Lean then proves
 the faithful statement false, with a concrete counterexample. No theorem is weakened to make
 it provable.
@@ -44,13 +50,15 @@ inputs and of the proof points, and requires canonical encodings, so the check a
 aliasing is a spec requirement the connection proves the code enforces.
 
 **Some goals hold by definition.** G4a and G4b restate a precondition or effect of the
-spec's `transact`, and G5 restates `Between.Allowed`. They check that the spec says what we
-intend; their value for the code comes entirely from the connection theorems. The other goals
+spec's `transact`, and G5 restates `UpdatedValuesBetweenTransacts.Allowed`. They check that
+the spec says what we intend; their value for the code comes entirely from the connection
+theorems. The other goals
 (G1a–G1d, G2, G3) are consequences that take real proof.
 
 **Spec preconditions not from the docs.** Where the documentation is silent, the spec adds a
-rule only if it needs one, marked NOT FROM THE DOCS. Each such rule is either enforced by the
-code (the connection proves it) or by Solana (proved from the runtime model). Example:
+rule only if it needs one, marked ADDED MANUALLY (docs silent) (a rule the docs should state)
+or SOLANA FACT (how Solana behaves). Each such rule is either enforced by the code (the
+connection proves it) or by Solana (proved from the runtime model). Example:
 `poolIsSeparate` (the pool is not the signer, the recipient of a withdrawal or the fee
 recipient of a non-zero fee) is needed for G1c and G4a. The program does not check it;
 the runtime's lamport-conservation check enforces it, and the connection proves this from the
@@ -69,13 +77,31 @@ and Lean then proved the statement false with a concrete counterexample. Two cho
 visible: handler completeness (safety cannot see the code rejecting more) and a spec that
 models the proof's bytes (so the two decoders became comparable).
 
+## Solana facts in the spec
+
+Solana behaviour the documentation leaves implicit, marked SOLANA FACT in `Spec/Spec.lean`.
+Each is how Solana works, not a rule of the program; keep this list in sync with the labels.
+
+- **Rent.** An account must hold a rent-exempt minimum, which grows with its size: the pool's
+  (`rentExemptMin`) and a nullifier account's (`nullifierRent`) differ. The pool is created
+  holding exactly its minimum; the signer pays one nullifier rent per nullifier account.
+- **Zero-filled accounts.** A new account's bytes are zero, so the root history slots other
+  than the first hold `0` after initialization (`initTree`).
+- **Balances are `u64`** (`balancesFit`). No real transaction is affected: `2^64` lamports
+  exceeds the total SOL supply.
+- **Encrypted outputs are shorter than `2^32` bytes** (`encOutsFit`). Borsh writes vector
+  lengths as `u32`; the transaction size limit (1232 bytes) keeps them far below anyway.
+- **The pool is separate from the signer and the payees** (`poolIsSeparate`). A program
+  address can't sign, and the runtime rejects an instruction that doesn't conserve lamports.
+
 ## Background to the spec's trusted assumptions (T0–T3, `Spec/Statements.lean`)
 
-- T0: a setup trapdoor has broken a pool before (Zcash Sprout counterfeiting,
-  CVE-2019-7167). Circuit = `RelationS` is checked by hand, not mechanised; under-constrained
-  circuits are the most common ZK bug class. `Groth16Complete` is a hypothesis of G3a only.
-- T1: there is no soundness axiom, since perfect soundness is false for Groth16. Reading
-  G1a, G1d, G2b, G3b as "an attacker can't" needs a reduction that simulates honest proofs
+- T0: circuit = `RelationS` is checked by hand, not mechanised; under-constrained circuits
+  are the most common ZK bug class.
+- T1: a setup trapdoor has broken a pool before (Zcash Sprout counterfeiting,
+  CVE-2019-7167). There is no soundness
+  axiom, since perfect soundness is false for Groth16. Reading
+  G1a, G1d, G2b as "an attacker can't" needs a reduction that simulates honest proofs
   without their keys and extracts only from the attacker's: weak simulation extractability.
   Groth16's extractor is non-black-box, so extracting all adaptively chosen proofs of a run
   needs a composition argument, which is assumed. Groth16 has knowledge soundness and weak
@@ -88,7 +114,7 @@ models the proof's bytes (so the two decoders became comparable).
 - T3 models Poseidon (`H1`–`H4`) as a random oracle. This is a heuristic: Poseidon is also
   computed inside the circuit, where an extractor can't see the queries (precedent: Zcash
   Orchard's Poseidon-based nullifiers). Needed for the "attacker can't" reading of G1a, G1d,
-  G2b, G3b. `signature` and `nullifier` both use `H3` without domain separation; under this
+  G2b. `signature` and `nullifier` both use `H3` without domain separation; under this
   model that is fine, since `sk` sits in a different argument position in each and has full
   entropy.
 
@@ -100,5 +126,9 @@ keep those in sync. Items that are not findings are listed only here.
 - The external amount `−2^63` is rejected.
 - The fee error margin is at most 100%.
 - Only the admin key can initialize the pool; deployments must use a build with it set.
+- There are two authorities: one over the fee settings, one over the deposit limit.
+- Admins can change only the fee settings and the deposit limit (`update_global_config`,
+  `update_deposit_limit`).
+- Public inputs are canonically encoded (32 big-endian bytes, value below `p`).
 - The pool's own address can't be the recipient of a withdrawal or the fee recipient of a
   non-zero fee; the runtime rejects such a transaction.

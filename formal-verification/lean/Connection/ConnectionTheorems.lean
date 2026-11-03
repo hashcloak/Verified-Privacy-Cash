@@ -23,11 +23,11 @@ which is not for review.
    executions are spec runs, up to the mapping. Every conclusion below rests on them.
 2. **The security goals hold for the code.** Each goal is a named property of the spec,
    defined and proved in `Spec/Statements.lean` (`LeanSpec.Goals`); here the same
-   property is stated of the code. Goals about runs (G1a–G1d, G3c, G5) hold of the execution's
+   property is stated of the code. Goals about runs (G1a–G1d, G5) hold of the execution's
    run; goals about one transaction (G2a, G4a, G4b) hold of every transaction the code
    accepts. That the code checks every accepted transaction's proof is part of
    `transact_connection` (the spec's `transact` requires `validZKP`). G2b is about circuit
-   witnesses only (no code involved); G3a and G3b (liveness) need completeness, which these
+   witnesses only (no code involved); G3 (liveness) needs completeness, which these
    safety theorems don't give.
 3. **Non-vacuity**: the hypotheses can all hold together.
 
@@ -167,16 +167,6 @@ theorem onlyOwnerSpends_code :
   letI := syscallGroups C; letI := syscallPairing C laws; letI : LeanSpec.Deployment := ⟨programKey C⟩
   run_satisfies hgen hrun hpid C laws hashes assume hi _
     fun params r => LeanSpec.Goals.honest_note_spent_only_with_owner_key params r
-
-/-- **G3c for the code**: once the tree is full, no further transaction is accepted
-    (`FullTreeFreezes`). -/
-theorem fullTreeFreezes_code :
-    letI : LeanSpec.Groups := syscallGroups C
-    letI : LeanSpec.Pairing := syscallPairing C laws
-    letI : LeanSpec.Deployment := ⟨programKey C⟩
-    ∃ params r, IsRunOf d rent (runSpent evs) (runTxs evs) s params r ∧ LeanSpec.Goals.FullTreeFreezes r :=
-  letI := syscallGroups C; letI := syscallPairing C laws; letI : LeanSpec.Deployment := ⟨programKey C⟩
-  run_satisfies hgen hrun hpid C laws hashes assume hi _ fun params r => LeanSpec.Goals.full_tree_freezes_pool params r
 
 /-- **G5 for the code**: only the authorities change the config, and they are whoever
     initialized the pool (`ConfigOnlyByAuthority`; with `IsRunOf`: the deployment's admin

@@ -141,9 +141,12 @@ theorem transact_refines_between_verified [LeanSpec.PoseidonHashes] [LeanSpec.Sh
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     let inputs := toInputs a proof extAmount fee out1 out2
     let spent' := spent ∪ {inputs.k0, inputs.k1}
-    ∃ b₁ : LeanSpec.Between, b₁.Allowed (toWorld d rent spent s) ∧ ∃ b₂ : LeanSpec.Between,
-      LeanSpec.transact inputs ((toWorld d rent spent s).between b₁) ((toWorld d rent spent' s').between b₂) ∧
-      (LeanSpec.Between.unchanged (toWorld d rent spent' s')).Allowed ((toWorld d rent spent' s').between b₂) ∧
+    ∃ b₁ : LeanSpec.UpdatedValuesBetweenTransacts, b₁.Allowed (toWorld d rent spent s) ∧
+      ∃ b₂ : LeanSpec.UpdatedValuesBetweenTransacts,
+      LeanSpec.transact inputs ((toWorld d rent spent s).withUpdatedValues b₁)
+        ((toWorld d rent spent' s').withUpdatedValues b₂) ∧
+      (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent spent' s')).Allowed
+        ((toWorld d rent spent' s').withUpdatedValues b₂) ∧
       WellFormed d spent' s' := by
   letI : LeanSpec.Groups := syscallGroups C
   letI : LeanSpec.Pairing := syscallPairing C laws

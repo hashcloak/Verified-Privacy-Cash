@@ -29,12 +29,6 @@ without reading the proofs. -/
 /-- info: 'LeanSpec.Goals.unspent_note_is_spendable' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms LeanSpec.Goals.unspent_note_is_spendable
 
-/-- info: 'LeanSpec.Goals.unspent_note_cannot_be_blocked' depends on axioms: [propext, Classical.choice, Quot.sound] -/
-#guard_msgs in #print axioms LeanSpec.Goals.unspent_note_cannot_be_blocked
-
-/-- info: 'LeanSpec.Goals.full_tree_freezes_pool' depends on axioms: [propext, Classical.choice, Quot.sound] -/
-#guard_msgs in #print axioms LeanSpec.Goals.full_tree_freezes_pool
-
 /-- info: 'LeanSpec.Goals.no_sol_created' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms LeanSpec.Goals.no_sol_created
 
@@ -47,8 +41,8 @@ without reading the proofs. -/
 /-- info: 'LeanSpec.Goals.NonVacuous.nonvacuous_spend' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms LeanSpec.Goals.NonVacuous.nonvacuous_spend
 
-/-- info: 'LeanSpec.Goals.NonVacuous.nonvacuous_G3a_hypotheses' depends on axioms: [propext, Classical.choice, Quot.sound] -/
-#guard_msgs in #print axioms LeanSpec.Goals.NonVacuous.nonvacuous_G3a_hypotheses
+/-- info: 'LeanSpec.Goals.NonVacuous.nonvacuous_G3_hypotheses' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms LeanSpec.Goals.NonVacuous.nonvacuous_G3_hypotheses
 
 /-- info: 'LeanSpec.Goals.NonVacuous.nonvacuous_withdrawal_accepted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms LeanSpec.Goals.NonVacuous.nonvacuous_withdrawal_accepted

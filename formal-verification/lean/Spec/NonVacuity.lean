@@ -3,13 +3,14 @@ import Mathlib.Algebra.Group.PUnit
 
 /-! ## Non-vacuity check (not for review)
 
-The theorems quantify over runs with witnesses (`r.WitnessesFor wit`), and G3a has many
+The theorems quantify over runs with witnesses (`r.WitnessesFor wit`), and G3 has many
 hypotheses. This checks that they can all hold at once, in a toy model of the hash
-functions, for any groups and pairing given Groth16 completeness (and, at the end of this
-file, for a toy pairing in which Groth16 completeness is proved, `toyComplete`):
+functions, for any groups and pairing given Groth16 completeness on the wire
+(`Groth16CompleteBytes`; and, at the end of this file, for a toy pairing in which it is
+proved, `toyCompleteBytes`):
 - `run_with_witnesses_exists`: a run of one deposit, with a witness for its proof;
-- `toy_withdrawal_G3a`: G3a applies to withdrawing that deposit's note: every hypothesis
-  of G3a holds;
+- `toy_withdrawal_G3`: G3 applies to withdrawing that deposit's note: every hypothesis
+  of G3 holds;
 - `run_with_spend_exists`: a run of two transactions (the deposit, then that withdrawal)
   with witnesses, where the second spends a non-zero note, so the hypotheses of G1a–G1d
   hold for a real spend. -/
@@ -20,6 +21,12 @@ set_option linter.unusedSectionVars false
 
 variable [Groups] [AddCommGroup G1] [Module F G1] [AddCommGroup G2] [Module F G2] [CommGroup GT]
   [Pairing] [Deployment]
+
+/-- Groth16 completeness on the wire: every statement with a witness has a proof, sent as bytes,
+    whose points decode and which verifies. The toy run takes its proofs from this. -/
+def Groth16CompleteBytes [PoseidonHashes] [Sha] : Prop :=
+  ∀ x w, RelationS x w → ∃ πb : Groth16.ProofBytes, ∃ π,
+    πb.decode = some π ∧ Groth16.verify Deployment.vk π x
 
 /-- Toy hashes. `H2` is constant, so every Merkle path reaches the root `1`; `H3` is linear,
     so the nullifiers below differ. -/
@@ -66,7 +73,7 @@ lemma toy_valid (O : Opening) (c : F) : O.Valid c 1 := by
 
 def toyCfg : config :=
   { authority := 0, limitAuthority := 0, depositFeeRate := 0, withdrawalFeeRate := 0,
-    feeMarginError := 0, maxDepositLimit := 1 }
+    feeErrorMargin := 0, maxDepositLimit := 1 }
 
 /-- The pool's account. Signer, recipient and fee recipient are all account `0`. -/
 def toyPool : Pubkey := 1
@@ -131,13 +138,13 @@ lemma toy_relation (π : Groth16.ProofBytes) : RelationS (toyInputs π).pubInput
     haveI : Fact (1 < p) := ⟨by norm_num [p]⟩
     intro j; fin_cases j <;> simp [toyWitness, ZMod.val_one]
 
-noncomputable def depProof (hCompl : Groth16Complete) : Groth16.ProofBytes :=
+noncomputable def depProof (hCompl : Groth16CompleteBytes) : Groth16.ProofBytes :=
   Classical.choose (hCompl (toyInputs ⟨[], [], []⟩).pubInputs toyWitness (toy_relation _))
 
-noncomputable abbrev toyDeposit (hCompl : Groth16Complete) : TxInputs := toyInputs (depProof hCompl)
+noncomputable abbrev toyDeposit (hCompl : Groth16CompleteBytes) : TxInputs := toyInputs (depProof hCompl)
 
 /-- The world after the deposit. -/
-noncomputable abbrev W1 (hCompl : Groth16Complete) : World :=
+noncomputable abbrev W1 (hCompl : Groth16CompleteBytes) : World :=
   transactEffects (toyDeposit hCompl) toyInit
 
 lemma toyInit_bal (k : Pubkey) : toyInit.balances k ≤ 1 := by
@@ -155,7 +162,7 @@ lemma toy_deposit_fit (π : Groth16.ProofBytes) : balancesFit (toyInputs π) toy
     linarith
   · simp [World.poolBalance, initWorld, toyInputs]
 
-lemma toy_deposit_step (hCompl : Groth16Complete) :
+lemma toy_deposit_step (hCompl : Groth16CompleteBytes) :
     transact (toyDeposit hCompl) toyInit (W1 hCompl) := by
   refine ⟨?_, ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩
   obtain ⟨π, hdec, hver⟩ := Classical.choose_spec
@@ -182,58 +189,59 @@ lemma toy_deposit_step (hCompl : Groth16Complete) :
   }
 
 /-- The run of the deposit alone. -/
-noncomputable def toyRun1 (hCompl : Groth16Complete) : Run toyInit where
+noncomputable def toyRun1 (hCompl : Groth16CompleteBytes) : Run toyInit where
   txs := [toyDeposit hCompl]
   ws := fun j => if j = 0 then toyInit else W1 hCompl
-  between := fun j => Between.unchanged (if j = 0 then toyInit else W1 hCompl)
+  updatedValues := fun j =>
+    UpdatedValuesBetweenTransacts.unchanged (if j = 0 then toyInit else W1 hCompl)
   start := rfl
-  allowed := fun j _ => Between.Allowed.self _
+  allowed := fun j _ => UpdatedValuesBetweenTransacts.Allowed.self _
   step := by
     intro j hj
     simp only [List.length_singleton, Nat.lt_one_iff] at hj
     subst hj
-    simpa [World.between_self] using toy_deposit_step hCompl
+    simpa [World.withUpdatedValues_self] using toy_deposit_step hCompl
 
-lemma toyRun1_final (hCompl : Groth16Complete) : (toyRun1 hCompl).final = W1 hCompl := by
+lemma toyRun1_final (hCompl : Groth16CompleteBytes) : (toyRun1 hCompl).final = W1 hCompl := by
   simp [Run.final, toyRun1]
 
-lemma toyRun1_wit (hCompl : Groth16Complete) : (toyRun1 hCompl).WitnessesFor (fun _ => toyWitness) := by
+lemma toyRun1_wit (hCompl : Groth16CompleteBytes) : (toyRun1 hCompl).WitnessesFor (fun _ => toyWitness) := by
   intro j hj
   simp only [toyRun1, List.length_singleton, Nat.lt_one_iff] at hj
   subst hj
   exact fun _ => toy_relation _
 
-theorem run_with_witnesses_exists (hCompl : Groth16Complete) :
+theorem run_with_witnesses_exists (hCompl : Groth16CompleteBytes) :
     ∃ (r : Run toyInit) (wit : ℕ → Witness), r.txs.length = 1 ∧ r.WitnessesFor wit :=
   ⟨toyRun1 hCompl, fun _ => toyWitness, rfl, toyRun1_wit hCompl⟩
 
 /-! ### Facts about the world after the deposit -/
 
-lemma W1_tree (hCompl : Groth16Complete) :
+lemma W1_tree (hCompl : Groth16CompleteBytes) :
     (W1 hCompl).state.tree = foldAppend (leaves (toyRun1 hCompl).txs) initTree := by
   have := ((toyRun1 hCompl).tree 1 le_rfl).1
   simpa [toyRun1] using this
 
-lemma W1_root_mem (hCompl : Groth16Complete) : (1 : F) ∈ Set.range (W1 hCompl).state.tree.history := by
+lemma W1_root_mem (hCompl : Groth16CompleteBytes) : (1 : F) ∈ Set.range (W1 hCompl).state.tree.history := by
   have hcap : (leaves (toyRun1 hCompl).txs).length < 2^26 := by
     rw [leaves_length]; simp [toyRun1]
   rw [W1_tree, ← toy_root _ hcap]
   exact foldAppend_root_mem_history _
 
-lemma W1_nextIndex (hCompl : Groth16Complete) : (W1 hCompl).state.tree.nextIndex = 2 := by
+lemma W1_nextIndex (hCompl : Groth16CompleteBytes) : (W1 hCompl).state.tree.nextIndex = 2 := by
   rw [W1_tree, foldAppend_nextIndex, leaves_length]; simp [toyRun1]
 
-lemma W1_nullifiers (hCompl : Groth16Complete) : (W1 hCompl).state.nullifiers = {0, 11} := by
+lemma W1_nullifiers (hCompl : Groth16CompleteBytes) : (W1 hCompl).state.nullifiers = {0, 11} := by
   simp [W1, transactEffects, transferEffects_state, initWorld, toyDeposit, toyInputs]
 
-lemma W1_rent (hCompl : Groth16Complete) :
+lemma W1_rent (hCompl : Groth16CompleteBytes) :
     (W1 hCompl).nullifierRent = 0 ∧ (W1 hCompl).rentExemptMin = 0 := by
   simp only [W1, transactEffects]; unfold transferEffects; split_ifs <;> exact ⟨rfl, rfl⟩
 
-lemma W1_pool (hCompl : Groth16Complete) : (W1 hCompl).state.pool = toyPool := by
+lemma W1_pool (hCompl : Groth16CompleteBytes) : (W1 hCompl).state.pool = toyPool := by
   simp [W1, transactEffects, transferEffects_state, initWorld]
 
-lemma W1_poolBalance (hCompl : Groth16Complete) : (W1 hCompl).poolBalance = 1 := by
+lemma W1_poolBalance (hCompl : Groth16CompleteBytes) : (W1 hCompl).poolBalance = 1 := by
   have hpre := (toy_deposit_step hCompl).1
   have h := transactEffects_balances (toyDeposit hCompl) toyInit hpre.signerSolvency
     hpre.poolSolvency hpre.poolSeparate toyPool
@@ -246,7 +254,7 @@ lemma W1_poolBalance (hCompl : Groth16Complete) : (W1 hCompl).poolBalance = 1 :=
   have : ((W1 hCompl).balances toyPool : ℤ) = 1 := by rw [h, hz, hd]; ring
   exact_mod_cast this
 
-lemma W1_bal (hCompl : Groth16Complete) (k : Pubkey) : ((W1 hCompl).balances k : ℤ) ≤ 2 := by
+lemma W1_bal (hCompl : Groth16CompleteBytes) (k : Pubkey) : ((W1 hCompl).balances k : ℤ) ≤ 2 := by
   have hpre := (toy_deposit_step hCompl).1
   have h := transactEffects_balances (toyDeposit hCompl) toyInit hpre.signerSolvency
     hpre.poolSolvency hpre.poolSeparate k
@@ -297,7 +305,7 @@ lemma wd_nullifiers (π : Groth16.ProofBytes) (i : Fin 2) : (wdInputs π).pubInp
     simp [wdInputs, TxInputs.pubInputs, wdWitness, nullifier, Witness.sign, signature,
       Witness.inC, commit, Witness.inPk, toy_H1, toy_H3, toy_H4] <;> norm_num
 
-lemma wd_fit (hCompl : Groth16Complete) (π : Groth16.ProofBytes) :
+lemma wd_fit (hCompl : Groth16CompleteBytes) (π : Groth16.ProofBytes) :
     balancesFit (wdInputs π) (W1 hCompl) := by
   refine ⟨fun k _ => ?_, fun h => by simp [wdInputs] at h⟩
   have h1 := W1_bal hCompl k
@@ -309,7 +317,7 @@ lemma wd_fit (hCompl : Groth16Complete) (π : Groth16.ProofBytes) :
 lemma ne_7_21 : (7 : F) ≠ 21 := by
   have := natCast_ne 7 21 (by norm_num [p]) (by norm_num [p]) (by norm_num); exact_mod_cast this
 
-lemma wd_fresh (hCompl : Groth16Complete) (π : Groth16.ProofBytes) (i : Fin 2) :
+lemma wd_fresh (hCompl : Groth16CompleteBytes) (π : Groth16.ProofBytes) (i : Fin 2) :
     (wdInputs π).pubInputs.nullifiers i ∉ (W1 hCompl).state.nullifiers := by
   rw [W1_nullifiers]
   have h70 : (7 : F) ≠ 0 := by have := natCast_ne_zero 7 (by norm_num) (by norm_num [p]); exact_mod_cast this
@@ -319,70 +327,6 @@ lemma wd_fresh (hCompl : Groth16Complete) (π : Groth16.ProofBytes) (i : Fin 2) 
   have h2110 : (21 : F) ≠ 11 := by
     have := natCast_ne 21 11 (by norm_num [p]) (by norm_num [p]) (by norm_num); exact_mod_cast this
   fin_cases i <;> simp [wdInputs, TxInputs.pubInputs, h70, h710, h210, h2110]
-
-/-- **The hypotheses of G3a can all hold.** After `toyRun1`, withdrawing the deposit's note (a
-    real, non-zero spend) against the current root (`k = 2`) satisfies every hypothesis of G3a. -/
-theorem toy_G3a_hypotheses (hCompl : Groth16Complete) :
-    ∃ (inputs : TxInputs) (witness : Witness) (k : ℕ),
-      witness.inAmt 0 ≠ 0
-      ∧ (toyRun1 hCompl).WitnessesFor (fun _ => toyWitness)
-      ∧ RootInWindow (toyRun1 hCompl) inputs.R k
-      ∧ OwnsUnspentNotes (toyRun1 hCompl) (fun _ => toyWitness) witness k
-      ∧ BuiltHonestly (toyRun1 hCompl).final inputs witness
-      ∧ PolicyChecksPass (toyRun1 hCompl).final inputs := by
-  have hcap2 : ((leaves (toyRun1 hCompl).txs).take 2).length < 2^26 := by
-    rw [List.length_take, leaves_length]; simp [toyRun1]
-  have hfin := toyRun1_final hCompl
-  have hunsp0 : (0 : ℕ) ∈ (toyRun1 hCompl).unspent (fun _ => toyWitness) := by
-    simp [Run.unspent, toyRun1, toyWitness]
-  refine ⟨wdInputs ⟨[], [], []⟩, wdWitness, 2, ?_, toyRun1_wit hCompl, ?_, ?_, ?_, ?_⟩
-  · show wdWitness.inAmt 0 ≠ 0
-    simp only [wdWitness, Matrix.cons_val_zero]
-    exact one_ne_zero_F
-  · exact { isPrefix := by simp [toyRun1]
-            isPrefixRoot := by rw [Run.firstLeaves, toy_root _ hcap2]; rfl
-            inWindow := by rw [hfin]; exact W1_root_mem hCompl }
-  · refine { unspent := ?_, inTree := ?_, isOwnersNote := ?_, different := ?_, freshDummyKeys := ?_ }
-    · intro i hne; fin_cases i
-      · simpa [wdWitness] using hunsp0
-      · simp [wdWitness] at hne
-    · intro i hne; fin_cases i
-      · simp [wdWitness]
-      · simp [wdWitness] at hne
-    · intro i hne; fin_cases i
-      · simp [Witness.inNote, leafNote, Witness.outNote, wdWitness, toyWitness, Witness.inPk, toy_H1]
-      · simp [wdWitness] at hne
-    · -- input 1 has zero amount
-      intro _ h1; simp [wdWitness] at h1
-    · -- the dummy input's key `1` is used by no input of the run
-      intro i hz j hj i'
-      fin_cases i
-      · simp [wdWitness] at hz; exact absurd hz one_ne_zero_F
-      · simp only [toyWitness, wdWitness]
-        have := natCast_ne_zero 1 (by norm_num) (by norm_num [p])
-        intro h; apply this; simp only [Nat.cast_one]
-        have h' : (0 : F) = 1 := h
-        exact h'.symm
-  · refine { outputs := ?_, nullifiers := wd_nullifiers _, amounts := ?_,
-             outputRange := ?_, externalData := rfl, publicAmount := ?_, distinctNullifiers := ne_7_21,
-             amountRange := ?_, encOutLength := ?_, poolSeparate := ?_, signerCanPay := ?_,
-             encodings := wd_encoded _ }
-    · intro j; fin_cases j <;> simp [wdInputs, TxInputs.pubInputs, wdWitness, commit, toy_H4]
-    · simp [wdInputs, TxInputs.pubInputs, wdWitness]
-    · intro j; simp [wdWitness]
-    · simp [pubAmtConsistent, wdInputs]
-    · simp [amountsInRange, wdInputs]
-    · simp [encOutsFit, wdInputs]
-    · rw [hfin, W1_pool]; exact ⟨toyPool_ne, fun _ => toyPool_ne, fun _ => toyPool_ne⟩
-    · rw [hfin]; unfold signerSolvent; rw [(W1_rent hCompl).1]; simp [wdInputs]
-  · refine { fee := ?_, depositLimit := ?_, depositFee := ?_, treeRoom := ?_,
-             balancesFit := by rw [hfin]; exact wd_fit hCompl _ }
-    · rw [hfin]; simp [feeSufficient, W1, transactEffects, transferEffects_state, initWorld, toyCfg, wdInputs]
-    · simp [depositWithinLimit, wdInputs]
-    · simp [wdInputs]
-    · rw [hfin]; unfold treeHasRoom; rw [W1_nextIndex]; norm_num
-
-/-! ### The run of both transactions -/
 
 lemma wd_relation (π : Groth16.ProofBytes) : RelationS (wdInputs π).pubInputs wdWitness where
   outputCommitmentIntegrity := by
@@ -395,12 +339,69 @@ lemma wd_relation (π : Groth16.ProofBytes) : RelationS (wdInputs π).pubInputs 
   amountConservation := by simp [wdInputs, TxInputs.pubInputs, wdWitness]
   outputRangeChecks := by intro j; simp [wdWitness]
 
-noncomputable def wdProof (hCompl : Groth16Complete) : Groth16.ProofBytes :=
+noncomputable def wdProof (hCompl : Groth16CompleteBytes) : Groth16.ProofBytes :=
   Classical.choose (hCompl (wdInputs ⟨[], [], []⟩).pubInputs wdWitness (wd_relation _))
 
-noncomputable abbrev toyWithdrawal (hCompl : Groth16Complete) : TxInputs := wdInputs (wdProof hCompl)
+noncomputable abbrev toyWithdrawal (hCompl : Groth16CompleteBytes) : TxInputs := wdInputs (wdProof hCompl)
 
-lemma toy_withdrawal_step (hCompl : Groth16Complete) :
+/-- **The hypotheses of G3 can all hold.** After `toyRun1`, withdrawing the deposit's note (a
+    real, non-zero spend) against the current root (`k = 2`) satisfies every hypothesis of G3. -/
+theorem toy_G3_hypotheses (hCompl : Groth16CompleteBytes) :
+    ∃ (inputs : TxInputs) (witness : Witness) (k : ℕ),
+      witness.inAmt 0 ≠ 0
+      ∧ (toyRun1 hCompl).WitnessesFor (fun _ => toyWitness)
+      ∧ HonestSpend (toyRun1 hCompl) (fun _ => toyWitness) inputs witness k
+      ∧ LimitsNotHit (toyRun1 hCompl).final inputs := by
+  have hcap2 : ((leaves (toyRun1 hCompl).txs).take 2).length < 2^26 := by
+    rw [List.length_take, leaves_length]; simp [toyRun1]
+  have hfin := toyRun1_final hCompl
+  refine ⟨toyWithdrawal hCompl, wdWitness, 2, ?_, toyRun1_wit hCompl, ?_, ?_⟩
+  · show wdWitness.inAmt 0 ≠ 0
+    simp only [wdWitness, Matrix.cons_val_zero]
+    exact one_ne_zero_F
+  · refine { genuine := ?_, notDoubleSpend := ?_, inputNotUsedBefore := ?_,
+             root := { isPrefix := by simp [toyRun1]
+                       isPrefixRoot := by rw [Run.firstLeaves, toy_root _ hcap2]; rfl },
+             circuit := wd_relation _,
+             wellFormed := { validProof := ?_, externalData := rfl, publicAmount := ?_,
+                             amountRange := ?_, encOutLength := ?_, encodings := wd_encoded _,
+                             poolSeparate := ?_ },
+             signerCanPay := ?_ }
+    · intro i hne; fin_cases i
+      · refine { inTree := ?_, ownsNote := ?_, knowsNote := ?_ }
+        · simp [Witness.openedPos, wdWitness]
+        · simp [leafNote, Witness.outNote, Witness.openedPos, wdWitness, toyWitness, toy_H1]
+        · simp [leafNote, Witness.outNote, Witness.openedPos, wdWitness, toyWitness]
+      · simp [wdWitness] at hne
+    · -- input 1 has zero amount
+      rintro ⟨-, h1, -⟩; simp [wdWitness] at h1
+    · -- the run's inputs have commitment `0`, the withdrawal's have commitment `1`
+      rintro i ⟨j, hj, i', hc, -⟩
+      have h0 : toyWitness.inC i' = 0 := by
+        simp [Witness.inC, commit, toyWitness, Witness.inPk, toy_H1, toy_H4]
+      have h1 : wdWitness.inC i = 1 := by
+        fin_cases i <;> simp [Witness.inC, commit, wdWitness, Witness.inPk, toy_H1, toy_H4]
+      have hc' : toyWitness.inC i' = wdWitness.inC i := hc
+      rw [h0, h1] at hc'
+      exact one_ne_zero_F hc'.symm
+    · -- the proof Groth16 completeness gives for the withdrawal
+      obtain ⟨π, hdec, hver⟩ := Classical.choose_spec
+          (hCompl (wdInputs ⟨[], [], []⟩).pubInputs wdWitness (wd_relation _))
+      exact ⟨π, hdec, hver⟩
+    · simp [pubAmtConsistent, wdInputs]
+    · simp [amountsInRange, wdInputs]
+    · simp [encOutsFit, wdInputs]
+    · rw [hfin, W1_pool]; exact ⟨toyPool_ne, fun _ => toyPool_ne, fun _ => toyPool_ne⟩
+    · rw [hfin]; unfold signerSolvent; rw [(W1_rent hCompl).1]; simp [wdInputs]
+  · refine { inWindow := by rw [hfin]; exact W1_root_mem hCompl, treeRoom := ?_,
+             balancesFit := by rw [hfin]; exact wd_fit hCompl _, fee := ?_, depositLimit := ?_ }
+    · rw [hfin]; unfold treeHasRoom; rw [W1_nextIndex]; norm_num
+    · rw [hfin]; simp [feeSufficient, W1, transactEffects, transferEffects_state, initWorld, toyCfg, wdInputs]
+    · simp [depositWithinLimit, wdInputs]
+
+/-! ### The run of both transactions -/
+
+lemma toy_withdrawal_step (hCompl : Groth16CompleteBytes) :
     transact (toyWithdrawal hCompl) (W1 hCompl) (transactEffects (toyWithdrawal hCompl) (W1 hCompl)) := by
   refine ⟨?_, ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩
   have hcfg : (W1 hCompl).state.config = toyCfg := by
@@ -430,22 +431,23 @@ lemma toy_withdrawal_step (hCompl : Groth16Complete) :
   }
 
 /-- The run of the deposit followed by the withdrawal. -/
-noncomputable def toyRun2 (hCompl : Groth16Complete) : Run toyInit where
+noncomputable def toyRun2 (hCompl : Groth16CompleteBytes) : Run toyInit where
   txs := [toyDeposit hCompl, toyWithdrawal hCompl]
   ws := fun j => if j = 0 then toyInit else if j = 1 then W1 hCompl
     else transactEffects (toyWithdrawal hCompl) (W1 hCompl)
-  between := fun j => Between.unchanged (if j = 0 then toyInit else if j = 1 then W1 hCompl
+  updatedValues := fun j =>
+    UpdatedValuesBetweenTransacts.unchanged (if j = 0 then toyInit else if j = 1 then W1 hCompl
     else transactEffects (toyWithdrawal hCompl) (W1 hCompl))
   start := rfl
-  allowed := fun j _ => Between.Allowed.self _
+  allowed := fun j _ => UpdatedValuesBetweenTransacts.Allowed.self _
   step := by
     intro j hj
     simp only [List.length_cons, List.length_nil] at hj
     rcases (show j = 0 ∨ j = 1 by omega) with rfl | rfl
-    · simpa [World.between_self] using toy_deposit_step hCompl
-    · simpa [World.between_self] using toy_withdrawal_step hCompl
+    · simpa [World.withUpdatedValues_self] using toy_deposit_step hCompl
+    · simpa [World.withUpdatedValues_self] using toy_withdrawal_step hCompl
 
-theorem run_with_spend_exists (hCompl : Groth16Complete) :
+theorem run_with_spend_exists (hCompl : Groth16CompleteBytes) :
     ∃ (r : Run toyInit) (wit : ℕ → Witness),
       r.txs.length = 2 ∧ r.WitnessesFor wit ∧ (wit 1).inAmt 0 ≠ 0 := by
   refine ⟨toyRun2 hCompl, fun j => if j = 0 then toyWitness else wdWitness, rfl, ?_, ?_⟩
@@ -461,9 +463,8 @@ theorem run_with_spend_exists (hCompl : Groth16Complete) :
 
 /-- **The toy withdrawal is accepted.** After `toyRun1`, the program accepts the withdrawal of
     the deposit's note. -/
-theorem toy_withdrawal_accepted (hCompl : Groth16Complete) :
-    CanBeAccepted (wdInputs ⟨[], [], []⟩) (toyRun1 hCompl).final := by
-  refine ⟨wdProof hCompl, ?_⟩
+theorem toy_withdrawal_accepted (hCompl : Groth16CompleteBytes) :
+    CanBeAccepted (toyWithdrawal hCompl) (toyRun1 hCompl).final := by
   rw [toyRun1_final]
   exact toy_withdrawal_step hCompl
 
@@ -471,16 +472,17 @@ end LeanSpec.NonVacuity
 
 /-! ### A toy pairing, so that Groth16 completeness holds
 
-Everything above holds for any groups and pairing, given Groth16 completeness. Here the groups
+Everything above holds for any groups and pairing, given Groth16 completeness on the wire. Here the groups
 and the pairing are a deliberately broken toy, like the hashes: `G1 = G2 = F`, `GT = Unit`,
-every pairing is `1`, every byte string decodes (to `0`), and the key is all zeros. Every
-proof then verifies, so `Groth16Complete` holds (`toyComplete`). This shows the hypotheses can
-hold together; it says nothing about real cryptography. -/
+every pairing is `1`, a byte string decodes to its length, and the key is all zeros. Every
+proof then verifies, and the empty bytes decode to the point `0`, so completeness on the wire
+holds (`toyCompleteBytes`). This shows the hypotheses can hold together; it says nothing about real cryptography. -/
 namespace LeanSpec.NonVacuity
 open LeanSpec
 
-/-- Toy groups: `G1 = G2 = F`, `GT = Unit`; every byte string decodes to the point `0`. -/
-@[reducible] def toyGroups : Groups := ⟨F, F, Unit, fun _ => some 0, fun _ => some 0⟩
+/-- Toy groups: `G1 = G2 = F`, `GT = Unit`; a byte string decodes to its length. -/
+@[reducible] def toyGroups : Groups :=
+  ⟨F, F, Unit, fun b => some (b.length : F), fun b => some (b.length : F)⟩
 
 attribute [local instance] toyGroups
 
@@ -501,8 +503,11 @@ attribute [local instance] toyG1Module toyG2Module toyGTGroup
 
 attribute [local instance] toyPairing toyDeployment
 
-/-- In the toy groups every proof verifies, so Groth16 completeness holds (for any hashes). -/
-theorem toyComplete [PoseidonHashes] : Groth16Complete :=
-  fun _ _ _ => ⟨⟨[], [], []⟩, ⟨0, 0, 0⟩, rfl, rfl⟩
+/-- Toy completeness on the wire: in the toy groups every proof verifies, and the empty bytes
+    decode to the point `0`. -/
+theorem toyCompleteBytes [PoseidonHashes] [Sha] : Groth16CompleteBytes :=
+  have h1 : Groups.decodeG1 [] = some (0 : G1) := congrArg some Nat.cast_zero
+  have h2 : Groups.decodeG2 [] = some (0 : G2) := congrArg some Nat.cast_zero
+  fun _ _ _ => ⟨⟨[], [], []⟩, ⟨0, 0, 0⟩, by simp [Groth16.ProofBytes.decode, h1, h2], rfl⟩
 
 end LeanSpec.NonVacuity

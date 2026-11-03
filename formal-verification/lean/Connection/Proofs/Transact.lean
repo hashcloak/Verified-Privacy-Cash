@@ -350,8 +350,10 @@ theorem transact_refines_core
     let spent' := spent ∪ {inputs.k0, inputs.k1}
     ∃ B E : Pubkey → ℕ,
       LeanSpec.transact inputs
-        ((toWorld d rent spent s).between ⟨fun x => B (fromPubkey x), (toWorld d rent spent s).state.config⟩)
-        ((toWorld d rent spent' s').between ⟨fun x => E (fromPubkey x), (toWorld d rent spent' s').state.config⟩) ∧
+        ((toWorld d rent spent s).withUpdatedValues
+          ⟨fun x => B (fromPubkey x), (toWorld d rent spent s).state.config⟩)
+        ((toWorld d rent spent' s').withUpdatedValues
+          ⟨fun x => E (fromPubkey x), (toWorld d rent spent' s').state.config⟩) ∧
       B (poolAddr d) = publicBalance s (poolAddr d) ∧ E (poolAddr d) = publicBalance s' (poolAddr d) ∧
       (OutsideSpecDetail d rent s tx a proof → B = publicBalance s ∧ E = publicBalance s') ∧
       WellFormed d spent' s' := by
@@ -527,7 +529,8 @@ theorem transact_refines_core
   set P := publicBalance s with hPdef
   set B : Pubkey → ℕ := fun k => if k = a.signer then (s₁ a.signer).lamports.val + 2 * nr
     else if k = a.nullifier0 ∨ k = a.nullifier1 then 0 else P k with hBdef
-  set W₁ := (toWorld d rent spent s).between ⟨fun x => B (fromPubkey x), (toWorld d rent spent s).state.config⟩
+  set W₁ := (toWorld d rent spent s).withUpdatedValues
+    ⟨fun x => B (fromPubkey x), (toWorld d rent spent s).state.config⟩
     with hW₁def
   have hpoolDataN : ∀ b, (s a.treeTokenAccount).data ≠ .nullifier b := by
     rw [hpoolData]; intro b h; cases h
@@ -535,11 +538,13 @@ theorem transact_refines_core
     simp only [hBdef, if_neg (Ne.symm hsigNotPool), hpool_nf0, hpool_nf1, or_self, if_false, hPdef]
     exact publicBalance_of hpoolDataN
   have hbalPool : W₁.poolBalance = (s a.treeTokenAccount).lamports.val := by
-    simp only [hW₁def, LeanSpec.World.poolBalance, LeanSpec.World.between, toWorld, fromPubkey_toPubkey,
+    simp only [hW₁def, LeanSpec.World.poolBalance, LeanSpec.World.withUpdatedValues,
+      toWorld, fromPubkey_toPubkey,
       ← hpoolAddr]
     exact hBpool
   have hbalSig : W₁.balances inputs.s = (s₁ a.signer).lamports.val + 2 * nr := by
-    simp only [hW₁def, LeanSpec.World.between, inputs, toInputs, fromPubkey_toPubkey, hBdef, if_true]
+    simp only [hW₁def, LeanSpec.World.withUpdatedValues, inputs, toInputs, fromPubkey_toPubkey,
+      hBdef, if_true]
   have hbounds := i64_bounds extAmount
   have hfeeb : fee.val < 2 ^ 64 := by scalar_tac
   have htree_nf0 : a.treeAccount ≠ a.nullifier0 := fun e => wf.programNotSystem (by
@@ -713,7 +718,7 @@ theorem transact_refines_core
       = fun x => E (fromPubkey x) := by
     have hW : W₁.balances = fun x => B (fromPubkey x) := rfl
     have hpool : W₁.state.pool = toPubkey a.treeTokenAccount := by
-      simp only [hW₁def, LeanSpec.World.between, toWorld, hpoolAddr]
+      simp only [hW₁def, LeanSpec.World.withUpdatedValues, toWorld, hpoolAddr]
     have hnrW : W₁.nullifierRent = nr := rfl
     have hext' : inputs.extAmt ≠ 0 := hext0
     simp only [LeanSpec.transactEffects, LeanSpec.transferEffects, LeanSpec.nullifierRentEffects,
@@ -833,7 +838,8 @@ theorem transact_refines_core
         omega
   -- the effects
   have heff : LeanSpec.AgreesOnProgramEffects inputs (LeanSpec.transactEffects inputs W₁)
-      ((toWorld d rent spent' s').between ⟨fun x => E (fromPubkey x), (toWorld d rent spent' s').state.config⟩) := by
+      ((toWorld d rent spent' s').withUpdatedValues
+        ⟨fun x => E (fromPubkey x), (toWorld d rent spent' s').state.config⟩) := by
     refine ⟨?tree, ?nulls, ?pool, ?config, ?rentEx, ?nrent, ?bal⟩
     case nulls =>
       simp only [LeanSpec.transactEffects, LeanSpec.transferEffects, LeanSpec.nullifierRentEffects,
@@ -981,11 +987,11 @@ theorem transact_refines
     transact_refines_core hstep hashes wf solana crypto outside.rentFixed hProofValid
   obtain ⟨rfl, rfl⟩ := hex outside
   refine ⟨?_, wf'⟩
-  have h1 := LeanSpec.World.between_self (toWorld d rent spent s)
-  have h2 := LeanSpec.World.between_self
+  have h1 := LeanSpec.World.withUpdatedValues_self (toWorld d rent spent s)
+  have h2 := LeanSpec.World.withUpdatedValues_self
     (toWorld d rent (spent ∪ {(toInputs a proof extAmount fee out1 out2).k0,
       (toInputs a proof extAmount fee out1 out2).k1}) s')
-  simp only [LeanSpec.Between.unchanged] at h1 h2
+  simp only [LeanSpec.UpdatedValuesBetweenTransacts.unchanged] at h1 h2
   rw [← h1, ← h2]; exact htx
 
 /-- **One `transact`, up to changes allowed between transactions**: no by-design exclusion.
@@ -1005,13 +1011,16 @@ theorem transact_refines_between
       LeanSpec.proofValid (toInputs a proof extAmount fee out1 out2)) :
     let inputs := toInputs a proof extAmount fee out1 out2
     let spent' := spent ∪ {inputs.k0, inputs.k1}
-    ∃ b₁ : LeanSpec.Between, b₁.Allowed (toWorld d rent spent s) ∧ ∃ b₂ : LeanSpec.Between,
-      LeanSpec.transact inputs ((toWorld d rent spent s).between b₁) ((toWorld d rent spent' s').between b₂) ∧
-      (LeanSpec.Between.unchanged (toWorld d rent spent' s')).Allowed ((toWorld d rent spent' s').between b₂) ∧
+    ∃ b₁ : LeanSpec.UpdatedValuesBetweenTransacts, b₁.Allowed (toWorld d rent spent s) ∧
+      ∃ b₂ : LeanSpec.UpdatedValuesBetweenTransacts,
+      LeanSpec.transact inputs ((toWorld d rent spent s).withUpdatedValues b₁)
+        ((toWorld d rent spent' s').withUpdatedValues b₂) ∧
+      (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent spent' s')).Allowed
+        ((toWorld d rent spent' s').withUpdatedValues b₂) ∧
       WellFormed d spent' s' := by
   obtain ⟨B, E, htx, hB, hE, -, wf'⟩ :=
     transact_refines_core hstep hashes wf solana crypto rentFixed hProofValid
-  refine ⟨_, ⟨?_, .none _⟩, _, htx, ⟨?_, .none _⟩, wf'⟩
+  refine ⟨_, ⟨?_, .noChange _⟩, _, htx, ⟨?_, .noChange _⟩, wf'⟩
   · show publicBalance s (fromPubkey (toPubkey (poolAddr d))) ≤ B (fromPubkey (toPubkey (poolAddr d)))
     rw [fromPubkey_toPubkey, hB]
   · show E (fromPubkey (toPubkey (poolAddr d))) ≤ publicBalance s' (fromPubkey (toPubkey (poolAddr d)))

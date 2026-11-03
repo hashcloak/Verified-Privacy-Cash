@@ -8,6 +8,10 @@ them; the statements are enough to know what is guaranteed. -/
 namespace LeanSpec
 open PoseidonHashes Sha
 
+/-- `[NeZero p]` for the field-to-`ℤ` lifting lemmas used by G1c (`p` is a `def`, so the
+    instance is not found automatically). -/
+instance : NeZero p := ⟨by decide⟩
+
 variable [PoseidonHashes] [Sha] [Groups]
 variable [AddCommGroup G1] [Module F G1] [AddCommGroup G2] [Module F G2] [CommGroup GT]
 variable [Pairing] [Deployment]
@@ -146,7 +150,7 @@ lemma transferEffects_state (inputs: TxInputs) (w: World) :
     (transferEffects inputs w).state = w.state := by
   unfold transferEffects; split_ifs <;> rfl
 
--- LEMMA (used by G1c, G3a, G4a, G4b): the predicted world moves every account by exactly
+-- LEMMA (used by G1c, G3, G4a, G4b): the predicted world moves every account by exactly
 -- `balanceDelta`. The solvency preconditions rule out ℕ underflow; `poolIsSeparate` keeps
 -- the pool's role apart from the paid roles.
 lemma transactEffects_balances (inputs : TxInputs) (old : World)
@@ -253,31 +257,39 @@ lemma sol_balance_correctness_step
   · rw [if_neg (fun h => htP hfpos h.symm)]; ring
 
 -- HELPERS: what happens between transactions changes only the balances and the config.
-@[simp] lemma World.between_tree (w : World) (b : Between) :
-    (w.between b).state.tree = w.state.tree := rfl
-@[simp] lemma World.between_nullifiers (w : World) (b : Between) :
-    (w.between b).state.nullifiers = w.state.nullifiers := rfl
-@[simp] lemma World.between_pool (w : World) (b : Between) :
-    (w.between b).state.pool = w.state.pool := rfl
-@[simp] lemma World.between_config (w : World) (b : Between) :
-    (w.between b).state.config = b.config := rfl
-@[simp] lemma World.between_balances (w : World) (b : Between) :
-    (w.between b).balances = b.balances := rfl
-@[simp] lemma World.between_rentExemptMin (w : World) (b : Between) :
-    (w.between b).rentExemptMin = w.rentExemptMin := rfl
-@[simp] lemma World.between_nullifierRent (w : World) (b : Between) :
-    (w.between b).nullifierRent = w.nullifierRent := rfl
-/-- Nothing happening between two transactions. -/
-def Between.unchanged (w : World) : Between := ⟨w.balances, w.state.config⟩
-@[simp] lemma World.between_self (w : World) : w.between (Between.unchanged w) = w := by
+@[simp] lemma World.withUpdatedValues_tree (w : World) (b : UpdatedValuesBetweenTransacts) :
+    (w.withUpdatedValues b).state.tree = w.state.tree := rfl
+@[simp] lemma World.withUpdatedValues_nullifiers (w : World) (b : UpdatedValuesBetweenTransacts) :
+    (w.withUpdatedValues b).state.nullifiers = w.state.nullifiers := rfl
+@[simp] lemma World.withUpdatedValues_pool (w : World) (b : UpdatedValuesBetweenTransacts) :
+    (w.withUpdatedValues b).state.pool = w.state.pool := rfl
+@[simp] lemma World.withUpdatedValues_config (w : World) (b : UpdatedValuesBetweenTransacts) :
+    (w.withUpdatedValues b).state.config = b.config := rfl
+@[simp] lemma World.withUpdatedValues_balances (w : World) (b : UpdatedValuesBetweenTransacts) :
+    (w.withUpdatedValues b).balances = b.balances := rfl
+@[simp] lemma World.withUpdatedValues_rentExemptMin (w : World)
+    (b : UpdatedValuesBetweenTransacts) :
+    (w.withUpdatedValues b).rentExemptMin = w.rentExemptMin := rfl
+@[simp] lemma World.withUpdatedValues_nullifierRent (w : World)
+    (b : UpdatedValuesBetweenTransacts) :
+    (w.withUpdatedValues b).nullifierRent = w.nullifierRent := rfl
+/-- The values `w` already has: nothing happened between two transactions. -/
+def UpdatedValuesBetweenTransacts.unchanged (w : World) : UpdatedValuesBetweenTransacts :=
+  ⟨w.balances, w.state.config⟩
+@[simp] lemma World.withUpdatedValues_self (w : World) :
+    w.withUpdatedValues (UpdatedValuesBetweenTransacts.unchanged w) = w := by
   rcases w with ⟨⟨⟩⟩; rfl
-lemma Between.Allowed.self (w : World) : Between.Allowed w (Between.unchanged w) :=
-  ⟨le_rfl, .none _⟩
+lemma UpdatedValuesBetweenTransacts.Allowed.self (w : World) :
+    UpdatedValuesBetweenTransacts.Allowed w (UpdatedValuesBetweenTransacts.unchanged w) :=
+  ⟨le_rfl, .noChange _⟩
 /-- The pool's balance just before transaction `j`: after it, plus what was sent to it. -/
-lemma Run.poolBalance_between {w0 : World} (r : Run w0) (j : ℕ) (hj : j < r.txs.length) :
-    ((r.ws j).between (r.between j)).poolBalance = (r.ws j).poolBalance + r.donations j := by
+lemma Run.poolBalance_withUpdatedValues {w0 : World} (r : Run w0) (j : ℕ)
+    (hj : j < r.txs.length) :
+    ((r.ws j).withUpdatedValues (r.updatedValues j)).poolBalance =
+      (r.ws j).poolBalance + r.donations j := by
   have h := (r.allowed j hj).poolGains
-  simp only [World.poolBalance, World.between_balances, World.between_pool, Run.donations] at h ⊢
+  simp only [World.poolBalance, World.withUpdatedValues_balances,
+    World.withUpdatedValues_pool, Run.donations] at h ⊢
   omega
 
 /-- HELPER: `transferEffects` doesn't touch the tree. -/
@@ -314,7 +326,7 @@ lemma foldAppend_nextIndex (cs : List F) : (foldAppend cs initTree).nextIndex = 
     rw [ih]; simp
 
 
--- Merkle position binding (used by G1a and G3a). `Opening.Valid` only says a path hashes to
+-- Merkle position binding (used by G1a and G3). `Opening.Valid` only says a path hashes to
 -- the root, not that `leaf` is what the tree holds at `index`. Extraction
 -- (`opening_extractable_or_collision`): a valid opening's leaf is the real leaf at its
 -- index, or an `H2` collision (`PathCollision`). Preservation
@@ -905,7 +917,7 @@ lemma opening_extractable_or_collision
     rw [← canonical_inputsAt cs O.index h0 hh0, inputsAt_eq_stepPair, inputsAt_eq_stepPair]
     exact hcol
 
--- LEMMA (used by G3a): preservation. A written leaf `k` of `cs` keeps a valid opening at
+-- LEMMA (used by G3): preservation. A written leaf `k` of `cs` keeps a valid opening at
 -- index `k` after more leaves are appended.
 lemma opening_forward_preservation
     (cs later : List F) (k : ℕ) (hk : k < cs.length) (c : F) (hc : cs[k]'hk = c)
@@ -938,16 +950,18 @@ lemma config_and_rent_exempt_min_step
   · rw [heff.rentExemptMin]; unfold transactEffects transferEffects; split_ifs <;> rfl
 
 -- LEMMA (used by G5): allowed admin changes compose.
-lemma AdminChanges.trans {c c' c'' : config} (h₁ : AdminChanges c c') (h₂ : AdminChanges c' c'') :
-    AdminChanges c c'' := by
-  induction h₁ with
-  | none => exact h₂
-  | change ch hap _ ih => exact .change ch hap (ih h₂)
+lemma ReachableByAdminChanges.trans {c c' c'' : config} (h₁ : ReachableByAdminChanges c c')
+    (h₂ : ReachableByAdminChanges c' c'') :
+    ReachableByAdminChanges c c'' := by
+  induction h₂ with
+  | noChange => exact h₁
+  | extend ch _ hap ih => exact .extend ch ih hap
 
--- LEMMA (used by G5): an allowed admin change keeps the authorities and the margin bound.
-lemma AdminChange.apply_keeps {ch : AdminChange} {c c' : config} (h : ch.apply c = some c') :
+-- LEMMA (used by G5): an allowed admin change keeps the authorities and the fee error margin limit.
+lemma AdminChange.apply_keeps {ch : AdminChange} {c c' : config}
+    (h : ch.apply c = .accepted c') :
     c'.authority = c.authority ∧ c'.limitAuthority = c.limitAuthority ∧
-      (c.feeMarginError ≤ 10000 → c'.feeMarginError ≤ 10000) := by
+      (c.feeErrorMargin ≤ 10000 → c'.feeErrorMargin ≤ 10000) := by
   unfold AdminChange.apply at h
   split at h
   · split_ifs at h with hc
@@ -955,23 +969,24 @@ lemma AdminChange.apply_keeps {ch : AdminChange} {c c' : config} (h : ch.apply c
   · split_ifs at h
     · cases h; exact ⟨rfl, rfl, id⟩
 
-lemma AdminChanges.keeps {c c' : config} (h : AdminChanges c c') :
+lemma ReachableByAdminChanges.keeps {c c' : config} (h : ReachableByAdminChanges c c') :
     c'.authority = c.authority ∧ c'.limitAuthority = c.limitAuthority ∧
-      (c.feeMarginError ≤ 10000 → c'.feeMarginError ≤ 10000) := by
+      (c.feeErrorMargin ≤ 10000 → c'.feeErrorMargin ≤ 10000) := by
   induction h with
-  | none => exact ⟨rfl, rfl, id⟩
-  | change ch hap _ ih =>
+  | noChange => exact ⟨rfl, rfl, id⟩
+  | extend ch _ hap ih =>
     obtain ⟨a1, l1, m1⟩ := AdminChange.apply_keeps hap
-    exact ⟨ih.1.trans a1, ih.2.1.trans l1, fun hm => ih.2.2 (m1 hm)⟩
+    exact ⟨a1.trans ih.1, l1.trans ih.2.1, fun hm => m1 (ih.2.2 hm)⟩
 
 -- LEMMA (used by G5): over any number of steps, the config changes only by allowed admin
 -- changes, and the rent-exempt minimum stays.
 lemma config_and_rent_exempt_min_constant
   (params : InitParams) (w: World)
   (h: ReachableWorld (initWorld params) w)
-  : AdminChanges params.cfg w.state.config ∧ w.rentExemptMin = params.rentExemptMin := by
+  : ReachableByAdminChanges params.cfg w.state.config ∧
+      w.rentExemptMin = params.rentExemptMin := by
   induction h with
-  | noStep => exact ⟨.none _, rfl⟩
+  | noStep => exact ⟨.noChange _, rfl⟩
   | extend b inputs _ hallowed transact_proof ih =>
     obtain ⟨ihc, ihr⟩ := ih
     obtain ⟨hc, hr⟩ := config_and_rent_exempt_min_step _ _ inputs transact_proof
@@ -1056,114 +1071,6 @@ lemma rootBytesKnown_of {T : Tree} {inputs : TxInputs} (hEnc : publicInputsEncod
     (h : rootKnown T inputs.R) : rootBytesKnown T (inputs.pubInputBytes 0) :=
   ⟨(hEnc 0).1, (hEnc 0).2.1, by rw [(hEnc 0).2.2]; exact h⟩
 
-/-- HELPER: `transact` completeness. If every check of `transact` except the proof holds, and every
-    non-zero input is a leaf of `cs0` (with `later` appended since), Groth16 completeness gives a
-    proof that makes `transact` succeed. The openings are rebuilt from the tree (`opening_forward_preservation`). -/
-lemma transact_complete (hCompl : Groth16Complete)
-  (oldWorld: World) (inputs: TxInputs) (witness: Witness)
-  (cs0 later : List F) (hcap : (cs0 ++ later).length < 2^26)
-  (hR : inputs.R = (foldAppend (cs0 ++ later) initTree).root)
-  (hDeposited : ∀ i, witness.inAmt i ≠ 0 →
-      (witness.openings i).index.val < cs0.length
-      ∧ leafAt cs0 (witness.openings i).index.val = witness.inC i)
-  (hOutputCommitmentIntegrity : ∀ j, inputs.pubInputs.outCommitments j
-      = commit (witness.outAmt j) (witness.outPk j) (witness.outR j) witness.mint)
-  (hNullifierCorrectness : ∀ i, inputs.pubInputs.nullifiers i
-      = nullifier (witness.inC i) (witness.sign i) (witness.openings i).index)
-  (hNoDuplicateNullifiers : inputs.pubInputs.nullifiers 0 ≠ inputs.pubInputs.nullifiers 1)
-  (hAmountConservation : witness.inAmt 0 + witness.inAmt 1 + inputs.pubInputs.pubAmt
-      = witness.outAmt 0 + witness.outAmt 1)
-  (hOutputRangeChecks : ∀ j, (witness.outAmt j).val < 2^248)
-  (hRoot: rootKnown oldWorld.state.tree inputs.R)
-  (hData: externalDataBound inputs)
-  (hFee: feeSufficient oldWorld.state.config inputs.extAmt inputs.f)
-  (hPubAmt: pubAmtConsistent inputs.extAmt inputs.f inputs.pubAmt)
-  (hFresh: nullifiersFresh oldWorld.state.nullifiers inputs.k0 inputs.k1)
-  (hDistinct: nullifiersDistinct inputs.k0 inputs.k1)
-  (hDeposit: depositWithinLimit oldWorld.state.config inputs.extAmt)
-  (hSolvent: poolSolvent oldWorld.poolBalance oldWorld.rentExemptMin inputs.extAmt inputs.f)
-  (hSignerSolvent: signerSolvent oldWorld.balances inputs.s inputs.extAmt oldWorld.nullifierRent)
-  (hRoom: treeHasRoom oldWorld.state.tree)
-  (hRange: amountsInRange inputs.extAmt inputs.f)
-  (hEnc: encOutsFit inputs)
-  (hSep: poolIsSeparate inputs oldWorld.state.pool)
-  (hCanon: publicInputsEncoded inputs)
-  (hFit: balancesFit inputs oldWorld)
-  : ∃ π, transact { inputs with π := π } oldWorld (transactEffects { inputs with π := π } oldWorld) := by
-  classical
-  -- For each spent input, use `opening_forward_preservation` to get a genuinely valid opening at the
-  -- same claimed index, against the *current* root `inputs.R` (not just `cs0`'s).
-  have hOpen : ∀ i : Fin 2, witness.inAmt i ≠ 0 → ∃ O' : Opening,
-      O'.index = (witness.openings i).index ∧ O'.Valid (witness.inC i) inputs.R := by
-    intro i hne
-    obtain ⟨hlt, heq⟩ := hDeposited i hne
-    have hc : cs0[(witness.openings i).index.val]'hlt = witness.inC i := by
-      have hh := heq
-      unfold leafAt at hh
-      rwa [dif_pos hlt] at hh
-    obtain ⟨O', hidx, hvalid⟩ :=
-      opening_forward_preservation cs0 later (witness.openings i).index.val hlt (witness.inC i) hc hcap
-    exact ⟨O', Fin.ext hidx, by rw [hR]; exact hvalid⟩
-  -- `witness'`: `witness` with each non-zero input's opening replaced by the one just
-  -- derived -- same claimed index, so everything computed from the index (nullifier,
-  -- signature) is unaffected; only the siblings, previously a bare hypothesis, change.
-  set witness' : Witness := { witness with
-    openings := fun i => if h : witness.inAmt i ≠ 0 then Classical.choose (hOpen i h) else witness.openings i
-  } with hwitness'_def
-  have hIdxEq : ∀ i, (witness'.openings i).index = (witness.openings i).index := by
-    intro i
-    by_cases h : witness.inAmt i ≠ 0
-    · show (if h' : witness.inAmt i ≠ 0 then Classical.choose (hOpen i h') else witness.openings i).index
-        = (witness.openings i).index
-      rw [dif_pos h]
-      exact (Classical.choose_spec (hOpen i h)).1
-    · show (if h' : witness.inAmt i ≠ 0 then Classical.choose (hOpen i h') else witness.openings i).index
-        = (witness.openings i).index
-      rw [dif_neg h]
-  have hSignEq : ∀ i, witness'.sign i = witness.sign i := by
-    intro i
-    show signature (witness.inSk i) (witness.inC i) (witness'.openings i).index
-       = signature (witness.inSk i) (witness.inC i) (witness.openings i).index
-    rw [hIdxEq]
-  have hRel' : RelationS inputs.pubInputs witness' := {
-    outputCommitmentIntegrity := hOutputCommitmentIntegrity
-    nullifierCorrectness := fun i => by
-      show inputs.pubInputs.nullifiers i
-        = nullifier (witness.inC i) (witness'.sign i) (witness'.openings i).index
-      rw [hSignEq, hIdxEq]
-      exact hNullifierCorrectness i
-    noDuplicateNullifiers := hNoDuplicateNullifiers
-    correctOpenings := fun i hne => by
-      have hne' : witness.inAmt i ≠ 0 := hne
-      show (witness'.openings i).Valid (witness.inC i) inputs.R
-      show (if h' : witness.inAmt i ≠ 0 then Classical.choose (hOpen i h') else witness.openings i).Valid
-        (witness.inC i) inputs.R
-      rw [dif_pos hne']
-      exact (Classical.choose_spec (hOpen i hne')).2
-    amountConservation := hAmountConservation
-    outputRangeChecks := hOutputRangeChecks
-  }
-  obtain ⟨πb, π, hdec, hπ⟩ := hCompl inputs.pubInputs witness' hRel'
-  refine ⟨πb, ⟨?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩
-  exact {
-    knownRoot := rootBytesKnown_of hCanon hRoot
-    canonicalInputs := hCanon
-    balancesFit := hFit
-    externalDataBinding := hData
-    minimumFee := hFee
-    pubAmtConsistency := hPubAmt
-    validZKP := ⟨π, hdec, hπ⟩
-    newNullifiers := hFresh
-    distinctNullifiers := hDistinct
-    signerSolvency := hSignerSolvent
-    depositLimit := hDeposit
-    poolSolvency := hSolvent
-    treeNotFull := hRoom
-    amountRange := hRange
-    encOutLength := hEnc
-    poolSeparate := hSep
-  }
-
 -- LEMMA (used by every theorem about a run): each transaction of a run is accepted, so its
 -- proof verifies (`validZKP`), so `wit` gives a witness for it. This is where the proof check
 -- enters the theorems.
@@ -1238,26 +1145,28 @@ lemma Run.reachable {w0 : World} (r : Run w0) :
     intro hj
     exact ReachableWorld.extend _ _ (ih (by omega)) (r.allowed j (by omega)) (r.step j (by omega))
 
-/-- Two changes between transactions in a row are one: the second replaces what the first set. -/
-@[simp] lemma World.between_between (w : World) (b b' : Between) :
-    (w.between b).between b' = w.between b' := rfl
+/-- Two updates in a row are one: the second replaces the values the first set. -/
+@[simp] lemma World.withUpdatedValues_twice (w : World) (b b' : UpdatedValuesBetweenTransacts) :
+    (w.withUpdatedValues b).withUpdatedValues b' = w.withUpdatedValues b' := rfl
 
 /-- Two allowed changes in a row are allowed: the pool's balance only grew, and the config only
     changed by allowed admin changes. -/
-lemma Between.Allowed.trans {w : World} {b b' : Between} (h : b.Allowed w)
-    (h' : b'.Allowed (w.between b)) : b'.Allowed w := by
+lemma UpdatedValuesBetweenTransacts.Allowed.trans {w : World} {b b' : UpdatedValuesBetweenTransacts}
+    (h : b.Allowed w)
+    (h' : b'.Allowed (w.withUpdatedValues b)) : b'.Allowed w := by
   refine ⟨le_trans h.poolGains ?_, h.config.trans ?_⟩
   · have := h'.poolGains; simpa [World.poolBalance] using this
   · have := h'.config; simpa using this
 
 /-- A run extended by one more transaction: what happened after its last transaction (allowed),
     then the transaction. -/
-lemma Run.snoc {w0 : World} (r : Run w0) (b : Between) (hb : b.Allowed r.final) (tx : TxInputs)
-    (w3 : World) (htx : transact tx (r.final.between b) w3) :
+lemma Run.snoc {w0 : World} (r : Run w0) (b : UpdatedValuesBetweenTransacts)
+    (hb : b.Allowed r.final) (tx : TxInputs)
+    (w3 : World) (htx : transact tx (r.final.withUpdatedValues b) w3) :
     ∃ r' : Run w0, r'.txs = r.txs ++ [tx] ∧ r'.final = w3 ∧
       ∀ j ≤ r.txs.length, r'.ws j = r.ws j := by
   refine ⟨⟨r.txs ++ [tx], fun j => if j ≤ r.txs.length then r.ws j else w3,
-    fun j => if j < r.txs.length then r.between j else b, ?_, ?_, ?_⟩, rfl, ?_, ?_⟩
+    fun j => if j < r.txs.length then r.updatedValues j else b, ?_, ?_, ?_⟩, rfl, ?_, ?_⟩
   · simp [r.start]
   · intro j hj
     simp only [List.length_append, List.length_singleton] at hj
@@ -1286,7 +1195,7 @@ lemma Run.snoc {w0 : World} (r : Run w0) (b : Between) (hb : b.Allowed r.final) 
 
 /-- The run with no transactions. -/
 def Run.empty (w0 : World) : Run w0 :=
-  ⟨[], fun _ => w0, fun _ => Between.unchanged w0, rfl,
+  ⟨[], fun _ => w0, fun _ => UpdatedValuesBetweenTransacts.unchanged w0, rfl,
     fun j h => absurd h (by simp), fun j h => absurd h (by simp)⟩
 
 @[simp] lemma Run.empty_txs (w0 : World) : (Run.empty w0).txs = [] := rfl
@@ -1339,7 +1248,7 @@ lemma Run.tree {params : InitParams}
     refine ⟨?_, ?_⟩
     · rw [hagree.tree, hfold, ← hcs]
       simp only [transactEffects, transferEffects_tree, nullifierRentEffects_state, foldAppend, List.foldl_cons,
-        List.foldl_nil, World.between_tree]
+        List.foldl_nil, World.withUpdatedValues_tree]
     · intro R hR
       rw [hagree.tree] at hR
       simp only [transactEffects, transferEffects_tree, nullifierRentEffects_state] at hR
@@ -1368,15 +1277,9 @@ lemma Run.cap {params : InitParams}
     2 * j ≤ 2^26 - 2 := by
   have hroom := (r.step j hj).1.treeNotFull
   unfold treeHasRoom at hroom
-  simp only [World.between_tree] at hroom
+  simp only [World.withUpdatedValues_tree] at hroom
   rw [(r.tree j hj.le).1, foldAppend_nextIndex, r.leaves_take_length j hj.le] at hroom
   exact hroom
-
-lemma Run.final_cap {params : InitParams}
-    (r : Run (initWorld params)) : 2 * r.txs.length ≤ 2^26 := by
-  rcases Nat.eq_zero_or_pos r.txs.length with h0 | hpos
-  · rw [h0]; norm_num
-  · have := r.cap (r.txs.length - 1) (by omega); omega
 
 /-- The final tree holds the run's `2 · txs.length` leaves. -/
 lemma Run.final_nextIndex {params : InitParams} (r : Run (initWorld params)) :
@@ -1421,31 +1324,6 @@ lemma Run.nullifier_fresh {w0 : World} (r : Run w0) (j : ℕ) (hj : j < r.txs.le
   · exact hfresh.1
   · exact hfresh.2
 
-/-- **The nullifiers a run spends are all different**: within a transaction (`distinctNullifiers`)
-    and across transactions (an earlier one's are in the nullifier set, a later one's are not). -/
-lemma Run.nullifiers_nodup {w0 : World} (r : Run w0) :
-    (r.txs.flatMap (fun t => [t.k0, t.k1])).Nodup := by
-  rw [List.nodup_flatMap]
-  refine ⟨fun t ht => ?_, ?_⟩
-  · obtain ⟨j, hj, rfl⟩ := List.mem_iff_getElem.mp ht
-    have := (r.step j hj).1.distinctNullifiers
-    simpa [nullifiersDistinct] using this
-  · rw [List.pairwise_iff_getElem]
-    intro j j' hj hj' hlt
-    have h0 := r.nullifier_spent j hj 0 j' hlt hj'.le
-    have h1 := r.nullifier_spent j hj 1 j' hlt hj'.le
-    have f0 := r.nullifier_fresh j' hj' 0
-    have f1 := r.nullifier_fresh j' hj' 1
-    simp only [TxInputs.pubInputs, Matrix.cons_val_zero, Matrix.cons_val_one] at h0 h1 f0 f1
-    show List.Disjoint [r.txs[j].k0, r.txs[j].k1] [r.txs[j'].k0, r.txs[j'].k1]
-    intro x hx hx'
-    simp only [List.mem_cons, List.not_mem_nil, or_false] at hx hx'
-    rcases hx with rfl | rfl <;> rcases hx' with e | e
-    · exact f0 (e ▸ h0)
-    · exact f1 (e ▸ h0)
-    · exact f0 (e ▸ h1)
-    · exact f1 (e ▸ h1)
-
 /-- The pool's SOL after the first `j` transactions: rent reserve plus their `extAmt − f`
     plus the donations before them. -/
 lemma Run.poolBalance {params : InitParams}
@@ -1458,7 +1336,8 @@ lemma Run.poolBalance {params : InitParams}
   | zero => intro _; rw [r.start]; simp [initWorld, World.poolBalance]
   | succ j ih =>
     intro hj
-    rw [sol_balance_correctness_step _ _ _ (r.step j (by omega)), r.poolBalance_between j (by omega),
+    rw [sol_balance_correctness_step _ _ _ (r.step j (by omega)),
+      r.poolBalance_withUpdatedValues j (by omega),
       Nat.cast_add, ih (by omega), r.take_succ j (by omega), Finset.sum_range_succ]
     simp only [List.map_append, List.map_cons, List.map_nil, List.sum_append, List.sum_cons,
       List.sum_nil]
@@ -1507,7 +1386,7 @@ theorem spends_are_genuine
     · refine Or.inr (Or.inr (Or.inl ⟨?_⟩))
       have hz : leafAt (cs.take k) (openedPos wit j i) = 0 := by
         unfold leafAt; rw [dif_neg (by omega)]; rfl
-      unfold openedPos at hz
+      unfold openedPos Witness.openedPos at hz
       rw [hz] at hleaf
       exact hleaf.symm
   · exact Or.inr (Or.inl ⟨k, hk, hcol⟩)
@@ -1627,7 +1506,7 @@ theorem balance
         have hf : (⟨(2 * j + 1) % 2, Nat.mod_lt _ (by norm_num)⟩ : Fin 2) = 1 := Fin.ext (by simp)
         rw [hf, e]
       rw [show 2 * (j+1) = 2 * j + 1 + 1 by ring, Finset.sum_range_succ, Finset.sum_range_succ,
-        Finset.sum_range_succ, Finset.sum_range_succ, hstep, r.poolBalance_between j hjn,
+        Finset.sum_range_succ, Finset.sum_range_succ, hstep, r.poolBalance_withUpdatedValues j hjn,
         Nat.cast_add, ih (by omega), hl0, hl1]
       simp only [hinV]
       linarith
@@ -1838,13 +1717,13 @@ theorem shared_nullifier_requires_owner_key
 
 /-! ## G3. Liveness -/
 
--- LEMMA (used by G3b): `transferEffects` doesn't touch the nullifier set.
+-- LEMMA (used by G3): `transferEffects` doesn't touch the nullifier set.
 lemma transferEffects_nullifiers (inputs: TxInputs) (oldWorld: World) :
     (transferEffects inputs oldWorld).state.nullifiers = oldWorld.state.nullifiers := by
   unfold transferEffects
   split_ifs <;> rfl
 
--- LEMMA (used by G3b): every nullifier in the set was revealed by a transaction of the run.
+-- LEMMA (used by G3): every nullifier in the set was revealed by a transaction of the run.
 lemma Run.nullifier_origin {params : InitParams}
     (r : Run (initWorld params)) :
     ∀ j ≤ r.txs.length, ∀ x ∈ (r.ws j).state.nullifiers,
@@ -1864,85 +1743,74 @@ lemma Run.nullifier_origin {params : InitParams}
     · exact ⟨j, hjn, 0, by simp [TxInputs.pubInputs, hx]⟩
     · exact ⟨j, hjn, 1, by simp [TxInputs.pubInputs, hx]⟩
 
--- LEMMA (used by G3b): leaf indices are below `p`, so equal as field elements means equal.
+-- LEMMA (used by G3): leaf indices are below `p`, so equal as field elements means equal.
 lemma leafIndex_cast_inj (a b : Fin (2^26)) (h : ((a : ℕ) : F) = ((b : ℕ) : F)) : a = b := by
   have hmod := (ZMod.natCast_eq_natCast_iff' (a : ℕ) (b : ℕ) p).mp h
   have hp : 2^26 < p := by norm_num [p]
   rw [Nat.mod_eq_of_lt (by omega), Nat.mod_eq_of_lt (by omega)] at hmod
   exact Fin.ext hmod
 
--- PROOF of G3b. Statement and explanation: `Spec/Statements.lean`.
-theorem unspent_note_cannot_be_blocked
-    (params : InitParams)
-    (r : Run (initWorld params)) (wit : ℕ → Witness) (hwit : r.WitnessesFor wit)
-    (w : Witness) (i : Fin 2) (hne : w.inAmt i ≠ 0)
-    (hpos : (w.openings i).index.val ∈ r.unspent wit) :
-    nullifier (w.inC i) (w.sign i) (w.openings i).index ∉ r.final.state.nullifiers
-    ∨ NullifierTaken r wit w i := by
-  classical
-  by_cases hmem : nullifier (w.inC i) (w.sign i) (w.openings i).index ∈ r.final.state.nullifiers
-  swap; · exact Or.inl hmem
-  right
-  obtain ⟨j, hj, i', hji⟩ := r.nullifier_origin r.txs.length le_rfl _ hmem
-  refine ⟨j, hj, i', hji, ?_⟩
-  have hH3 : H3 (w.nullifierArgs i).1 (w.nullifierArgs i).2.1 (w.nullifierArgs i).2.2
-      = H3 ((wit j).nullifierArgs i').1 ((wit j).nullifierArgs i').2.1 ((wit j).nullifierArgs i').2.2 := by
-    have := (hwit.relation j hj).nullifierCorrectness i'
-    rw [hji] at this
-    exact this
-  by_cases hargs : w.nullifierArgs i = (wit j).nullifierArgs i'
-  swap; · exact Or.inl ⟨hargs, hH3⟩
-  have hC : w.inC i = (wit j).inC i' := congrArg Prod.fst hargs
-  have hIdx : (w.openings i).index = ((wit j).openings i').index :=
-    leafIndex_cast_inj _ _ (congrArg (fun a => a.2.1) hargs)
-  rcases commitment_determines_value_or_collision _ _ _ _ _ _ _ _ hC with heq | hH4
-  · -- the same note, so the same non-zero amount: input `i'` spent this very note
-    exfalso
-    have hamt : (wit j).inAmt i' ≠ 0 := by
-      have : w.inAmt i = (wit j).inAmt i' := congrArg Note.amount heq
-      rw [← this]; exact hne
-    simp only [Run.unspent, Finset.mem_filter] at hpos
-    exact hpos.2 ⟨j, hj, i', hamt, by simp only [openedPos]; rw [hIdx]⟩
-  · exact Or.inr hH4
-
--- LEMMA (used by G3a): a dummy input whose secret key no input of the run uses has a fresh
--- nullifier, unless an `H3` collision occurs. Equal nullifiers mean equal signatures (or an
--- `H3` collision), and equal signatures mean equal secret keys (or an `H3` collision).
-lemma dummy_nullifier_free
+-- LEMMA (used by G3): an input whose commitment no input of the run has used at this position
+-- has a fresh nullifier, unless an `H3` collision occurs.
+lemma unused_input_nullifier_free
     (params : InitParams)
     (r : Run (initWorld params)) (wit : ℕ → Witness) (hwit : r.WitnessesFor wit)
     (w : Witness) (i : Fin 2)
-    (hkey : ∀ j < r.txs.length, ∀ i', (wit j).inSk i' ≠ w.inSk i) :
+    (hnew : ¬ InputUsedInRun r wit w i) :
     nullifier (w.inC i) (w.sign i) (w.openings i).index ∉ r.final.state.nullifiers
-    ∨ DummyNullifierTaken r wit w i := by
+    ∨ NullifierTakenByCollision r wit w := by
   classical
   by_cases hmem : nullifier (w.inC i) (w.sign i) (w.openings i).index ∈ r.final.state.nullifiers
   swap; · exact Or.inl hmem
   right
   obtain ⟨j, hj, i', hji⟩ := r.nullifier_origin r.txs.length le_rfl _ hmem
-  refine ⟨j, hj, i', hji, ?_⟩
+  refine ⟨i, j, hj, i', hji, ?_⟩
   have hH3 : H3 (w.nullifierArgs i).1 (w.nullifierArgs i).2.1 (w.nullifierArgs i).2.2
       = H3 ((wit j).nullifierArgs i').1 ((wit j).nullifierArgs i').2.1 ((wit j).nullifierArgs i').2.2 := by
     have := (hwit.relation j hj).nullifierCorrectness i'
     rw [hji] at this
     exact this
   by_cases hargs : w.nullifierArgs i = (wit j).nullifierArgs i'
-  swap; · exact Or.inl ⟨hargs, hH3⟩
-  have hsign : H3 (w.signatureArgs i).1 (w.signatureArgs i).2.1 (w.signatureArgs i).2.2
-      = H3 ((wit j).signatureArgs i').1 ((wit j).signatureArgs i').2.1 ((wit j).signatureArgs i').2.2 :=
-    congrArg (fun a => a.2.2) hargs
-  by_cases hsargs : w.signatureArgs i = (wit j).signatureArgs i'
-  · exact absurd (congrArg Prod.fst hsargs).symm (hkey j hj i')
-  · exact Or.inr ⟨hsargs, hsign⟩
+  swap; · exact ⟨hargs, hH3⟩
+  have hC : w.inC i = (wit j).inC i' := congrArg Prod.fst hargs
+  have hIdx : (w.openings i).index = ((wit j).openings i').index :=
+    leafIndex_cast_inj _ _ (congrArg (fun a => a.2.1) hargs)
+  exact absurd (show InputUsedInRun r wit w i from
+    ⟨j, hj, i', hC.symm, congrArg Fin.val hIdx.symm⟩) hnew
 
--- LEMMA (used by G3a): a withdrawal that spends unspent notes never fails on pool
+-- LEMMA (used by G3): a real note whose commitment no input of the run has used at this
+-- position is unspent: a real spend at its position, unless forged, has the same commitment.
+lemma unspent_of_unused
+    (params : InitParams)
+    (r : Run (initWorld params)) (wit : ℕ → Witness) (hwit : r.WitnessesFor wit)
+    (w : Witness) (i : Fin 2)
+    (hnote : w.inNote i = leafNote wit (w.openedPos i))
+    (hlt : w.openedPos i < 2 * r.txs.length)
+    (hnew : ¬ InputUsedInRun r wit w i)
+    (hB : ¬ BreakInSomeSpend r wit) :
+    w.openedPos i ∈ r.unspent wit := by
+  classical
+  simp only [Run.unspent, Finset.mem_filter, Finset.mem_range]
+  refine ⟨hlt, ?_⟩
+  rintro ⟨j, hj, i', hamt, hop⟩
+  rcases spends_are_genuine params r wit hwit j hj i' hamt with ⟨_, hn⟩ | hb
+  · have e : (wit j).inNote i' = w.inNote i := by rw [hn, hop, hnote]
+    have ha : (wit j).inAmt i' = w.inAmt i := congrArg Note.amount e
+    have hp : (wit j).inPk i' = w.inPk i := congrArg Note.ownerPk e
+    have hr : (wit j).inR i' = w.inR i := congrArg Note.blinding e
+    have hm : (wit j).mint = w.mint := congrArg Note.mint e
+    have hc : (wit j).inC i' = w.inC i := by simp only [Witness.inC, ha, hp, hr, hm]
+    exact hnew ⟨j, hj, i', hc, hop⟩
+  · exact hB (Or.inl ⟨j, hj, i', hamt, hb⟩)
+
+-- LEMMA (used by G3): a withdrawal that spends unspent notes never fails on pool
 -- solvency, because G1c makes the pool hold at least the value of those notes.
-lemma withdrawal_solvent
+lemma pool_solvent
     (params : InitParams)
     (r : Run (initWorld params)) (wit : ℕ → Witness) (hwit : r.WitnessesFor wit)
     (inputs : TxInputs) (witness : Witness)
-    (hNotes : ∀ i, witness.inAmt i ≠ 0 → (witness.openings i).index.val ∈ r.unspent wit
-        ∧ witness.inNote i = leafNote wit (witness.openings i).index.val)
+    (hNotes : ∀ i, witness.inAmt i ≠ 0 → witness.openedPos i ∈ r.unspent wit
+        ∧ witness.inNote i = leafNote wit (witness.openedPos i))
     (hTwo : witness.inAmt 0 ≠ 0 → witness.inAmt 1 ≠ 0 →
         (witness.openings 0).index ≠ (witness.openings 1).index)
     (hAC : witness.inAmt 0 + witness.inAmt 1 + inputs.pubInputs.pubAmt
@@ -1950,29 +1818,30 @@ lemma withdrawal_solvent
     (hOR : ∀ j, (witness.outAmt j).val < 2^248)
     (hPubAmt : pubAmtConsistent inputs.extAmt inputs.f inputs.pubAmt)
     (hRange : amountsInRange inputs.extAmt inputs.f) :
-    (inputs.extAmt < 0 →
-      (r.final.poolBalance : ℤ) ≥ |inputs.extAmt| + inputs.f + r.final.rentExemptMin)
+    ((inputs.extAmt < 0 →
+        (r.final.poolBalance : ℤ) ≥ |inputs.extAmt| + inputs.f + r.final.rentExemptMin)
+      ∧ (inputs.extAmt ≥ 0 ∧ inputs.f > 0 →
+        (r.final.poolBalance : ℤ) + inputs.extAmt ≥ inputs.f + r.final.rentExemptMin))
     ∨ BreakInSomeSpend r wit := by
   classical
   rcases balance params r wit hwit with hbal | hbrk
   swap; · exact Or.inr hbrk
   left
-  intro hneg
   have hrent : r.final.rentExemptMin = params.rentExemptMin :=
     (config_and_rent_exempt_min_constant params _ (r.reachable _ le_rfl)).2
   -- each spent input is worth exactly its note, which is below 2^248
   have hval : ∀ i, witness.inAmt i ≠ 0 →
-      (((witness.inAmt i).val : ℤ) = leafValue wit (witness.openings i).index.val)
+      (((witness.inAmt i).val : ℤ) = leafValue wit (witness.openedPos i))
       ∧ (witness.inAmt i).val < 2^248 := by
     intro i hne
     obtain ⟨hmem, hnote⟩ := hNotes i hne
-    have hlt : (witness.openings i).index.val < 2 * r.txs.length := by
+    have hlt : witness.openedPos i < 2 * r.txs.length := by
       simp only [Run.unspent, Finset.mem_filter, Finset.mem_range] at hmem; exact hmem.1
-    have hamt : witness.inAmt i = (leafNote wit (witness.openings i).index.val).amount :=
+    have hamt : witness.inAmt i = (leafNote wit (witness.openedPos i)).amount :=
       congrArg Note.amount hnote
     refine ⟨by rw [hamt]; rfl, ?_⟩
     rw [hamt]
-    exact (hwit.relation ((witness.openings i).index.val / 2) (by omega)).outputRangeChecks _
+    exact (hwit.relation (witness.openedPos i / 2) (by omega)).outputRangeChecks _
   obtain ⟨hr1, hr2, hr3⟩ := hRange
   have hdelta := value_delta_eq_ext_sub_fee witness inputs.pubInputs inputs.extAmt inputs.f hAC hOR
     hPubAmt (fun i hne => (hval i hne).2) (by omega) (by omega)
@@ -1988,7 +1857,7 @@ lemma withdrawal_solvent
     · rw [h1, ZMod.val_zero, Nat.cast_zero, add_zero, (hval 0 h0).1]
       exact Finset.single_le_sum (fun pos _ => hnn pos) (hNotes 0 h0).1
     · rw [(hval 0 h0).1, (hval 1 h1).1]
-      have hne : (witness.openings 0).index.val ≠ (witness.openings 1).index.val :=
+      have hne : witness.openedPos 0 ≠ witness.openedPos 1 :=
         fun h => hTwo h0 h1 (Fin.ext h)
       rw [← Finset.sum_pair hne]
       apply Finset.sum_le_sum_of_subset_of_nonneg
@@ -1998,62 +1867,96 @@ lemma withdrawal_solvent
         · exact (hNotes 0 h0).1
         · exact (hNotes 1 h1).1
       · exact fun pos _ _ => hnn pos
-  have habs : |inputs.extAmt| = -inputs.extAmt := abs_of_neg hneg
-  rw [hrent, ge_iff_le, habs]
-  show _ ≤ ((r.ws r.txs.length).poolBalance : ℤ)
   have hfinal : ((r.ws r.txs.length).poolBalance : ℤ)
       = params.rentExemptMin + ∑ pos ∈ r.unspent wit, leafValue wit pos + r.donated := hbal
   have ho : (0 : ℤ) ≤ (witness.outAmt 0).val + (witness.outAmt 1).val := by positivity
   have hd : (0 : ℤ) ≤ r.donated := by positivity
-  linarith
+  rw [hrent]
+  refine ⟨fun hneg => ?_, fun _ => ?_⟩
+  · have habs : |inputs.extAmt| = -inputs.extAmt := abs_of_neg hneg
+    rw [ge_iff_le, habs]
+    show _ ≤ ((r.ws r.txs.length).poolBalance : ℤ)
+    linarith
+  · rw [ge_iff_le]
+    show _ ≤ ((r.ws r.txs.length).poolBalance : ℤ) + inputs.extAmt
+    linarith
 
--- LEMMA (used by G3a): G3a with every hypothesis spelled out.
+-- LEMMA (used by G3): G3 with every hypothesis spelled out.
+/-- `ownsNote` and `knowsNote` together: the note the spender claims is the note stored at the
+    position it opens. -/
+lemma GenuineInput.inNote_eq {wit : ℕ → Witness} {w : Witness} {i : Fin 2} {bound : ℕ}
+    (h : GenuineInput wit w i bound) :
+    w.inNote i = leafNote wit (w.openedPos i) := by
+  obtain ⟨ha, hb, hm⟩ := h.knowsNote
+  have hp := h.ownsNote
+  show (⟨w.inAmt i, H1 (w.inSk i), w.inR i, w.mint⟩ : Note) = _
+  rw [← ha, ← hp, ← hb, ← hm]
+
+/-- The equation form of `GenuineInput`, as `spends_are_genuine` proves it. -/
+lemma GenuineInput.of_eq {wit : ℕ → Witness} {w : Witness} {i : Fin 2} {bound : ℕ}
+    (h : w.openedPos i < bound ∧ w.inNote i = leafNote wit (w.openedPos i)) :
+    GenuineInput wit w i bound where
+  inTree := h.1
+  ownsNote := by rw [← h.2]; rfl
+  knowsNote := by
+    show (leafNote wit (w.openedPos i)).amount = _ ∧
+      (leafNote wit (w.openedPos i)).blinding = _ ∧
+      (leafNote wit (w.openedPos i)).mint = _
+    rw [← h.2]
+    exact ⟨rfl, rfl, rfl⟩
+
+-- Every check of `transact`, field by field. `spendable_core` proves the three facts assumed
+-- here. The table in `Spec/Statements.lean` (G3) lists what ensures each check.
+theorem all_checks_accounted {w0 : World} (r : Run w0) (wit : ℕ → Witness)
+    (inputs : TxInputs) (witness : Witness) (k : ℕ)
+    (hHonest : HonestSpend r wit inputs witness k)
+    (hLimits : LimitsNotHit r.final inputs)
+    (hRootNonzero : inputs.R ≠ 0)
+    (hFresh : nullifiersFresh r.final.state.nullifiers inputs.k0 inputs.k1)
+    (hSolvent : poolSolvent r.final.poolBalance r.final.rentExemptMin inputs.extAmt inputs.f) :
+    transactPreconditions inputs r.final where
+  knownRoot := rootBytesKnown_of hHonest.wellFormed.encodings ⟨hLimits.inWindow, hRootNonzero⟩
+  canonicalInputs := hHonest.wellFormed.encodings
+  balancesFit := hLimits.balancesFit
+  externalDataBinding := hHonest.wellFormed.externalData
+  minimumFee := hLimits.fee
+  pubAmtConsistency := hHonest.wellFormed.publicAmount
+  validZKP := hHonest.wellFormed.validProof
+  newNullifiers := hFresh
+  distinctNullifiers := hHonest.circuit.noDuplicateNullifiers
+  signerSolvency := hHonest.signerCanPay
+  depositLimit := hLimits.depositLimit
+  poolSolvency := hSolvent
+  treeNotFull := hLimits.treeRoom
+  amountRange := hHonest.wellFormed.amountRange
+  encOutLength := hHonest.wellFormed.encOutLength
+  poolSeparate := hHonest.wellFormed.poolSeparate
+
 lemma spendable_core
-    (params : InitParams) (hCompl : Groth16Complete)
+    (params : InitParams)
     (r : Run (initWorld params)) (wit : ℕ → Witness) (hwit : r.WitnessesFor wit)
-    (inputs: TxInputs) (witness: Witness)
-    -- the root: present in the history, and the root of the first `k` leaves
-    (k : ℕ) (hk : k ≤ 2 * r.txs.length)
-    (hRk : inputs.R = (foldAppend ((leaves r.txs).take k) initTree).root)
-    (hRwin : inputs.R ∈ Set.range r.final.state.tree.history)
-    -- the owner's notes: distinct unspent notes among the first `k` leaves
-    (hNotes : ∀ i, witness.inAmt i ≠ 0 → (witness.openings i).index.val < k
-        ∧ (witness.openings i).index.val ∈ r.unspent wit
-        ∧ witness.inNote i = leafNote wit (witness.openings i).index.val)
-    (hTwo : witness.inAmt 0 ≠ 0 → witness.inAmt 1 ≠ 0 →
-        (witness.openings 0).index ≠ (witness.openings 1).index)
-    -- each zero-amount input uses a fresh secret key: one that no input of the run uses
-    (hDummyKey : ∀ i, witness.inAmt i = 0 →
-        ∀ j < r.txs.length, ∀ i', (wit j).inSk i' ≠ witness.inSk i)
-    -- the transaction is built honestly from the witness
-    (hOutputCommitmentIntegrity : ∀ j, inputs.pubInputs.outCommitments j
-        = commit (witness.outAmt j) (witness.outPk j) (witness.outR j) witness.mint)
-    (hNullifierCorrectness : ∀ i, inputs.pubInputs.nullifiers i
-        = nullifier (witness.inC i) (witness.sign i) (witness.openings i).index)
-    (hNoDuplicateNullifiers : inputs.pubInputs.nullifiers 0 ≠ inputs.pubInputs.nullifiers 1)
-    (hAmountConservation : witness.inAmt 0 + witness.inAmt 1 + inputs.pubInputs.pubAmt
-        = witness.outAmt 0 + witness.outAmt 1)
-    (hOutputRangeChecks : ∀ j, (witness.outAmt j).val < 2^248)
-    (hData: externalDataBound inputs)
-    (hPubAmt: pubAmtConsistent inputs.extAmt inputs.f inputs.pubAmt)
-    (hDistinct: nullifiersDistinct inputs.k0 inputs.k1)
-    (hRange: amountsInRange inputs.extAmt inputs.f)
-    (hEnc: encOutsFit inputs)
-    (hSep: poolIsSeparate inputs r.final.state.pool)
-    -- policy checks
-    (hFee: feeSufficient r.final.state.config inputs.extAmt inputs.f)
-    (hDeposit: depositWithinLimit r.final.state.config inputs.extAmt)
-    (hDepositFee: inputs.extAmt ≥ 0 ∧ inputs.f > 0 →
-        (r.final.poolBalance : ℤ) + inputs.extAmt ≥ inputs.f + r.final.rentExemptMin)
-    (hSignerSolvent: signerSolvent r.final.balances inputs.s inputs.extAmt r.final.nullifierRent)
-    (hRoom: treeHasRoom r.final.state.tree)
-    (hCanon: publicInputsEncoded inputs)
-    (hFit: balancesFit inputs r.final) :
-    (∃ π, transact { inputs with π := π } r.final (transactEffects { inputs with π := π } r.final))
+    (inputs: TxInputs) (witness: Witness) (k : ℕ)
+    (hHonest : HonestSpend r wit inputs witness k)
+    (hLimits : LimitsNotHit r.final inputs) :
+    transact inputs r.final (transactEffects inputs r.final)
     ∨ H2ZeroPreimage (treeHash ((leaves r.txs).take k) 25 0, treeHash ((leaves r.txs).take k) 25 1)
     ∨ BreakInSomeSpend r wit
-    ∨ (∃ i, witness.inAmt i ≠ 0 ∧ NullifierTaken r wit witness i)
-    ∨ (∃ i, witness.inAmt i = 0 ∧ DummyNullifierTaken r wit witness i) := by
+    ∨ NullifierTakenByCollision r wit witness := by
+  have hk := hHonest.root.isPrefix
+  have hRk : inputs.R = (foldAppend ((leaves r.txs).take k) initTree).root := hHonest.root.isPrefixRoot
+  have hRoom := hLimits.treeRoom
+  have hNotes : ∀ i, witness.inAmt i ≠ 0 → witness.openedPos i < k
+      ∧ witness.inNote i = leafNote wit (witness.openedPos i) :=
+    fun i hne => ⟨(hHonest.genuine i hne).inTree, (hHonest.genuine i hne).inNote_eq⟩
+  have hTwo : witness.inAmt 0 ≠ 0 → witness.inAmt 1 ≠ 0 →
+      (witness.openings 0).index ≠ (witness.openings 1).index :=
+    fun h0 h1 heq => hHonest.notDoubleSpend ⟨h0, h1, congrArg Fin.val heq⟩
+  have hUnused := hHonest.inputNotUsedBefore
+  have hNullifierCorrectness := hHonest.circuit.nullifierCorrectness
+  have hAmountConservation := hHonest.circuit.amountConservation
+  have hOutputRangeChecks := hHonest.circuit.outputRangeChecks
+  have hPubAmt := hHonest.wellFormed.publicAmount
+  have hRange := hHonest.wellFormed.amountRange
   classical
   by_cases hR0 : inputs.R = 0
   · -- the root of the first `k` leaves is `H2` of its two subtrees
@@ -2070,102 +1973,47 @@ lemma spendable_core
     exact hroot.symm
   by_cases hB : BreakInSomeSpend r wit
   · exact Or.inr (Or.inr (Or.inl hB))
-  by_cases hT : ∃ i, witness.inAmt i ≠ 0 ∧ NullifierTaken r wit witness i
-  · exact Or.inr (Or.inr (Or.inr (Or.inl hT)))
-  by_cases hD : ∃ i, witness.inAmt i = 0 ∧ DummyNullifierTaken r wit witness i
-  · exact Or.inr (Or.inr (Or.inr (Or.inr hD)))
+  by_cases hT : NullifierTakenByCollision r wit witness
+  · exact Or.inr (Or.inr (Or.inr hT))
   left
-  -- the nullifiers are free: G3b for the owner's notes, the dummy-key lemma for the rest
+  -- the nullifiers are free
   have hfree : ∀ i, inputs.pubInputs.nullifiers i ∉ r.final.state.nullifiers := by
     intro i
     rw [hNullifierCorrectness i]
-    by_cases hz : witness.inAmt i = 0
-    · rcases dummy_nullifier_free params r wit hwit witness i
-          (hDummyKey i hz) with h | h
-      · exact h
-      · exact absurd ⟨i, hz, h⟩ hD
-    ·
-      rcases unspent_note_cannot_be_blocked params r wit hwit witness i
-          hz (hNotes i hz).2.1 with h | h
-      · exact h
-      · exact absurd ⟨i, hz, h⟩ hT
+    rcases unused_input_nullifier_free params r wit hwit witness i (hUnused i) with h | h
+    · exact h
+    · exact absurd h hT
   have hFresh : nullifiersFresh r.final.state.nullifiers inputs.k0 inputs.k1 :=
     ⟨hfree 0, hfree 1⟩
   -- the pool can pay: from G1c
   have hSolvent : poolSolvent r.final.poolBalance r.final.rentExemptMin inputs.extAmt inputs.f := by
-    refine ⟨?_, hDepositFee⟩
-    rcases withdrawal_solvent params r wit hwit inputs witness
-        (fun i hne => (hNotes i hne).2) hTwo hAmountConservation hOutputRangeChecks hPubAmt
+    rcases pool_solvent params r wit hwit inputs witness
+        (fun i hne => ⟨unspent_of_unused params r wit hwit witness i (hNotes i hne).2
+          (by have := (hNotes i hne).1; omega) (hUnused i) hB, (hNotes i hne).2⟩)
+        hTwo hAmountConservation hOutputRangeChecks hPubAmt
         hRange with h | h
     · exact h
     · exact absurd h hB
-  have hRoot : rootKnown r.final.state.tree inputs.R := ⟨hRwin, hR0⟩
-  have hlen : (leaves r.txs).length = 2 * r.txs.length := leaves_length r.txs
-  have hcap : ((leaves r.txs).take k ++ []).length < 2^26 := by
-    rw [List.append_nil, List.length_take]; have := hRoom; unfold treeHasRoom at this; rw [r.final_nextIndex] at this; omega
-  -- each spent note is the leaf at its position, with the owner's commitment
-  have hDep : ∀ i, witness.inAmt i ≠ 0 →
-      (witness.openings i).index.val < ((leaves r.txs).take k).length
-      ∧ leafAt ((leaves r.txs).take k) (witness.openings i).index.val = witness.inC i := by
-    intro i hne
-    obtain ⟨hlt, _, hnote⟩ := hNotes i hne
-    refine ⟨by rw [List.length_take]; omega, ?_⟩
-    rw [leafAt_take _ _ _ hlt]
-    set pos := (witness.openings i).index.val with hpos_def
-    have hm : pos / 2 < r.txs.length := by omega
-    have hpos : pos = 2 * (pos / 2) + (⟨pos % 2, Nat.mod_lt _ (by norm_num)⟩ : Fin 2).val := by
-      simp only; omega
-    rw [hpos, leafAt_leaves _ _ hm, (hwit.relation _ hm).outputCommitmentIntegrity]
-    simp only [Witness.inNote, leafNote, Witness.outNote, Note.mk.injEq] at hnote
-    obtain ⟨h1, h2, h3, h4⟩ := hnote
-    simp only [Witness.inC, commit]
-    rw [h1, h2, h3, h4]
-  exact transact_complete hCompl r.final inputs witness ((leaves r.txs).take k) [] hcap
-    (by rw [List.append_nil]; exact hRk) hDep
-    hOutputCommitmentIntegrity hNullifierCorrectness hNoDuplicateNullifiers hAmountConservation
-    hOutputRangeChecks hRoot hData hFee hPubAmt hFresh hDistinct hDeposit hSolvent
-    hSignerSolvent hRoom hRange hEnc hSep hCanon hFit
+  refine ⟨?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+  exact all_checks_accounted r wit inputs witness k hHonest hLimits hR0 hFresh hSolvent
 
--- PROOF of G3a. Statement and explanation: `Spec/Statements.lean`.
+-- PROOF of G3. Statement and explanation: `Spec/Statements.lean`.
+
 theorem unspent_note_is_spendable
-    -- [premise] a pool initialized with `params`; [trust T1] Groth16 completeness
-    (params : InitParams) (hCompl : Groth16Complete)
-    -- [attacker] any history; [trust T1] the witnesses behind its proofs
+    -- [premise] a pool initialized with `params`
+    (params : InitParams)
+    -- [attacker] any history; [assumption T1] the witnesses behind its proofs
     (r : Run (initWorld params)) (wit : ℕ → Witness) (hwit : r.WitnessesFor wit)
     -- [owner] the owner's transaction, its secrets, and the tree state it uses
     (inputs : TxInputs) (witness : Witness) (k : ℕ)
-    (hRoot : RootInWindow r inputs.R k)
-    (hNotes : OwnsUnspentNotes r wit witness k)
-    (hHonest : BuiltHonestly r.final inputs witness)
-    (hPolicy : PolicyChecksPass r.final inputs) :
+    (hHonest : HonestSpend r wit inputs witness k)
+    (hLimits : LimitsNotHit r.final inputs) :
     CanBeAccepted inputs r.final ∨ SpendBlockedByBreak r wit witness k := by
-  rcases spendable_core params hCompl r wit hwit inputs witness k hRoot.isPrefix hRoot.isPrefixRoot
-      hRoot.inWindow (fun i hne => ⟨hNotes.inTree i hne, hNotes.unspent i hne, hNotes.isOwnersNote i hne⟩)
-      hNotes.different hNotes.freshDummyKeys hHonest.outputs hHonest.nullifiers
-      hHonest.distinctNullifiers hHonest.amounts hHonest.outputRange hHonest.externalData
-      hHonest.publicAmount hHonest.distinctNullifiers hHonest.amountRange hHonest.encOutLength
-      hHonest.poolSeparate hPolicy.fee hPolicy.depositLimit hPolicy.depositFee
-      hHonest.signerCanPay hPolicy.treeRoom hHonest.encodings hPolicy.balancesFit with h | h
+  rcases spendable_core params r wit hwit inputs witness k hHonest hLimits with h | h
   · exact Or.inl h
   · -- `spendable_core` lists the zero-root case first; `SpendBlockedByBreak` lists it last.
-    rcases h with h | h | h | h
-    exacts [Or.inr (Or.inr (Or.inr (Or.inr h))), Or.inr (Or.inl h), Or.inr (Or.inr (Or.inl h)),
-      Or.inr (Or.inr (Or.inr (Or.inl h)))]
-
--- PROOF of G3c. Statement and explanation: `Spec/Statements.lean`.
-theorem full_tree_freezes_pool
-    (params : InitParams)
-    (r : Run (initWorld params)) (hfull : 2^25 ≤ r.txs.length) (bw : Between)
-    (inputs : TxInputs) (newWorld : World) :
-    ¬ transact inputs (r.final.between bw) newWorld := by
-  intro h
-  have hroom := h.1.treeNotFull
-  unfold treeHasRoom at hroom
-  simp only [World.between_tree] at hroom
-  have htree := (r.tree r.txs.length le_rfl).1
-  rw [show r.final = r.ws r.txs.length from rfl, htree, foldAppend_nextIndex,
-    r.leaves_take_length _ le_rfl] at hroom
-  omega
+    rcases h with h | h | h
+    exacts [Or.inr (Or.inr (Or.inr h)), Or.inr (Or.inl h), Or.inr (Or.inr (Or.inl h))]
 
 /-! ## G4. Correct public payouts -/
 
@@ -2218,15 +2066,15 @@ theorem config_changes_only_by_authority
     (params : InitParams)
     (r : Run (initWorld params)) :
     ∀ j ≤ r.txs.length,
-      AdminChanges params.cfg (r.ws j).state.config ∧
+      ReachableByAdminChanges params.cfg (r.ws j).state.config ∧
       (r.ws j).state.config.authority = params.initializer ∧
       (r.ws j).state.config.limitAuthority = params.initializer ∧
-      (r.ws j).state.config.feeMarginError ≤ 10000 ∧
+      (r.ws j).state.config.feeErrorMargin ≤ 10000 ∧
       (r.ws j).rentExemptMin = params.rentExemptMin := by
   intro j hj
   obtain ⟨hc, hr⟩ := config_and_rent_exempt_min_constant params _ (r.reachable j hj)
   obtain ⟨ha, hl, hm⟩ := hc.keeps
   exact ⟨hc, ha.trans params.authority_init, hl.trans params.limitAuthority_init,
-    hm params.margin_init, hr⟩
+    hm params.feeErrorMargin_init, hr⟩
 
 end LeanSpec

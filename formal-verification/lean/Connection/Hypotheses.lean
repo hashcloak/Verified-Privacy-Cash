@@ -229,7 +229,7 @@ structure HandlerContext (a : TransactAccounts) (s₁ : State)
   /-- Invariant (`WellFormed.config`): the withdrawal fee rate is at most 10000. -/
   withdrawalRate : config.withdrawal_fee_rate.val ≤ 10000
   /-- Invariant (`WellFormed.config`): the fee error margin is at most 10000. -/
-  feeMargin : config.fee_error_margin.val ≤ 10000
+  feeErrorMargin : config.fee_error_margin.val ≤ 10000
   /-- Premise: the signer is a plain system account. Guaranteed by Anchor whenever creating the
       two nullifier accounts takes lamports from the signer (a system transfer requires a plain
       system account as source); that is always the case unless both nullifier addresses
