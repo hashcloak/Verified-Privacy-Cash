@@ -3,7 +3,7 @@ import Spec.NonVacuity
 /-! # Privacy Cash: security goals and theorem statements
 
 The security properties of Privacy Cash, such as "no note is spent twice" and "every unspent
-note is backed by SOL in the pool". They form five goals, G1 Balance to G5 Config authority,
+note is backed by SOL in the pool". They form five goals, G1 Balance to G5 Admin control,
 each a set of theorems about the protocol model in `Spec/Spec.lean`, resting on the trusted
 assumptions T0–T3.
 
@@ -23,7 +23,7 @@ T0 Deployment.
 T1 Groth16. For the deployed key:
    - The trusted setup was honest: nobody knows its trapdoor.
    - Completeness: every statement with a witness has a verifying proof. This is why an honest
-     owner has the proof G3 takes as given (`validProof`).
+     owner has the proof G3a takes as given (`validProof`).
    - Extraction; proofs show knowledge: whoever makes a proof that verifies knows a witness
      for it.
 T2 Hashes. Nobody can find a collision of `H1`–`H4`, an `H2` or `H4` preimage of `0`, or
@@ -49,9 +49,9 @@ owners withdraw, pay out correctly and keep its configuration; [ZC] does not cov
   G1 Balance                    [ZC] Balance; docs: double-spend prevention,    G1a–G1d
                                 amount integrity
   G2 Non-malleability           [ZC] Transaction non-malleability               G2a G2b
-  G3 Liveness                   additional: funds must not get stuck            G3
+  G3 Liveness                   additional: funds must not get stuck            G3a G3b
   G4 Correct public payouts     docs: amount integrity                          G4a G4b
-  G5 Config authority           additional                                      G5
+  G5 Admin control              additional                                      G5a G5b
   -  Privacy                    [ZC] Ledger indistinguishability; docs          out of scope
 
 ## The goals
@@ -69,18 +69,20 @@ owners withdraw, pay out correctly and keep its configuration; [ZC] does not cov
 - G2b: they can't reveal its note's nullifier in a transaction of their own (front-running
   it) without the owner's secret key.
 
-**G3 Liveness.** Funds don't get stuck: an honest owner's spend is accepted, unless a policy
-check or a limit (root window, tree capacity) blocks it.
+**G3 Liveness.** Funds don't get stuck.
+- G3a: an honest owner's spend is accepted, unless a policy check or a limit (root window, tree
+  capacity) blocks it.
+- G3b: admins can't lock withdrawals: whatever fee settings and deposit limit they choose, a
+  way to withdraw a note of at least 2 lamports exists, and at least half reaches the recipient.
 
-**G4 Correct public payouts.** Public SOL moves exactly as the transaction says.
-- G4a: no SOL is created or lost, except the rent for the two nullifier accounts.
-- G4b: each account gains or pays exactly what the transaction's amount and fee say;
-  no other account is touched.
+**G4 Correct public payouts.** Public SOL moves only as those involved agreed.
+- G4a: only accounts that signed pay, and at most what they agreed to.
+- G4b: every account changes by exactly what it should receive minus what it should pay; the
+  pool gains the external amount less the fee.
 
-**G5 Config authority.** Only the authorities change the pool's configuration.
-- Transactions never change it; between transactions only signed admin changes do.
-- The authorities are whoever initialized the pool (the deployment's admin, when it has
-  one).
+**G5 Admin control.** Only the authorities change the configuration, within limits.
+- G5a: only admin changes signed by the initializer (the deployment's admin, if any) change it.
+- G5b: the authorities never change, and the fees stay at most 100%.
 
 Each theorem's title and explanation are in its docstring. Each goal the code connection
 carries over is a named property, defined just above its theorem,
@@ -90,7 +92,7 @@ which the connection states of the code.
 
 1. This file: the goals, the trusted assumptions, and for each goal its property and theorem.
 2. The definitions they use: `Spec/Vocabulary.lean` (runs, notes, breaks, the pieces of
-   G3) and `Spec/Spec.lean` (state, `transact` and its preconditions, `initWorld`).
+   G3a) and `Spec/Spec.lean` (state, `transact` and its preconditions, `initWorld`).
 3. The non-vacuity statements at the end: the hypotheses can hold.
 4. `Spec/Axioms.lean`: the build fails if any theorem uses `sorry` or an extra axiom.
 
@@ -110,8 +112,8 @@ same hash" is always true (a hash compresses) and would make the theorem say not
 
 The breaks are `H1Collision`, `H2Collision` (via `PathCollision`), `H2ZeroPreimage`,
 `H3Collision`, `H4Collision`, `H4ZeroPreimage` and `Sha256Collision`. G1a–G1d, G2a, G2b,
-G3 end in one; their titles mean "..., unless a hash break occurs". G4a, G4b and G5 need
-none: they hold outright.
+G3a, G3b end in one; their titles mean "..., unless a hash break occurs". G4a, G4b, G5a and G5b
+need none: they hold outright.
 
 **Histories (`r : Run (initWorld params)`).** Everything that happened to the pool since it
 was initialized:
@@ -125,7 +127,7 @@ was initialized:
 - `updatedValues j`: the balances and config just before transaction `j`, after what happened
   outside `transact` since the previous one, limited to what Solana and the program allow
   (`UpdatedValuesBetweenTransacts.Allowed`): SOL sent to any account, other accounts spending,
-  config changes signed by the right authority.
+  config changes signed by the right authority, each recorded with its signers.
 - `ws j`: the world (pool state, balances, config) before `updatedValues j`.
 Every world the pool can reach is the end of some history (`ReachableWorld.exists_run`),
 so stating the theorems over histories misses nothing.
@@ -169,7 +171,7 @@ every theorem is tagged with why it is fair to assume:
 
   - **A spend must use a recent root.** The tree keeps its last 100 roots, and each
     transaction adds two (one per output note), so a root expires after about 50
-    transactions. G3 only covers spends whose root has not expired; an owner whose
+    transactions. G3a only covers spends whose root has not expired; an owner whose
     proof is built on an expired root must rebuild it against a newer one (finding F7).
 
 -/
@@ -317,7 +319,10 @@ theorem balance
 /-! ### G1d. Only the owner's secret key can spend a note
 
 In every run, a spend of a note uses the note owner's secret key, unless a hash break
-occurs.-/
+occurs.
+
+G1a only says the spender holds *a* key that hashes to the note's owner public key.
+G1d says it is the owner's *own* key, unless someone found a second key with the same `H1` (`H1Collision`).-/
 
 /-- The property G1d proves: `OnlyOwnerSpends r wit`: every spend in run `r` uses the
     owner's secret key, or a hash break occurs.
@@ -440,7 +445,9 @@ theorem shared_nullifier_requires_owner_key
   (LeanSpec.shared_nullifier_requires_owner_key x x' w w' hRel hRel' i i' hShared).imp_right
     or_assoc.mpr
 
-/-! ## G3. Liveness: an honest owner's spend is accepted
+/-! ## G3. Liveness -/
+
+/-! ### G3a. An honest owner's spend is accepted
 
 An honest owner's spend is accepted, unless a policy check or a limit blocks it, if
 it is blocked otherwise this is a break with assumptions.
@@ -478,6 +485,7 @@ Why the two hypotheses suffice: each check of `transact`, the fields of `HonestS
 | `depositLimit` | `L.depositLimit` |
 | `poolSolvency` | `H.genuine`, `H.notDoubleSpend`, `H.inputNotUsedBefore`, `H.root`, `H.circuit`, `H.wellFormed`, or else `BreakInSomeSpend` |
 | `signerSolvency` | `H.signerCanPay` |
+| `signerSignature` | `H.wellFormed.signed` |
 | `treeNotFull` | `L.treeRoom` |
 | `amountRange` | `H.wellFormed.amountRange` |
 | `encOutLength` | `H.wellFormed.encOutLength` |
@@ -485,9 +493,8 @@ Why the two hypotheses suffice: each check of `transact`, the fields of `HonestS
 | `canonicalInputs` | `H.wellFormed.encodings` |
 | `balancesFit` | `L.balancesFit` | -/
 
-/-- **G3.** An honest owner's spend is accepted, or an attacker-side hash break occurs. -/
--- E: ok
-theorem unspent_note_is_spendable
+/-- **G3a.** An honest owner's spend is accepted, or an attacker-side hash break occurs. -/
+theorem honest_spend_is_accepted
     (params : InitParams)                                  -- [premise] the parameters the pool is initialized with
     (r : Run (initWorld params))                           -- [attacker] any valid history
     (wit : ℕ → Witness) (hwit : r.WitnessesFor wit)        -- [assumption T1] the witnesses of proofs of the attacker's run
@@ -496,123 +503,214 @@ theorem unspent_note_is_spendable
     (hHonest : HonestSpend r wit inputs witness k)         -- [owner]: everything the owner controls
     (hLimits : LimitsNotHit r.final inputs) :              -- [limit]: what can block it
     CanBeAccepted inputs r.final ∨ SpendBlockedByBreak r wit witness k :=
-  LeanSpec.unspent_note_is_spendable params r wit hwit inputs witness k hHonest hLimits
+  LeanSpec.honest_spend_is_accepted params r wit hwit inputs witness k hHonest hLimits
+
+/-! ### G3b. Admin config changes can't lock withdrawals
+
+G3a takes the fee check passing as a limit, because a transaction's fee is fixed in its proof, so
+it says nothing about hostile fee settings. This covers that: after any history, with any admin
+changes, a way to withdraw notes worth `spentAmt` lamports in total exists. In the worst case
+(withdrawal fee rate 100%, fee error margin 0) the fee check needs a fee equal to the payout,
+because the rate applies to the payout and not to `spentAmt`; so at least half of `spentAmt`
+reaches the recipient and the rest is the fee. The owner can name their own account as fee
+recipient, so the whole of `spentAmt` can still come back to them. With the default settings the fee is about 0.25%.
+
+Guards against: admins locking the funds in the pool through the fee settings or the deposit
+limit.
+
+Not covered: withdrawals can still be paused, by means other than the config:
+- A program upgrade: the program's upgrade authority can deploy code that rejects withdrawals.
+  The upgrade authority is outside the model.
+- Off-chain services going down (relayer, indexer, frontend): the owner then can't easily build or
+  submit the transaction. Here, we assume the owner's transaction and proof are given.
+
+Other limits:
+- A note of 1 lamport, which can't get out at a 100% withdrawal fee rate and a zero fee error margin.
+- A config change after the transaction is built, which can make its fee too low; the owner then
+  builds another. -/
+
+/-- `WithdrawalWay c spentAmt payout fee`: under config `c`, taking `spentAmt` lamports out of the
+    pool can pay `payout` to the recipient and `fee` to the fee recipient. -/
+def WithdrawalWay (c : config) (spentAmt payout fee : ℕ) : Prop :=
+  -- The recipient gets something,
+  0 < payout
+  -- all of `spentAmt` is paid out,
+  ∧ payout + fee = spentAmt
+  -- and the fee passes the fee check.
+  ∧ feeSufficient c (-(payout : ℤ)) fee
+
+/-- `WayIsAccepted r wit spentAmt payout fee`: after run `r`, an honest transaction that spends
+    `spentAmt` and uses this split is accepted, unless something outside the admins' reach (an old
+    root, a full tree, an overflow) or a hash break blocks it. -/
+def WayIsAccepted {w0 : World} (r : Run w0) (wit : ℕ → Witness) (spentAmt payout fee : ℕ) : Prop :=
+  ∀ (inputs : TxInputs) (witness : Witness) (k : ℕ)        -- [owner] the honest owner's transaction, its
+                                                           --   secrets, the tree state it uses
+    (_hHonest : HonestSpend r wit inputs witness k)        -- [owner] everything the owner controls
+    (_hSpent : witness.inAmt 0 + witness.inAmt 1 = (spentAmt : F)) -- [premise] it spends inputs worth `spentAmt`
+    (_hPayout : inputs.extAmt = -(payout : ℤ))             -- [owner] it pays `payout` to the recipient
+    (_hFee : inputs.f = fee)                               -- [owner] and `fee` to the fee recipient
+    (_hRoot : inputs.R ∈ Set.range r.final.state.tree.history) -- [limit] the root is still in the history
+    (_hTree : treeHasRoom r.final.state.tree)              -- [limit] the tree is not full
+    (_hFit : balancesFit inputs r.final),                  -- [limit] no credited balance overflows
+    CanBeAccepted inputs r.final ∨ SpendBlockedByBreak r wit witness k
+
+/-- **G3b.** After any run, with any admin changes, a way to withdraw notes worth `spentAmt`
+    lamports exists, at least half of `spentAmt` (rounded down) reaches the recipient, and an
+    honest transaction using that way is accepted (`WayIsAccepted`). -/
+theorem admins_cannot_lock_withdrawals
+    (params : InitParams)                                  -- [premise] the parameters the pool is initialized with
+    (r : Run (initWorld params))                           -- [attacker] any valid history, with
+                                                           --   any admin changes
+    (wit : ℕ → Witness) (hwit : r.WitnessesFor wit)        -- [assumption T1] the witnesses of proofs of the attacker's run
+    (spentAmt : ℕ) (hSpentAmt : 2 ≤ spentAmt) :            -- [premise] the total of the notes the owner spends
+    ∃ payout fee : ℕ,
+      WithdrawalWay r.final.state.config spentAmt payout fee
+      -- recipients gets at least half of the total
+      ∧ spentAmt / 2 ≤ payout
+      ∧ WayIsAccepted r wit spentAmt payout fee :=
+  let ⟨payout, fee, h0, hsum, hfee, hhalf, hacc⟩ :=
+    LeanSpec.admins_cannot_lock_withdrawals params r wit hwit spentAmt hSpentAmt
+  ⟨payout, fee, ⟨h0, hsum, hfee⟩, hhalf,
+    fun inputs witness k hH _ hA hF hW hR hB => hacc inputs witness k hH hA hF hW hR hB⟩
 
 /-! ## G4. Correct public payouts -/
 
-/-! ### G4a. No SOL is created or lost, except the nullifier rent
+/-! ### G4a. Only accounts that signed pay, and at most what they agreed to
 
-In every accepted transaction, the accounts it touches end with their total SOL before,
-minus the rent for the two new nullifier accounts.
+In every accepted transaction, an account other than the pool is debited only if it signed the
+transaction, and then by at most its deposit plus the rent for the two nullifier accounts.
 
-Guards against: a transaction that changes the total SOL held by the pool and the accounts
-it touches, other than by the rent for the two new nullifier accounts.
+Guards against: taking SOL from an account that never signed, or charging the signer more than
+the transaction says.-/
 
-Why this is the right statement: conservation is about totals, so it is stated over every
-account the transaction touches at once, whatever roles coincide. The pool is an ordinary
-account here, as on Solana. The rent goes to the two new nullifier accounts, which are not
-tracked in `balances`. Every other account is unchanged (G4b). -/
+/-- The property G4a proves: `OnlySignersPay inputs old new`: in the transaction from `old` to
+    `new`, every account other than the pool that is debited signed the transaction, and is
+    debited by at most its deposit plus twice the nullifier rent. -/
+def OnlySignersPay (inputs : TxInputs) (old new : World) : Prop :=
+  ∀ (k : Pubkey)                                           -- [attacker] any account,
+    (_hNotPool : k ≠ old.state.pool)                       -- [premise] other than the pool,
+    (_hDebited : new.balances k < old.balances k),         -- [premise] that is debited:
+    k ∈ inputs.signers ∧
+      (old.balances k : ℤ) - new.balances k ≤ max inputs.extAmt 0 + 2 * old.nullifierRent
 
-/-- The property G4a proves: `NoSolCreated inputs old new`: the transaction from `old` to
-    `new` creates and loses no SOL, except the nullifier rent.
-
-    The pool, the signer, the recipient and the fee recipient (each counted
-    once, even if roles coincide) together end with their total before, minus twice the
-    nullifier rent. -/
-def NoSolCreated (inputs : TxInputs) (old new : World) : Prop :=
-  ∑ k ∈ ({inputs.s, inputs.A, inputs.t, old.state.pool} : Finset Pubkey), (new.balances k : ℤ)
-  = ∑ k ∈ ({inputs.s, inputs.A, inputs.t, old.state.pool} : Finset Pubkey), (old.balances k : ℤ)
-    - 2 * old.nullifierRent
-
-/-- **G4a.** `NoSolCreated` holds for every accepted transaction. -/
-theorem no_sol_created
+/-- **G4a.** `OnlySignersPay` holds for every accepted transaction. -/
+theorem only_signers_pay
     (oldWorld newWorld : World) (inputs : TxInputs)        -- [attacker] any transaction, and the
                                                            --   pool before and after it
     (h : transact inputs oldWorld newWorld) :              -- [premise] the program accepted it
-    NoSolCreated inputs oldWorld newWorld :=
-  LeanSpec.no_sol_created oldWorld newWorld inputs h
+    OnlySignersPay inputs oldWorld newWorld :=
+  fun k hk hlost => LeanSpec.only_signers_pay oldWorld newWorld inputs h k hk hlost
 
-/-! ### G4b. Every account gets exactly what it is owed and pays exactly what it owes
+/-! ### G4b. Every account receives and pays exactly what it should
 
-In every accepted transaction, each account's SOL changes by exactly what the transaction's
-amount and fee say, and no other account is touched.
+In every accepted transaction, the pool's SOL changes by `extAmt − f`, and every other account's
+by exactly what it should receive minus what it should pay.
 
-Guards against: the recipient or fee recipient being paid the wrong amount, the signer being
-charged the wrong amount (in particular a deposit the signer doesn't pay for), the pool
-gaining or losing the wrong amount, and any uninvolved account being touched.
+Guards against: underpaying or overpaying the recipient or the fee recipient, charging the
+signer the wrong amount, paying or charging any other account, and SOL created or lost.-/
 
-Why this is the right statement: `balanceDelta` adds up the roles an account plays
-(`|extAmt|` to the recipient on a withdrawal, `f` to the fee recipient, `extAmt` and twice
-the nullifier rent from the signer, `extAmt − f` to the pool), so coinciding roles (a
-relayer, a self-withdrawal) are covered rather than excluded. The pool can't share a role
-(`poolIsSeparate`), as on Solana. The balances are those the program sees: Solana's network
-fee is charged before the program runs. -/
+/-- `shouldReceive inputs k`: what the transaction should pay account `k`: `|extAmt|` if `k` is
+    the recipient of a withdrawal, plus the fee `f` if `k` is the fee recipient. -/
+def shouldReceive (inputs : TxInputs) (k : Pubkey) : ℤ :=
+  -- withdrawal: the recipient `A` receives `|extAmt|`
+  (if k = inputs.A ∧ inputs.extAmt < 0 then (inputs.extAmt.natAbs : ℤ) else 0)
+  -- the fee recipient `t` receives the fee `f`
+  + (if k = inputs.t then (inputs.f : ℤ) else 0)
+
+/-- `shouldPay inputs rent k`: what account `k` should pay: the deposit `extAmt` if `k` is the
+    signer of a deposit, plus `rent` for each of the two nullifier accounts if `k` is the signer. -/
+def shouldPay (inputs : TxInputs) (rent : ℕ) (k : Pubkey) : ℤ :=
+  -- deposit: the signer `s` pays `extAmt`
+  (if k = inputs.s ∧ inputs.extAmt > 0 then inputs.extAmt else 0)
+  -- the signer `s` pays rent for the two nullifier accounts
+  + (if k = inputs.s then 2 * (rent : ℤ) else 0)
 
 /-- The property G4b proves: `ExactPayouts inputs old new`: in the transaction from `old` to
-    `new`, every account changes by exactly what it is owed or owes.
-
-    Every account `k` changes by `balanceDelta` (zero for accounts the
-    transaction doesn't involve). -/
-def ExactPayouts (inputs : TxInputs) (old new : World) : Prop :=
-  ∀ k, (new.balances k : ℤ) = old.balances k + balanceDelta inputs old.state.pool old.nullifierRent k
+    `new`, every account changes by exactly what it should receive minus what it should pay. -/
+structure ExactPayouts (inputs : TxInputs) (old new : World) : Prop where
+  /-- The pool gains the external amount, less the fee it pays out. -/
+  pool : (new.poolBalance : ℤ) = old.poolBalance + inputs.extAmt - inputs.f
+  /-- Every other account is credited what it should receive and debited what it should pay. -/
+  others : ∀ k, k ≠ old.state.pool →
+    (new.balances k : ℤ) =
+      old.balances k + shouldReceive inputs k - shouldPay inputs old.nullifierRent k
 
 /-- **G4b.** `ExactPayouts` holds for every accepted transaction. -/
-theorem balance_changes_exact
+theorem exact_payouts
     (oldWorld newWorld : World) (inputs : TxInputs)        -- [attacker] any transaction, and the
                                                            --   pool before and after it
     (h : transact inputs oldWorld newWorld) :              -- [premise] the program accepted it
     ExactPayouts inputs oldWorld newWorld :=
-  fun k => LeanSpec.balance_changes_exact oldWorld newWorld inputs h k
+  have hp := LeanSpec.exact_payouts oldWorld newWorld inputs h
+  ⟨hp.1, hp.2⟩
 
-/-! ## G5. Config authority -/
+/-! ## G5. Admin control
 
-/-! ### G5. Only the authorities change the pool's configuration
+A double check: G5a and G5b restate the admin rules of a run (`Allowed`, `AdminChange.apply`). -/
 
-In every run, only the authorities have changed the configuration, and the authorities are
-whoever initialized the pool (the deployment's admin, when it has one).
+/-! ### G5a. Only the authorities change the configuration
 
-Guards against: a transaction or an outsider changing the fee settings, the deposit limit,
-the authorities or the rent reserve; a fee error margin above 100%; and anyone but the
-deployment's admin taking control of the configuration.
+Guards against: anyone else changing the config, or initializing the pool. -/
 
-Why this is the right statement: transactions don't change the config at all, and between
-transactions only allowed admin changes do (`ReachableByAdminChanges`: new fee settings signed
-by the config's authority, a new deposit limit signed by the limit authority). The admin link
-is `InitParams.admin_init`. -/
-
-/-- The property G5 proves: `ConfigOnlyByAuthority params r`: throughout run `r`, only the
-    authorities have changed the config, and the authorities are whoever initialized the
-    pool.
-
-    In every world of `r`:
-    - **only allowed changes:** the config was reached from the initial one by allowed
-      admin changes (`ReachableByAdminChanges`);
-    - **the authorities:** both are whoever initialized the pool (the deployment's admin,
-      when it has one);
-    - **the fee error margin:** at most 10000 basis points (100%);
-    - **the rent:** the rent-exempt minimum is the initial one. -/
-def ConfigOnlyByAuthority (params : InitParams) (r : Run (initWorld params)) : Prop :=
+/-- `OnlyAuthoritiesChangeConfig params r`: the initializer is the deployment's admin (when it
+    has one), and in every world of `r` the config is what the recorded admin changes produced,
+    each signed by the initializer. -/
+def OnlyAuthoritiesChangeConfig (params : InitParams) (r : Run (initWorld params)) : Prop :=
+  -- the initializer is the deployment's admin, when it has one
+  (∀ a, params.admin = some a → params.initializer = a) ∧
+  -- for each world of the run
   ∀ j ≤ r.txs.length,
-    ReachableByAdminChanges params.cfg (r.ws j).state.config ∧
-    (r.ws j).state.config.authority = params.initializer ∧
-    (r.ws j).state.config.limitAuthority = params.initializer ∧
-    (r.ws j).state.config.feeErrorMargin ≤ 10000 ∧
-    (r.ws j).rentExemptMin = params.rentExemptMin
+    -- the current config is what the run's admin changes produced
+    ReachableByAdminChanges (r.adminChangesUpTo j) params.cfg (r.ws j).state.config ∧
+    -- each of those changes was signed by the initializer
+    (∀ ch ∈ r.adminChangesUpTo j, params.initializer ∈ ch.signers)
 
-/-- **G5.** `ConfigOnlyByAuthority` holds in every run from a freshly initialized pool. -/
-theorem config_changes_only_by_authority
+/-- **G5a.** `OnlyAuthoritiesChangeConfig` holds in every run from a freshly initialized pool. -/
+theorem only_authorities_change_config
     (params : InitParams)                                  -- [premise] the parameters the pool is initialized with
     (r : Run (initWorld params)) :                         -- [attacker] any history
-    ConfigOnlyByAuthority params r :=
-  LeanSpec.config_changes_only_by_authority params r
+    OnlyAuthoritiesChangeConfig params r :=
+  LeanSpec.only_authorities_change_config params r
+
+/-! ### G5b. Admins change only the fees and the deposit limit, within bounds
+
+Guards against: control passing to anyone else, and fees above 100% (G3b relies on this). -/
+
+/-- `AdminPowersLimited params r`: in every world of `r`, both authorities are the initializer,
+    and the fee error margin and both fee rates are at most 10000 basis points (100%). -/
+def AdminPowersLimited (params : InitParams) (r : Run (initWorld params)) : Prop :=
+  -- for each world of the run
+  ∀ j ≤ r.txs.length,
+    -- the authority stayed the same
+    (r.ws j).state.config.authority = params.initializer ∧
+    -- the limit authority stayed the same
+    (r.ws j).state.config.limitAuthority = params.initializer ∧
+    -- the fee error margin does not exceed the max allowed
+    (r.ws j).state.config.feeErrorMargin ≤ 10000 ∧
+    -- the two fee rates do not exceed the max allowed
+    (r.ws j).state.config.depositFeeRate ≤ 10000 ∧
+    (r.ws j).state.config.withdrawalFeeRate ≤ 10000
+
+/-- **G5b.** `AdminPowersLimited` holds in every run from a freshly initialized pool. -/
+theorem admin_powers_limited
+    (params : InitParams)                                  -- [premise] the parameters the pool is initialized with
+    (r : Run (initWorld params)) :                         -- [attacker] any history
+    AdminPowersLimited params r :=
+  LeanSpec.admin_powers_limited params r
 
 end LeanSpec.Goals
 
 /-! ## Non-vacuity: the hypotheses can hold
 
 Vacuity (hypotheses that can never hold together) is the main way a theorem can say
-nothing. In a toy model (`Spec/NonVacuity.lean`), the hypotheses of G1a–G1d and of G3
-can all hold, and G3's good outcome happens. The toy model is deliberately broken: the
+nothing. In a toy model (`Spec/NonVacuity.lean`), the hypotheses of every goal can hold,
+and G3a's good outcome happens:
+- **a run** (G1a–G1d, G5a, G5b): `nonvacuous_spend`;
+- **an accepted transaction** (G4a, G4b): `nonvacuous_withdrawal_accepted`;
+- **G2a and G2b:** `nonvacuous_G2a_hypotheses`, `nonvacuous_G2b_hypotheses`;
+- **an honest spend** (G3a, G3b): `nonvacuous_G3_hypotheses`, `nonvacuous_G3b_hypotheses`.
+
+The toy model is deliberately broken: the
 hash functions (`toyHashes`, `toySha`) and the groups and pairing (`toyGroups`,
 `toyPairing`: `G1 = G2 = F`, `GT = Unit`, every pairing is `1`, a byte string decodes to
 its length, the key is all zeros) are not cryptographic. With that pairing every proof
@@ -633,9 +731,9 @@ theorem nonvacuous_spend :
       r.txs.length = 2 ∧ r.WitnessesFor wit ∧ (wit 1).inAmt 0 ≠ 0 :=
   NonVacuity.run_with_spend_exists NonVacuity.toyCompleteBytes
 
-/-- **The hypotheses of G3 can all hold together, on a real spend.** After a one-deposit
+/-- **The hypotheses of G3a can all hold together, on a real spend.** After a one-deposit
     run, withdrawing the deposit's note (input 0 has a non-zero amount) satisfies every
-    hypothesis of G3; completeness on the wire holds in the toy model (`toyCompleteBytes`) and
+    hypothesis of G3a; completeness on the wire holds in the toy model (`toyCompleteBytes`) and
     gives its proof. -/
 theorem nonvacuous_G3_hypotheses :
     ∃ (inputs : TxInputs) (witness : Witness) (k : ℕ),
@@ -646,12 +744,46 @@ theorem nonvacuous_G3_hypotheses :
       ∧ LimitsNotHit (NonVacuity.toyRun1 NonVacuity.toyCompleteBytes).final inputs :=
   NonVacuity.toy_G3_hypotheses NonVacuity.toyCompleteBytes
 
-/-- **G3's good outcome happens.** After the same run, the program accepts that
+/-- **The hypotheses of G3b's `WayIsAccepted` can all hold together, on a real spend.** After a
+    one-deposit run, withdrawing the deposit's 2-lamport note as a payout of 1 and a fee of 1
+    (the split G3b's proof picks) satisfies each of them. -/
+theorem nonvacuous_G3b_hypotheses :
+    ∃ (inputs : TxInputs) (witness : Witness) (k : ℕ),
+      witness.inAmt 0 ≠ 0
+      ∧ (NonVacuity.toyRun1 NonVacuity.toyCompleteBytes).WitnessesFor (fun _ => NonVacuity.toyWitness)
+      ∧ HonestSpend (NonVacuity.toyRun1 NonVacuity.toyCompleteBytes)
+          (fun _ => NonVacuity.toyWitness) inputs witness k
+      ∧ witness.inAmt 0 + witness.inAmt 1 = ((2 : ℕ) : F)
+      ∧ inputs.extAmt = -((1 : ℕ) : ℤ)
+      ∧ inputs.f = 1
+      ∧ inputs.R ∈ Set.range (NonVacuity.toyRun1 NonVacuity.toyCompleteBytes).final.state.tree.history
+      ∧ treeHasRoom (NonVacuity.toyRun1 NonVacuity.toyCompleteBytes).final.state.tree
+      ∧ balancesFit inputs (NonVacuity.toyRun1 NonVacuity.toyCompleteBytes).final :=
+  NonVacuity.toy_G3b_hypotheses NonVacuity.toyCompleteBytes
+
+/-- **G3a's good outcome happens.** After the same run, the program accepts that
     withdrawal. Toy hashes and a toy pairing: it shows the outcome is reachable, not that
     real cryptography reaches it. -/
 theorem nonvacuous_withdrawal_accepted :
     CanBeAccepted (NonVacuity.toyWithdrawal NonVacuity.toyCompleteBytes)
       (NonVacuity.toyRun1 NonVacuity.toyCompleteBytes).final :=
   NonVacuity.toy_withdrawal_accepted NonVacuity.toyCompleteBytes
+
+/-- **The hypotheses of G2a can all hold together.** The toy withdrawal, accepted after the same
+    run, serves as both the honest transaction (well formed) and the attacker's (same public
+    inputs, accepted). -/
+theorem nonvacuous_G2a_hypotheses :
+    ∃ (T T' : TxInputs) (oldWorld' newWorld' : World),
+      ExtDataWellFormed T ∧ T.pubInputs = T'.pubInputs ∧ transact T' oldWorld' newWorld' :=
+  have h := NonVacuity.toy_G2a_hypotheses NonVacuity.toyCompleteBytes
+  ⟨_, _, _, _, h.1, rfl, h.2⟩
+
+/-- **The hypotheses of G2b can all hold together.** The toy withdrawal's witness, used as both
+    witnesses, satisfies the circuit, and the two reveal the same nullifier. -/
+theorem nonvacuous_G2b_hypotheses :
+    ∃ (x : PubInputs) (w : Witness) (x' : PubInputs) (w' : Witness) (i i' : Fin 2),
+      RelationS x w ∧ RelationS x' w' ∧ x.nullifiers i = x'.nullifiers i' :=
+  have h := NonVacuity.toy_G2b_hypotheses NonVacuity.toyCompleteBytes
+  ⟨_, _, _, _, 0, 0, h, h, rfl⟩
 
 end LeanSpec.Goals.NonVacuous

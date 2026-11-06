@@ -345,15 +345,15 @@ theorem transact_refines_core
     (crypto : CryptoFacts d proof)
     (rentFixed : tx.minimumBalance = some rent)
     (hProofValid : d.crypto.proofVerifier.verify proof = ok true →
-      LeanSpec.proofValid (toInputs a proof extAmount fee out1 out2)) :
-    let inputs := toInputs a proof extAmount fee out1 out2
+      LeanSpec.proofValid (toInputs tx.signers a proof extAmount fee out1 out2)) :
+    let inputs := toInputs tx.signers a proof extAmount fee out1 out2
     let spent' := spent ∪ {inputs.k0, inputs.k1}
     ∃ B E : Pubkey → ℕ,
       LeanSpec.transact inputs
         ((toWorld d rent spent s).withUpdatedValues
-          ⟨fun x => B (fromPubkey x), (toWorld d rent spent s).state.config⟩)
+          ⟨fun x => B (fromPubkey x), (toWorld d rent spent s).state.config, []⟩)
         ((toWorld d rent spent' s').withUpdatedValues
-          ⟨fun x => E (fromPubkey x), (toWorld d rent spent' s').state.config⟩) ∧
+          ⟨fun x => E (fromPubkey x), (toWorld d rent spent' s').state.config, []⟩) ∧
       B (poolAddr d) = publicBalance s (poolAddr d) ∧ E (poolAddr d) = publicBalance s' (poolAddr d) ∧
       (OutsideSpecDetail d rent s tx a proof → B = publicBalance s ∧ E = publicBalance s') ∧
       WellFormed d spent' s' := by
@@ -530,7 +530,7 @@ theorem transact_refines_core
   set B : Pubkey → ℕ := fun k => if k = a.signer then (s₁ a.signer).lamports.val + 2 * nr
     else if k = a.nullifier0 ∨ k = a.nullifier1 then 0 else P k with hBdef
   set W₁ := (toWorld d rent spent s).withUpdatedValues
-    ⟨fun x => B (fromPubkey x), (toWorld d rent spent s).state.config⟩
+    ⟨fun x => B (fromPubkey x), (toWorld d rent spent s).state.config, []⟩
     with hW₁def
   have hpoolDataN : ∀ b, (s a.treeTokenAccount).data ≠ .nullifier b := by
     rw [hpoolData]; intro b h; cases h
@@ -774,7 +774,7 @@ theorem transact_refines_core
   -- the preconditions
   have hpre : LeanSpec.transactPreconditions inputs W₁ := by
     refine ⟨?knownRoot, hser, ?minimumFee, hpub, hProofValid hok.verify, ?fresh, ?distinct,
-      ?depositLimit, hPS, hSS, ?room, ?range, hfits, hSep,
+      ?depositLimit, hPS, hSS, List.mem_map_of_mem hvalid.signer, ?room, ?range, hfits, hSep,
       ?canonical, ?fit⟩
     case knownRoot =>
       show LeanSpec.rootBytesKnown (toTree (treeAt s (treeAddr d))) (toBytes proof.root.val)
@@ -839,7 +839,7 @@ theorem transact_refines_core
   -- the effects
   have heff : LeanSpec.AgreesOnProgramEffects inputs (LeanSpec.transactEffects inputs W₁)
       ((toWorld d rent spent' s').withUpdatedValues
-        ⟨fun x => E (fromPubkey x), (toWorld d rent spent' s').state.config⟩) := by
+        ⟨fun x => E (fromPubkey x), (toWorld d rent spent' s').state.config, []⟩) := by
     refine ⟨?tree, ?nulls, ?pool, ?config, ?rentEx, ?nrent, ?bal⟩
     case nulls =>
       simp only [LeanSpec.transactEffects, LeanSpec.transferEffects, LeanSpec.nullifierRentEffects,
@@ -978,8 +978,8 @@ theorem transact_refines
     (crypto : CryptoFacts d proof)
     (outside : OutsideSpecDetail d rent s tx a proof)
     (hProofValid : d.crypto.proofVerifier.verify proof = ok true →
-      LeanSpec.proofValid (toInputs a proof extAmount fee out1 out2)) :
-    let inputs := toInputs a proof extAmount fee out1 out2
+      LeanSpec.proofValid (toInputs tx.signers a proof extAmount fee out1 out2)) :
+    let inputs := toInputs tx.signers a proof extAmount fee out1 out2
     let spent' := spent ∪ {inputs.k0, inputs.k1}
     LeanSpec.transact inputs (toWorld d rent spent s) (toWorld d rent spent' s') ∧
       WellFormed d spent' s' := by
@@ -989,8 +989,8 @@ theorem transact_refines
   refine ⟨?_, wf'⟩
   have h1 := LeanSpec.World.withUpdatedValues_self (toWorld d rent spent s)
   have h2 := LeanSpec.World.withUpdatedValues_self
-    (toWorld d rent (spent ∪ {(toInputs a proof extAmount fee out1 out2).k0,
-      (toInputs a proof extAmount fee out1 out2).k1}) s')
+    (toWorld d rent (spent ∪ {(toInputs tx.signers a proof extAmount fee out1 out2).k0,
+      (toInputs tx.signers a proof extAmount fee out1 out2).k1}) s')
   simp only [LeanSpec.UpdatedValuesBetweenTransacts.unchanged] at h1 h2
   rw [← h1, ← h2]; exact htx
 
@@ -1008,8 +1008,8 @@ theorem transact_refines_between
     (crypto : CryptoFacts d proof)
     (rentFixed : tx.minimumBalance = some rent)
     (hProofValid : d.crypto.proofVerifier.verify proof = ok true →
-      LeanSpec.proofValid (toInputs a proof extAmount fee out1 out2)) :
-    let inputs := toInputs a proof extAmount fee out1 out2
+      LeanSpec.proofValid (toInputs tx.signers a proof extAmount fee out1 out2)) :
+    let inputs := toInputs tx.signers a proof extAmount fee out1 out2
     let spent' := spent ∪ {inputs.k0, inputs.k1}
     ∃ b₁ : LeanSpec.UpdatedValuesBetweenTransacts, b₁.Allowed (toWorld d rent spent s) ∧
       ∃ b₂ : LeanSpec.UpdatedValuesBetweenTransacts,
@@ -1017,13 +1017,20 @@ theorem transact_refines_between
         ((toWorld d rent spent' s').withUpdatedValues b₂) ∧
       (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent spent' s')).Allowed
         ((toWorld d rent spent' s').withUpdatedValues b₂) ∧
-      WellFormed d spent' s' := by
+      WellFormed d spent' s' ∧ b₁.adminChanges = [] ∧
+      b₁.balances (toPubkey (poolAddr d)) = publicBalance s (poolAddr d) ∧
+      b₂.config = (toWorld d rent spent' s').state.config ∧
+      b₂.balances (toPubkey (poolAddr d)) = publicBalance s' (poolAddr d) := by
   obtain ⟨B, E, htx, hB, hE, -, wf'⟩ :=
     transact_refines_core hstep hashes wf solana crypto rentFixed hProofValid
-  refine ⟨_, ⟨?_, .noChange _⟩, _, htx, ⟨?_, .noChange _⟩, wf'⟩
+  refine ⟨_, ⟨?_, .noChange _⟩, _, htx, ⟨?_, .noChange _⟩, wf', rfl, ?_, rfl, ?_⟩
   · show publicBalance s (fromPubkey (toPubkey (poolAddr d))) ≤ B (fromPubkey (toPubkey (poolAddr d)))
     rw [fromPubkey_toPubkey, hB]
   · show E (fromPubkey (toPubkey (poolAddr d))) ≤ publicBalance s' (fromPubkey (toPubkey (poolAddr d)))
+    rw [fromPubkey_toPubkey, hE]
+  · show B (fromPubkey (toPubkey (poolAddr d))) = publicBalance s (poolAddr d)
+    rw [fromPubkey_toPubkey, hB]
+  · show E (fromPubkey (toPubkey (poolAddr d))) = publicBalance s' (poolAddr d)
     rw [fromPubkey_toPubkey, hE]
 
 end Connection

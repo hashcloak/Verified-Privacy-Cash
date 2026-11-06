@@ -111,7 +111,7 @@ structure H4ZeroPreimage (a : Note) : Prop where
   preimage : H4 a.amount a.ownerPk a.blinding a.mint = 0
 
 /-- An `H2` preimage of `0`: a pair that `H2` hashes to `0`. A Merkle root equal to `0`
-    (which `rootKnown` rejects) needs one. Used by G3. -/
+    (which `rootKnown` rejects) needs one. Used by G3a. -/
 structure H2ZeroPreimage (a : F × F) : Prop where
   preimage : H2 a.1 a.2 = 0
 
@@ -387,6 +387,9 @@ structure TxInputs where
   extAmt: ℤ -- external amount
   f: ℕ -- fee
   s: Pubkey -- signer
+  -- SOLANA FACT: the accounts that signed the transaction. Not part of the external data, so a
+  -- relayer can submit a copy of a proof under its own signature (G2a).
+  signers: List Pubkey
   A : Pubkey -- recipient address
   t : Pubkey -- fee recipient
   encOut0: Bytes -- encrypted output 0
@@ -557,6 +560,13 @@ def poolSolvent (poolBalance rentExemptMin: ℕ) (extAmt: ℤ) (f: ℕ): Prop :=
 def signerSolvent (balances: Pubkey → ℕ) (s: Pubkey) (extAmt: ℤ) (nullifierRent: ℕ): Prop :=
   balances s ≥ 2 * nullifierRent + (if extAmt > 0 then extAmt.natAbs else 0)
 
+-- The signer really signed the transaction.
+-- SOLANA FACT: an account's SOL can be spent only with its signature. Enforced on-chain by
+-- Anchor's `Signer` check. Without this rule, a transaction could name any funded account as
+-- the signer and take its SOL (G4a).
+def signerSigned (inputs: TxInputs): Prop :=
+  inputs.s ∈ inputs.signers
+
 -- There is room in the tree for the two output commitments (the tree holds `2^26` leaves).
 def treeHasRoom (T: Tree): Prop :=
   T.nextIndex ≤ 2^26 - 2
@@ -578,7 +588,7 @@ def encOutsFit (inputs: TxInputs): Prop :=
 -- The pool's account is not the signer, and is not paid as recipient or fee recipient.
 -- SOLANA FACT: a modelling precondition. It makes the pool's balance change by exactly
 -- `extAmt − f` (`sol_balance_correctness_step`), which G1c (every unspent note is backed by SOL
--- in the pool) and G4a (no SOL is created or lost) rely on: a withdrawal paid to the pool
+-- in the pool) and G4 (correct public payouts) rely on: a withdrawal paid to the pool
 -- would spend notes while the SOL stays in the pool. It holds on Solana: the signer can't be
 -- the pool (a program address can't sign); if the pool is paid as recipient or fee recipient,
 -- the program reads both balances and then writes both, which would create lamports, and the
@@ -613,6 +623,7 @@ structure transactPreconditions
   depositLimit: depositWithinLimit oldWorld.state.config inputs.extAmt
   poolSolvency: poolSolvent oldWorld.poolBalance oldWorld.rentExemptMin inputs.extAmt inputs.f
   signerSolvency: signerSolvent oldWorld.balances inputs.s inputs.extAmt oldWorld.nullifierRent
+  signerSignature: signerSigned inputs
   -- The 2 output commitments are added to the tree; make sure there is space for both
   treeNotFull: treeHasRoom oldWorld.state.tree
   amountRange: amountsInRange inputs.extAmt inputs.f
@@ -680,6 +691,11 @@ structure InitParams where
   pool : Pubkey
   -- Who initialized the pool.
   initializer : Pubkey
+  -- SOLANA FACT: the accounts that signed the `initialize` transaction.
+  signers : List Pubkey
+  -- SOLANA FACT: the initializer really signed it (Anchor's `Signer` check). Without this rule,
+  -- anyone could initialize the pool in the admin's name, with a config of their choosing.
+  initializer_signed : initializer ∈ signers
   -- ADDED MANUALLY (docs silent): the deployment's admin key, if it has one (test builds have
   -- none). Taken from the code (`ADMIN_PUBKEY`). The spec needs it to state `admin_init`.
   admin : Option Pubkey
@@ -696,6 +712,11 @@ structure InitParams where
   -- needs it because `feeSufficient` computes `10000 − feeErrorMargin`, which means nothing
   -- above 100%.
   feeErrorMargin_init : cfg.feeErrorMargin ≤ 10000
+  -- ADDED MANUALLY (docs silent): the fee rate limit, at most 10000 basis points, on the initial
+  -- config. In the code it holds without a check: `initialize` sets the rates to 0 and 25. The spec
+  -- needs it for security: with no limit, admins could set a rate that locks notes (G3b).
+  depositFeeRate_init : cfg.depositFeeRate ≤ 10000
+  withdrawalFeeRate_init : cfg.withdrawalFeeRate ≤ 10000
 
 def initWorld (params : InitParams) : World := {
   state := {
@@ -736,34 +757,37 @@ inductive AdminResult where
 
 /-- `ch.apply c`: whether admin change `ch` is accepted on config `c`, and the new config if so.
 
-    - **New fee settings:** the config's authority must be among the signers, and the fee error
-      margin must be at most 10000 basis points (100%).
+    - **New fee settings:** the config's authority must be among the signers, and the two fee
+      rates and the fee error margin must each be at most 10000 basis points (100%).
       ADDED MANUALLY (docs silent): the fee error margin limit check m ≤ 10000. Taken from the
       code (`update_global_config`). The spec needs it because `feeSufficient` computes
       `10000 − feeErrorMargin`, which means nothing above 100%.
+      ADDED MANUALLY (docs silent): the fee rate limit checks d ≤ 10000 and w ≤ 10000. Taken from
+      the code (`update_global_config`). The spec needs them for security: with no limit, admins
+      could set a rate that locks notes (G3b).
     - **New deposit limit:** the limit authority must be among the signers.
 
     Nothing else changes; no admin change touches the authorities. -/
 def AdminChange.apply (ch : AdminChange) (c : config) : AdminResult :=
   match ch.action with
   | .feeSettings d w m =>
-    if c.authority ∈ ch.signers ∧ m ≤ 10000 then
+    if c.authority ∈ ch.signers ∧ d ≤ 10000 ∧ w ≤ 10000 ∧ m ≤ 10000 then
       .accepted { c with depositFeeRate := d, withdrawalFeeRate := w, feeErrorMargin := m }
     else .rejected
   | .depositLimit l =>
     if c.limitAuthority ∈ ch.signers then .accepted { c with maxDepositLimit := l } else .rejected
 
-/-- `ReachableByAdminChanges c1 c2`: can accepted admin changes take the config from `c1` to
-    `c2`, in any number of steps? Built the same way as `ReachableWorld` below. -/
-inductive ReachableByAdminChanges : config → config → Prop where
+/-- `ReachableByAdminChanges chs c1 c2`: the admin changes `chs`, applied in order, are each
+    accepted and take the config from `c1` to `c2`. Built the same way as `ReachableWorld` below. -/
+inductive ReachableByAdminChanges : List AdminChange → config → config → Prop where
   -- No admin changes; true for any config
-  | noChange (c1 : config) : ReachableByAdminChanges c1 c1
-  -- Given a reachable pair c1, c2, and an admin change accepted on c2 that gives c3,
-  -- Then obtain proof that c3 is reachable from c1
-  | extend {c1 c2 c3 : config} (ch : AdminChange) :
-      ReachableByAdminChanges c1 c2 →
+  | noChange (c1 : config) : ReachableByAdminChanges [] c1 c1
+  -- Given changes `chs` that take c1 to c2, and an admin change accepted on c2 that gives c3,
+  -- Then `chs` followed by that change takes c1 to c3
+  | extend {chs : List AdminChange} {c1 c2 c3 : config} (ch : AdminChange) :
+      ReachableByAdminChanges chs c1 c2 →
       ch.apply c2 = .accepted c3 →
-      ReachableByAdminChanges c1 c3
+      ReachableByAdminChanges (chs ++ [ch]) c1 c3
 
 /-- `UpdatedValuesBetweenTransacts`: the new balances and config after activity outside
     `transact`.
@@ -772,11 +796,15 @@ inductive ReachableByAdminChanges : config → config → Prop where
     can spend, and admins can change the config. The tree and the nullifiers stay as they are,
     because only `transact` changes them.
 
-    This records the outcome, not the activity: for example, the pool's new total balance, not
-    the amount someone sent. (`Allowed` below says which outcomes are possible.) -/
+    This records the outcome for balances: for example, the pool's new total balance, not the
+    amount someone sent. For the config it also records the activity, because who changed it
+    matters. (`Allowed` below says which outcomes are possible.) -/
 structure UpdatedValuesBetweenTransacts where
   balances : Pubkey → ℕ
   config : config
+  -- The accepted admin instructions since the last transaction, in order, with the signers of
+  -- their transactions.
+  adminChanges : List AdminChange
 
 /-- `w.withUpdatedValues b`: world `w` with the balances and config of `b`; the tree, the
     nullifiers, the pool's address and the rent stay as they are. -/
@@ -789,11 +817,11 @@ def World.withUpdatedValues (w : World) (b : UpdatedValuesBetweenTransacts) : Wo
     - Anyone can send SOL to any account at any time, so the pool's balance can only grow: only
     the program can take SOL out of it, and only in a transaction. Every other account can
     change arbitrarily (its owner can also spend from it).
-    - The config changes only by allowed admin changes. -/
+    - The config changes only by the recorded admin changes. -/
 structure UpdatedValuesBetweenTransacts.Allowed (w : World) (b : UpdatedValuesBetweenTransacts) :
     Prop where
   poolGains : w.poolBalance ≤ b.balances w.state.pool
-  config : ReachableByAdminChanges w.state.config b.config
+  config : ReachableByAdminChanges b.adminChanges w.state.config b.config
 
 -- A claim about a pair of worlds; can we go from w1 to w2?
 --   This lets us reason about "in any number of steps"

@@ -35,31 +35,32 @@ Anchor's `init`s, so no nullifier rent), on the environment `execTransact` build
 (`handlerEnv`). -/
 
 section
+variable {signers : List Pubkey}
 variable {G1 G2 GT : Type} [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGroup G2]
   [Module LeanSpec.F G2] [CommGroup GT] [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
 
 /-- `HandlerSpecAllows …`: the spec allows the transaction: every spec precondition holds
     for the mapped inputs in the world the handler sees. -/
-def HandlerSpecAllows (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
+def HandlerSpecAllows (signers : List Pubkey) (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
     (a : TransactAccounts) (s₁ : State) (v : U64) (tree : zkcash_core.merkle_tree.MerkleTreeAccount)
     (config : zkcash_core.admin.GlobalConfig) (spent : Finset LeanSpec.F)
     (proof : zkcash_core.transact.Proof) (ext : I64) (fee : U64) (out1 out2 : Slice U8) : Prop :=
   letI : LeanSpec.Groups := syscallGroups C
   letI : LeanSpec.Pairing := syscallPairing C laws
   letI : LeanSpec.Deployment := ⟨programKey C⟩
-  LeanSpec.transactPreconditions (toInputs a proof ext fee out1 out2) (handlerWorld a s₁ v tree config spent)
+  LeanSpec.transactPreconditions (toInputs signers a proof ext fee out1 out2) (handlerWorld a s₁ v tree config spent)
 
 /-- `HandlerMatchesSpec …`: the handler accepts, with exactly the spec's effects: it returns
     `Ok`, every account's balance is the spec's (`transactEffects`, on code addresses), and
     the new tree is the spec's. -/
-def HandlerMatchesSpec (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
+def HandlerMatchesSpec (signers : List Pubkey) (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
     (a : TransactAccounts) (s₁ : State) (v : U64) (tree : zkcash_core.merkle_tree.MerkleTreeAccount)
     (config : zkcash_core.admin.GlobalConfig) (spent : Finset LeanSpec.F)
     (proof : zkcash_core.transact.Proof) (ext : I64) (fee : U64) (out1 out2 : Slice U8) : Prop :=
   letI : LeanSpec.Groups := syscallGroups C
   letI : LeanSpec.Pairing := syscallPairing C laws
   letI : LeanSpec.Deployment := ⟨programKey C⟩
-  let effects := LeanSpec.transactEffects (toInputs a proof ext fee out1 out2)
+  let effects := LeanSpec.transactEffects (toInputs signers a proof ext fee out1 out2)
     (handlerWorld a s₁ v tree config spent)
   ∃ ap env' tree', zkcash_core.transact.transact c.hasher arkFr c.sha256 c.proofVerifier solRuntime
       (handlerEnv a s₁ v) tree config proof ext fee a.recipient a.feeRecipientAccount out1 out2
@@ -78,9 +79,9 @@ attribute [local instance] Toy.toyPoseidon Toy.toySpecSha
 theorem handler_rejects_internal_transfer :
     CompletenessAssumptions Toy.toyCrypto Toy.toyC ∧
     HandlerContext Toy.toyAccounts (Toy.toyState 0#u64) Toy.toyTree Toy.toyConfig Toy.emptySlice Toy.emptySlice ∧
-    HandlerSpecAllows Toy.toyCrypto Toy.toyC Toy.toyLaws Toy.toyAccounts (Toy.toyState 0#u64) 0#u64
+    HandlerSpecAllows Toy.toySigners Toy.toyCrypto Toy.toyC Toy.toyLaws Toy.toyAccounts (Toy.toyState 0#u64) 0#u64
       Toy.toyTree Toy.toyConfig ∅ Toy.l1Proof 0#i64 0#u64 Toy.emptySlice Toy.emptySlice ∧
-    ¬ HandlerMatchesSpec Toy.toyCrypto Toy.toyC Toy.toyLaws Toy.toyAccounts (Toy.toyState 0#u64) 0#u64
+    ¬ HandlerMatchesSpec Toy.toySigners Toy.toyCrypto Toy.toyC Toy.toyLaws Toy.toyAccounts (Toy.toyState 0#u64) 0#u64
       Toy.toyTree Toy.toyConfig ∅ Toy.l1Proof 0#i64 0#u64 Toy.emptySlice Toy.emptySlice :=
   ⟨Toy.toyAssumptions, Toy.toyContext _, Toy.toy_pre_L1, fun ⟨ap, e, t, h, _⟩ => Toy.toy_L1_rejects ap e t h⟩
 
@@ -93,9 +94,9 @@ theorem handler_rejects_zero_proof_a :
     (1#i64 : I64).val ≠ 0 ∧
     CompletenessAssumptions Toy.toyCrypto Toy.toyC ∧
     HandlerContext Toy.toyAccounts (Toy.toyState 1#u64) Toy.toyTree Toy.toyConfig Toy.emptySlice Toy.emptySlice ∧
-    HandlerSpecAllows Toy.toyCrypto Toy.toyC Toy.toyLaws Toy.toyAccounts (Toy.toyState 1#u64) 0#u64
+    HandlerSpecAllows Toy.toySigners Toy.toyCrypto Toy.toyC Toy.toyLaws Toy.toyAccounts (Toy.toyState 1#u64) 0#u64
       Toy.toyTree Toy.toyConfig ∅ Toy.a0Proof 1#i64 0#u64 Toy.emptySlice Toy.emptySlice ∧
-    ¬ HandlerMatchesSpec Toy.toyCrypto Toy.toyC Toy.toyLaws Toy.toyAccounts (Toy.toyState 1#u64) 0#u64
+    ¬ HandlerMatchesSpec Toy.toySigners Toy.toyCrypto Toy.toyC Toy.toyLaws Toy.toyAccounts (Toy.toyState 1#u64) 0#u64
       Toy.toyTree Toy.toyConfig ∅ Toy.a0Proof 1#i64 0#u64 Toy.emptySlice Toy.emptySlice :=
   ⟨by simp, Toy.toyAssumptions, Toy.toyContext _, Toy.toy_pre_A0,
     fun ⟨ap, e, t, h, _⟩ => Toy.toy_A0_rejects ap e t h⟩
@@ -103,6 +104,7 @@ theorem handler_rejects_zero_proof_a :
 end
 
 section
+variable {signers : List Pubkey}
 variable {G1 G2 GT : Type} [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGroup G2]
   [Module LeanSpec.F G2] [CommGroup GT] [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
 
@@ -113,7 +115,8 @@ variable {G1 G2 GT : Type} [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGrou
     - **A0:** `proof_a` is the 64 zero bytes.
     The counterexamples above show both happen; this theorem shows nothing else does: with a
     nonzero amount and `proof_a` not the 64 zero bytes, the handler is complete. It covers
-    the handler only (the program's own logic), not Anchor's checks or the runtime. -/
+    the handler only (the program's own logic), not Anchor's checks or the runtime. For those,
+    see `honestSpendIsAccepted_code`. -/
 theorem handler_complete_except_L1_A0 (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT)
     (laws : PairingLaws C.e) {a : TransactAccounts} {s₁ : State} {v : U64}
     {tree : zkcash_core.merkle_tree.MerkleTreeAccount} {config : zkcash_core.admin.GlobalConfig}
@@ -123,9 +126,9 @@ theorem handler_complete_except_L1_A0 (c : Crypto) (C : AltBn128Contracts c.altB
     (ctx : HandlerContext a s₁ tree config out1 out2)      -- [invariant], [premise]: see the structure
     (notL1 : ext.val ≠ 0)                                  -- [finding L1] excluded
     (notA0 : proof.proof_a.val ≠ List.replicate 64 0#u8)   -- [finding A0] excluded
-    (allows : HandlerSpecAllows c C laws a s₁ v tree config spent proof ext fee out1 out2) :
+    (allows : HandlerSpecAllows signers c C laws a s₁ v tree config spent proof ext fee out1 out2) :
                                                            -- [premise] the spec allows it
-    HandlerMatchesSpec c C laws a s₁ v tree config spent proof ext fee out1 out2 :=
+    HandlerMatchesSpec signers c C laws a s₁ v tree config spent proof ext fee out1 out2 :=
   handler_complete_exact' c C laws assume.1 assume.2 assume.3 assume.4 a s₁ v tree config spent proof ext
     fee out1 out2 ctx.1 ctx.2 ctx.3 ctx.4 ctx.5 ctx.6 ctx.7 ctx.8 notL1 notA0 allows
 

@@ -28,7 +28,12 @@ and should be read differently:
 7. For handler completeness only: `HashesSucceed`, `SyscallsSucceed` and `KeyG2Decodes`
    (ASSUMED: the primitives answer at all, and the key's G2 points decode).
 
-No code/spec difference is currently excluded: no theorem has a `Findings` hypothesis.
+8. For G3a and G3b for the code only: `ReachesProgram`, bundling `AccountsCorrect` (the owner's
+   choice), `ProgramAccountsInPlace` and `NullifierAddressesFree` (ASSUMED, not machine-checked:
+   Anchor's account constraints hold), and `SignerCreditFits` (a limit).
+
+No code/spec difference is currently excluded by `transact_connection` or `run_connection`. G3a
+for the code excludes L1 and A0 by name, and G3b A0: see `Findings.lean`.
 
 Not a hypothesis here, but relied on: core-model's `EnvStep` (outside actions cannot change the
 owner or data of an account the program owns, and the program never closes one). The
@@ -260,6 +265,93 @@ structure OutsideSpecDetail (d : Deployment) (rent : Nat → U64) (s : State) (t
     a.recipient ≠ d.pda (nullifier1Seeds proof.input_nullifiers.val[1]!) ∧
     a.feeRecipientAccount ≠ d.pda (nullifier0Seeds proof.input_nullifiers.val[0]!) ∧
     a.feeRecipientAccount ≠ d.pda (nullifier1Seeds proof.input_nullifiers.val[1]!)
+
+/-! ## For G3a and G3b for the code: the transaction gets past Anchor -/
+
+/-- `AccountsCorrect d s a proof` (the owner's choice): the sender lists the right accounts.
+
+    Fixes the addresses Anchor checks: the tree, the pool, the config, the four nullifier addresses
+    of the proof's nullifiers and the system program. Then the owner's own accounts: the signer
+    and the payees. Nothing here is a claim about the program. -/
+structure AccountsCorrect (d : Deployment) (s : State) (a : TransactAccounts)
+    (proof : zkcash_core.transact.Proof) : Prop where
+  tree : a.treeAccount = treeAddr d
+  pool : a.treeTokenAccount = poolAddr d
+  config : a.globalConfig = configAddr d
+  nullifier0 : a.nullifier0 = d.pda (nullifier0Seeds proof.input_nullifiers.val[0]!)
+  nullifier1 : a.nullifier1 = d.pda (nullifier1Seeds proof.input_nullifiers.val[1]!)
+  nullifier2 : a.nullifier2 = d.pda (nullifier0Seeds proof.input_nullifiers.val[1]!)
+  nullifier3 : a.nullifier3 = d.pda (nullifier1Seeds proof.input_nullifiers.val[0]!)
+  systemProg : a.systemProgram = systemProgram
+  /-- The signer is a plain system account, as a wallet is. -/
+  signerPlain : (s a.signer).owner = systemProgram ∧ (s a.signer).data.isEmpty
+  /-- The signer isn't a new nullifier account (SOLANA FACT: a program-derived address has no
+      private key). -/
+  signerNotNullifier : a.signer ≠ a.nullifier0 ∧ a.signer ≠ a.nullifier1
+  /-- The recipient isn't a nullifier account (as `OutsideSpecDetail.payeesNotNullifierAccounts`). -/
+  recipient : (∀ b, (s a.recipient).data ≠ .nullifier b) ∧
+    a.recipient ≠ a.nullifier0 ∧ a.recipient ≠ a.nullifier1
+  /-- The fee recipient isn't a nullifier account (likewise). -/
+  feeRecipient : (∀ b, (s a.feeRecipientAccount).data ≠ .nullifier b) ∧
+    a.feeRecipientAccount ≠ a.nullifier0 ∧ a.feeRecipientAccount ≠ a.nullifier1
+
+/-- `ProgramAccountsInPlace d s tree tt config` (assumed; could be proved as an invariant): the
+    program's three accounts hold `tree`, `tt` and `config` at their canonical addresses, which
+    their stored bumps derive. `initialize` sets those bumps and no instruction changes them. -/
+structure ProgramAccountsInPlace (d : Deployment) (s : State)
+    (tree : zkcash_core.merkle_tree.MerkleTreeAccount) (tt : zkcash_core.admin.TreeTokenAccount)
+    (config : zkcash_core.admin.GlobalConfig) : Prop where
+  tree : HoldsTree d.programId s (treeAddr d) tree ∧
+    treeAddr d = d.toAddresses.createProgramAddress (merkleTreeSeeds ++ [tree.bump])
+  pool : HoldsTreeToken d.programId s (poolAddr d) tt ∧
+    poolAddr d = d.toAddresses.createProgramAddress (treeTokenSeeds ++ [tt.bump])
+  config : HoldsGlobalConfig d.programId s (configAddr d) config ∧
+    configAddr d = d.toAddresses.createProgramAddress (globalConfigSeeds ++ [config.bump])
+
+/-- `NullifierAddressesFree d s proof` (assumed, not machine-checked): Anchor's constraints on the
+    four nullifier addresses hold: `init` for the two new accounts, `SystemAccount` for the other
+    two.
+
+    Why it holds for an unspent nullifier:
+    - SOLANA FACT: only this program can create an account at its derived addresses, since it alone
+      can sign for them; anyone else can only send lamports there, which `init` handles;
+    - the program creates nullifier accounts only in `transact`, for the two nullifiers it spends.
+
+    `Spec`'s `newNullifiers` says the nullifiers are unspent; proving this from it is future work
+    (`TODO.md`). Until then, G3 for the code doesn't check this logic in the program. -/
+structure NullifierAddressesFree (d : Deployment) (s : State)
+    (proof : zkcash_core.transact.Proof) : Prop where
+  new0 : Initializable s (d.pda (nullifier0Seeds proof.input_nullifiers.val[0]!))
+  new1 : Initializable s (d.pda (nullifier1Seeds proof.input_nullifiers.val[1]!))
+  other0 : IsSystemAccount s (d.pda (nullifier0Seeds proof.input_nullifiers.val[1]!))
+  other1 : IsSystemAccount s (d.pda (nullifier1Seeds proof.input_nullifiers.val[0]!))
+
+/-- `SignerCreditFits d s a inputs` (a limit): what the signer gets from the transaction doesn't
+    overflow a `u64`, measured from its balance before it pays rent (unreachable in practice:
+    2^64 lamports exceeds the total SOL supply). Separate from the spec's `balancesFit`, which
+    counts the rent, because a pre-funded nullifier address can make the signer pay less. -/
+def SignerCreditFits (d : Deployment) (s : State) (a : TransactAccounts) (inputs : LeanSpec.TxInputs) : Prop :=
+  ((s a.signer).lamports.val : ℤ) + LeanSpec.balanceDelta inputs (toPubkey (poolAddr d)) 0
+    (toPubkey a.signer) < 2^64
+
+/-- `ReachesProgram …`: everything G3a and G3b for the code take about getting a `transact` past
+    Anchor and into the program. -/
+structure ReachesProgram (d : Deployment) (rent : Nat → U64) (s : State) (tx : TxEnv)
+    (a : TransactAccounts) (proof : zkcash_core.transact.Proof) (ext : I64) (fee : U64)
+    (out1 out2 : Slice U8) (tree : zkcash_core.merkle_tree.MerkleTreeAccount)
+    (tt : zkcash_core.admin.TreeTokenAccount) (config : zkcash_core.admin.GlobalConfig) : Prop where
+  /-- [owner] The sender lists the right accounts. -/
+  accounts : AccountsCorrect d s a proof
+  /-- [assumed] The program's accounts are in place. -/
+  program : ProgramAccountsInPlace d s tree tt config
+  /-- [assumed] Anchor's constraints on the nullifier addresses hold. -/
+  nullifiers : NullifierAddressesFree d s proof
+  /-- [by design] The transaction sees the rent (as `OutsideSpecDetail.rentFixed`). -/
+  rentFixed : tx.minimumBalance = some rent
+  /-- [assumed] The Solana facts. -/
+  solana : SolanaFacts d rent tx out1 out2
+  /-- [limit] The signer's credit fits. -/
+  signerCredit : SignerCreditFits d s a (toInputs tx.signers a proof ext fee out1 out2)
 
 /-- `StepAssumptions d rent tx ix`: the assumptions one step of an execution needs: `initialize` and `transact` see the rent
     `rent`; a `transact` satisfies the per-transaction assumptions (`SolanaFacts`,

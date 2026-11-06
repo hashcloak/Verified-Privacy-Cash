@@ -59,6 +59,7 @@ theorem negateG1_zeros {a : Std.Array U8 64#usize} (hz : a.val = List.replicate 
 /-! ## The verifier: `prepare_inputs` returns `vk_x` -/
 
 section
+variable {signers : List Pubkey}
 variable {G1 G2 GT : Type} [AddCommGroup G1] [CommMonoid GT] {s : AltBn128}
 
 theorem prepare_inputs_complete (C : AltBn128Contracts s G1 G2 GT) (sys : SyscallsSucceed C)
@@ -171,6 +172,7 @@ theorem verifyProof_zeroA {s : AltBn128} (proof : transact.Proof) (vk : groth16.
 /-! ## The verifier: `verify` and `verify_proof` accept -/
 
 section
+variable {signers : List Pubkey}
 variable {G1 G2 GT : Type} [AddCommGroup G1] [CommMonoid GT] {s : AltBn128}
 set_option linter.unusedSimpArgs false
 
@@ -238,6 +240,7 @@ theorem verify_complete (C : AltBn128Contracts s G1 G2 GT) (sys : SyscallsSuccee
 end
 
 section
+variable {signers : List Pubkey}
 variable {G1 G2 GT : Type} [AddCommGroup G1] [Module LeanSpec.F G1] [CommGroup GT] {s : AltBn128}
 
 theorem verifyProof_complete (C : AltBn128Contracts s G1 G2 GT) (sys : SyscallsSucceed C) (laws : ∀ (a : G1) (b : G2), C.e (-a) b = (C.e a b)⁻¹)
@@ -296,6 +299,7 @@ end
 
 section
 set_option linter.unusedSectionVars false
+variable {signers : List Pubkey}
 variable {G1 G2 GT : Type} [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGroup G2]
   [Module LeanSpec.F G2] [CommGroup GT] {s : AltBn128}
 
@@ -313,7 +317,7 @@ theorem syscallGroups_decodeG2 (C : AltBn128Contracts s G1 G2 GT) (b : Std.Array
 theorem decode_toInputs_inv (C : AltBn128Contracts s G1 G2 GT) (proof : zkcash_core.transact.Proof)
     (a : TransactAccounts) (ext : I64) (fee : U64) (out1 out2 : Slice U8)
     : letI : LeanSpec.Groups := syscallGroups C
-    ∀ π : LeanSpec.Groth16.Proof, (toInputs a proof ext fee out1 out2).π.decode = some π →
+    ∀ π : LeanSpec.Groth16.Proof, (toInputs signers a proof ext fee out1 out2).π.decode = some π →
       C.decodeG1 proof.proof_a = some π.A ∧ C.decodeG2 proof.proof_b = some π.B ∧
       C.decodeG1 proof.proof_c = some π.C := by
   intro π h
@@ -357,7 +361,7 @@ theorem programVerifier_complete (c : Crypto) (C : AltBn128Contracts c.altBn128 
     letI : LeanSpec.Groups := syscallGroups C
     letI : LeanSpec.Pairing := syscallPairing C laws
     letI : LeanSpec.Deployment := ⟨programKey C⟩
-    LeanSpec.proofValid (toInputs a proof ext fee out1 out2) → c.proofVerifier.verify proof = ok true := by
+    LeanSpec.proofValid (toInputs signers a proof ext fee out1 out2) → c.proofVerifier.verify proof = ok true := by
   intro hpv
   letI : LeanSpec.Groups := syscallGroups C
   letI : LeanSpec.Pairing := syscallPairing C laws
@@ -365,7 +369,7 @@ theorem programVerifier_complete (c : Crypto) (C : AltBn128Contracts c.altBn128 
   obtain ⟨π, hdec, hver⟩ := hpv
   obtain ⟨dA, dB, dC⟩ := decode_toInputs_inv C proof a ext fee out1 out2 π hdec
   obtain ⟨⟨α, hα⟩, ⟨β, hβ⟩, ⟨γ, hγ⟩, ⟨δ, hδ⟩, hic⟩ := key_decodes C key
-  have hvec : ∀ i : Fin 7, LeanSpec.Groth16.toVector (toInputs a proof ext fee out1 out2).pubInputs i
+  have hvec : ∀ i : Fin 7, LeanSpec.Groth16.toVector (toInputs signers a proof ext fee out1 out2).pubInputs i
       = toF ((publicInputs proof)[i.val]!) := by
     intro i; fin_cases i <;> rfl
   have hsmul : ∀ (b : Std.Array U8 32#usize) (P : G1), toF b • P = beNatOf b • P := by
@@ -373,7 +377,7 @@ theorem programVerifier_complete (c : Crypto) (C : AltBn128Contracts c.altBn128 
     show ((beNat b : ℕ) : LeanSpec.F) • P = _
     rw [Nat.cast_smul_eq_nsmul]; rfl
   have hvkx : ic C zkcash_core.verifying_key.VERIFYING_KEY 0 +
-      ∑ i : Fin 7, LeanSpec.Groth16.toVector (toInputs a proof ext fee out1 out2).pubInputs i •
+      ∑ i : Fin 7, LeanSpec.Groth16.toVector (toInputs signers a proof ext fee out1 out2).pubInputs i •
         ic C zkcash_core.verifying_key.VERIFYING_KEY i.succ.val
       = vkxOf C zkcash_core.verifying_key.VERIFYING_KEY proof := by
     simp only [vkxOf, hvec, hsmul, Fin.val_succ]
@@ -383,7 +387,7 @@ theorem programVerifier_complete (c : Crypto) (C : AltBn128Contracts c.altBn128 
       = C.e ((C.decodeG1 zkcash_core.verifying_key.VERIFYING_KEY.vk_alpha_g1).getD 0)
           ((C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_beta_g2).getD 0) *
         C.e (ic C zkcash_core.verifying_key.VERIFYING_KEY 0 +
-          ∑ i : Fin 7, LeanSpec.Groth16.toVector (toInputs a proof ext fee out1 out2).pubInputs i •
+          ∑ i : Fin 7, LeanSpec.Groth16.toVector (toInputs signers a proof ext fee out1 out2).pubInputs i •
             ic C zkcash_core.verifying_key.VERIFYING_KEY i.succ.val)
           ((C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_gamme_g2).getD 0) *
         C.e π.C ((C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_delta_g2).getD 0) := hver
@@ -792,6 +796,7 @@ theorem u64_max_eq : U64.max = 2 ^ 64 - 1 := by simp [U64.max, U64.numBits]
 
 section
 set_option linter.unusedSectionVars false
+variable {signers : List Pubkey}
 variable {G1 G2 GT : Type} [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGroup G2]
   [Module LeanSpec.F G2] [CommGroup GT]
 
@@ -811,7 +816,7 @@ theorem handler_ok_exists [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
     letI : LeanSpec.Groups := syscallGroups C
     letI : LeanSpec.Pairing := syscallPairing C laws
     letI : LeanSpec.Deployment := ⟨programKey C⟩
-    LeanSpec.transactPreconditions (toInputs a proof ext fee out1 out2)
+    LeanSpec.transactPreconditions (toInputs signers a proof ext fee out1 out2)
       (handlerWorld a s₁ v tree config spent) →
     ∃ ap env' tree', transact.transact c.hasher arkFr c.sha256 c.proofVerifier solRuntime
       (handlerEnv a s₁ v) tree config proof ext fee a.recipient a.feeRecipientAccount out1 out2
@@ -820,7 +825,7 @@ theorem handler_ok_exists [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
   letI : LeanSpec.Groups := syscallGroups C
   letI : LeanSpec.Pairing := syscallPairing C laws
   letI : LeanSpec.Deployment := ⟨programKey C⟩
-  set inputs := toInputs a proof ext fee out1 out2 with hinputs
+  set inputs := toInputs signers a proof ext fee out1 out2 with hinputs
   set W := handlerWorld a s₁ v tree config spent with hW
   -- canonical public inputs
   have hcan : ∀ j, j < 7 → Canonical ((publicInputs proof)[j]!) := by
@@ -1023,7 +1028,7 @@ theorem handler_complete_exact' [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
     letI : LeanSpec.Groups := syscallGroups C
     letI : LeanSpec.Pairing := syscallPairing C laws
     letI : LeanSpec.Deployment := ⟨programKey C⟩
-    let inputs := toInputs a proof ext fee out1 out2
+    let inputs := toInputs signers a proof ext fee out1 out2
     let W := handlerWorld a s₁ v tree config spent
     LeanSpec.transactPreconditions inputs W →
     ∃ ap env' tree', transact.transact c.hasher arkFr c.sha256 c.proofVerifier solRuntime

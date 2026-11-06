@@ -150,7 +150,7 @@ lemma transferEffects_state (inputs: TxInputs) (w: World) :
     (transferEffects inputs w).state = w.state := by
   unfold transferEffects; split_ifs <;> rfl
 
--- LEMMA (used by G1c, G3, G4a, G4b): the predicted world moves every account by exactly
+-- LEMMA (used by G1c, G3a, G4): the predicted world moves every account by exactly
 -- `balanceDelta`. The solvency preconditions rule out ℕ underflow; `poolIsSeparate` keeps
 -- the pool's role apart from the paid roles.
 lemma transactEffects_balances (inputs : TxInputs) (old : World)
@@ -233,7 +233,7 @@ lemma transactEffects_balances (inputs : TxInputs) (old : World)
     unfold balanceDelta
     split_ifs <;> ring
 
--- LEMMA (used by G4a, G1c): one `transact` step moves the pool's SOL by exactly `extAmt − f`.
+-- LEMMA (used by G1c): one `transact` step moves the pool's SOL by exactly `extAmt − f`.
 lemma sol_balance_correctness_step
   (oldWorld newWorld : World)
   (inputs: TxInputs)
@@ -275,7 +275,7 @@ lemma sol_balance_correctness_step
     (w.withUpdatedValues b).nullifierRent = w.nullifierRent := rfl
 /-- The values `w` already has: nothing happened between two transactions. -/
 def UpdatedValuesBetweenTransacts.unchanged (w : World) : UpdatedValuesBetweenTransacts :=
-  ⟨w.balances, w.state.config⟩
+  ⟨w.balances, w.state.config, []⟩
 @[simp] lemma World.withUpdatedValues_self (w : World) :
     w.withUpdatedValues (UpdatedValuesBetweenTransacts.unchanged w) = w := by
   rcases w with ⟨⟨⟩⟩; rfl
@@ -326,7 +326,7 @@ lemma foldAppend_nextIndex (cs : List F) : (foldAppend cs initTree).nextIndex = 
     rw [ih]; simp
 
 
--- Merkle position binding (used by G1a and G3). `Opening.Valid` only says a path hashes to
+-- Merkle position binding (used by G1a and G3a). `Opening.Valid` only says a path hashes to
 -- the root, not that `leaf` is what the tree holds at `index`. Extraction
 -- (`opening_extractable_or_collision`): a valid opening's leaf is the real leaf at its
 -- index, or an `H2` collision (`PathCollision`). Preservation
@@ -917,7 +917,7 @@ lemma opening_extractable_or_collision
     rw [← canonical_inputsAt cs O.index h0 hh0, inputsAt_eq_stepPair, inputsAt_eq_stepPair]
     exact hcol
 
--- LEMMA (used by G3): preservation. A written leaf `k` of `cs` keeps a valid opening at
+-- LEMMA (used by G3a): preservation. A written leaf `k` of `cs` keeps a valid opening at
 -- index `k` after more leaves are appended.
 lemma opening_forward_preservation
     (cs later : List F) (k : ℕ) (hk : k < cs.length) (c : F) (hc : cs[k]'hk = c)
@@ -950,49 +950,56 @@ lemma config_and_rent_exempt_min_step
   · rw [heff.rentExemptMin]; unfold transactEffects transferEffects; split_ifs <;> rfl
 
 -- LEMMA (used by G5): allowed admin changes compose.
-lemma ReachableByAdminChanges.trans {c c' c'' : config} (h₁ : ReachableByAdminChanges c c')
-    (h₂ : ReachableByAdminChanges c' c'') :
-    ReachableByAdminChanges c c'' := by
+lemma ReachableByAdminChanges.trans {a b : List AdminChange} {c c' c'' : config}
+    (h₁ : ReachableByAdminChanges a c c') (h₂ : ReachableByAdminChanges b c' c'') :
+    ReachableByAdminChanges (a ++ b) c c'' := by
   induction h₂ with
-  | noChange => exact h₁
-  | extend ch _ hap ih => exact .extend ch ih hap
+  | noChange => simpa using h₁
+  | extend ch _ hap ih => rw [← List.append_assoc]; exact .extend ch (ih h₁) hap
 
--- LEMMA (used by G5): an allowed admin change keeps the authorities and the fee error margin limit.
+-- LEMMA (used by G5): an allowed admin change keeps the authorities and the limits on the fee
+-- error margin and the fee rates.
 lemma AdminChange.apply_keeps {ch : AdminChange} {c c' : config}
     (h : ch.apply c = .accepted c') :
     c'.authority = c.authority ∧ c'.limitAuthority = c.limitAuthority ∧
-      (c.feeErrorMargin ≤ 10000 → c'.feeErrorMargin ≤ 10000) := by
+      (c.feeErrorMargin ≤ 10000 → c'.feeErrorMargin ≤ 10000) ∧
+      (c.depositFeeRate ≤ 10000 → c'.depositFeeRate ≤ 10000) ∧
+      (c.withdrawalFeeRate ≤ 10000 → c'.withdrawalFeeRate ≤ 10000) := by
   unfold AdminChange.apply at h
   split at h
   · split_ifs at h with hc
-    · cases h; exact ⟨rfl, rfl, fun _ => hc.2⟩
+    · cases h; exact ⟨rfl, rfl, fun _ => hc.2.2.2, fun _ => hc.2.1, fun _ => hc.2.2.1⟩
   · split_ifs at h
-    · cases h; exact ⟨rfl, rfl, id⟩
+    · cases h; exact ⟨rfl, rfl, id, id, id⟩
 
-lemma ReachableByAdminChanges.keeps {c c' : config} (h : ReachableByAdminChanges c c') :
+lemma ReachableByAdminChanges.keeps {chs : List AdminChange} {c c' : config}
+    (h : ReachableByAdminChanges chs c c') :
     c'.authority = c.authority ∧ c'.limitAuthority = c.limitAuthority ∧
-      (c.feeErrorMargin ≤ 10000 → c'.feeErrorMargin ≤ 10000) := by
+      (c.feeErrorMargin ≤ 10000 → c'.feeErrorMargin ≤ 10000) ∧
+      (c.depositFeeRate ≤ 10000 → c'.depositFeeRate ≤ 10000) ∧
+      (c.withdrawalFeeRate ≤ 10000 → c'.withdrawalFeeRate ≤ 10000) := by
   induction h with
-  | noChange => exact ⟨rfl, rfl, id⟩
+  | noChange => exact ⟨rfl, rfl, id, id, id⟩
   | extend ch _ hap ih =>
-    obtain ⟨a1, l1, m1⟩ := AdminChange.apply_keeps hap
-    exact ⟨a1.trans ih.1, l1.trans ih.2.1, fun hm => m1 (ih.2.2 hm)⟩
+    obtain ⟨a1, l1, m1, d1, w1⟩ := AdminChange.apply_keeps hap
+    exact ⟨a1.trans ih.1, l1.trans ih.2.1, fun hm => m1 (ih.2.2.1 hm),
+      fun hd => d1 (ih.2.2.2.1 hd), fun hw => w1 (ih.2.2.2.2 hw)⟩
 
 -- LEMMA (used by G5): over any number of steps, the config changes only by allowed admin
 -- changes, and the rent-exempt minimum stays.
 lemma config_and_rent_exempt_min_constant
   (params : InitParams) (w: World)
   (h: ReachableWorld (initWorld params) w)
-  : ReachableByAdminChanges params.cfg w.state.config ∧
+  : (∃ chs, ReachableByAdminChanges chs params.cfg w.state.config) ∧
       w.rentExemptMin = params.rentExemptMin := by
   induction h with
-  | noStep => exact ⟨.noChange _, rfl⟩
+  | noStep => exact ⟨⟨[], .noChange _⟩, rfl⟩
   | extend b inputs _ hallowed transact_proof ih =>
-    obtain ⟨ihc, ihr⟩ := ih
+    obtain ⟨⟨chs, ihc⟩, ihr⟩ := ih
     obtain ⟨hc, hr⟩ := config_and_rent_exempt_min_step _ _ inputs transact_proof
     refine ⟨?_, hr.trans ihr⟩
     rw [hc]
-    exact ihc.trans hallowed.config
+    exact ⟨_, ihc.trans hallowed.config⟩
 
 
 -- HELPER: a zero input is trivially bounded, so the `≠ 0` hypothesis can be dropped.
@@ -1149,14 +1156,22 @@ lemma Run.reachable {w0 : World} (r : Run w0) :
 @[simp] lemma World.withUpdatedValues_twice (w : World) (b b' : UpdatedValuesBetweenTransacts) :
     (w.withUpdatedValues b).withUpdatedValues b' = w.withUpdatedValues b' := rfl
 
+/-- Two updates in a row as one: the second's values, after both lists of admin changes. -/
+def UpdatedValuesBetweenTransacts.andThen (b b' : UpdatedValuesBetweenTransacts) :
+    UpdatedValuesBetweenTransacts :=
+  { b' with adminChanges := b.adminChanges ++ b'.adminChanges }
+
+@[simp] lemma World.withUpdatedValues_andThen (w : World) (b b' : UpdatedValuesBetweenTransacts) :
+    w.withUpdatedValues (b.andThen b') = w.withUpdatedValues b' := rfl
+
 /-- Two allowed changes in a row are allowed: the pool's balance only grew, and the config only
-    changed by allowed admin changes. -/
+    changed by the two lists of admin changes, in order. -/
 lemma UpdatedValuesBetweenTransacts.Allowed.trans {w : World} {b b' : UpdatedValuesBetweenTransacts}
     (h : b.Allowed w)
-    (h' : b'.Allowed (w.withUpdatedValues b)) : b'.Allowed w := by
+    (h' : b'.Allowed (w.withUpdatedValues b)) : (b.andThen b').Allowed w := by
   refine ⟨le_trans h.poolGains ?_, h.config.trans ?_⟩
-  · have := h'.poolGains; simpa [World.poolBalance] using this
-  · have := h'.config; simpa using this
+  · exact h'.poolGains
+  · exact h'.config
 
 /-- A run extended by one more transaction: what happened after its last transaction (allowed),
     then the transaction. -/
@@ -1164,9 +1179,11 @@ lemma Run.snoc {w0 : World} (r : Run w0) (b : UpdatedValuesBetweenTransacts)
     (hb : b.Allowed r.final) (tx : TxInputs)
     (w3 : World) (htx : transact tx (r.final.withUpdatedValues b) w3) :
     ∃ r' : Run w0, r'.txs = r.txs ++ [tx] ∧ r'.final = w3 ∧
-      ∀ j ≤ r.txs.length, r'.ws j = r.ws j := by
+      (∀ j ≤ r.txs.length, r'.ws j = r.ws j) ∧
+      (∀ j < r.txs.length, r'.updatedValues j = r.updatedValues j) ∧
+      r'.updatedValues r.txs.length = b := by
   refine ⟨⟨r.txs ++ [tx], fun j => if j ≤ r.txs.length then r.ws j else w3,
-    fun j => if j < r.txs.length then r.updatedValues j else b, ?_, ?_, ?_⟩, rfl, ?_, ?_⟩
+    fun j => if j < r.txs.length then r.updatedValues j else b, ?_, ?_, ?_⟩, rfl, ?_, ?_, ?_, ?_⟩
   · simp [r.start]
   · intro j hj
     simp only [List.length_append, List.length_singleton] at hj
@@ -1192,6 +1209,8 @@ lemma Run.snoc {w0 : World} (r : Run w0) (b : UpdatedValuesBetweenTransacts)
       exact htx
   · simp [Run.final]
   · intro j hj; simp [hj]
+  · intro j hj; simp [hj]
+  · simp
 
 /-- The run with no transactions. -/
 def Run.empty (w0 : World) : Run w0 :=
@@ -1717,13 +1736,13 @@ theorem shared_nullifier_requires_owner_key
 
 /-! ## G3. Liveness -/
 
--- LEMMA (used by G3): `transferEffects` doesn't touch the nullifier set.
+-- LEMMA (used by G3a): `transferEffects` doesn't touch the nullifier set.
 lemma transferEffects_nullifiers (inputs: TxInputs) (oldWorld: World) :
     (transferEffects inputs oldWorld).state.nullifiers = oldWorld.state.nullifiers := by
   unfold transferEffects
   split_ifs <;> rfl
 
--- LEMMA (used by G3): every nullifier in the set was revealed by a transaction of the run.
+-- LEMMA (used by G3a): every nullifier in the set was revealed by a transaction of the run.
 lemma Run.nullifier_origin {params : InitParams}
     (r : Run (initWorld params)) :
     ∀ j ≤ r.txs.length, ∀ x ∈ (r.ws j).state.nullifiers,
@@ -1743,14 +1762,14 @@ lemma Run.nullifier_origin {params : InitParams}
     · exact ⟨j, hjn, 0, by simp [TxInputs.pubInputs, hx]⟩
     · exact ⟨j, hjn, 1, by simp [TxInputs.pubInputs, hx]⟩
 
--- LEMMA (used by G3): leaf indices are below `p`, so equal as field elements means equal.
+-- LEMMA (used by G3a): leaf indices are below `p`, so equal as field elements means equal.
 lemma leafIndex_cast_inj (a b : Fin (2^26)) (h : ((a : ℕ) : F) = ((b : ℕ) : F)) : a = b := by
   have hmod := (ZMod.natCast_eq_natCast_iff' (a : ℕ) (b : ℕ) p).mp h
   have hp : 2^26 < p := by norm_num [p]
   rw [Nat.mod_eq_of_lt (by omega), Nat.mod_eq_of_lt (by omega)] at hmod
   exact Fin.ext hmod
 
--- LEMMA (used by G3): an input whose commitment no input of the run has used at this position
+-- LEMMA (used by G3a): an input whose commitment no input of the run has used at this position
 -- has a fresh nullifier, unless an `H3` collision occurs.
 lemma unused_input_nullifier_free
     (params : InitParams)
@@ -1778,7 +1797,7 @@ lemma unused_input_nullifier_free
   exact absurd (show InputUsedInRun r wit w i from
     ⟨j, hj, i', hC.symm, congrArg Fin.val hIdx.symm⟩) hnew
 
--- LEMMA (used by G3): a real note whose commitment no input of the run has used at this
+-- LEMMA (used by G3a): a real note whose commitment no input of the run has used at this
 -- position is unspent: a real spend at its position, unless forged, has the same commitment.
 lemma unspent_of_unused
     (params : InitParams)
@@ -1803,7 +1822,7 @@ lemma unspent_of_unused
     exact hnew ⟨j, hj, i', hc, hop⟩
   · exact hB (Or.inl ⟨j, hj, i', hamt, hb⟩)
 
--- LEMMA (used by G3): a withdrawal that spends unspent notes never fails on pool
+-- LEMMA (used by G3a): a withdrawal that spends unspent notes never fails on pool
 -- solvency, because G1c makes the pool hold at least the value of those notes.
 lemma pool_solvent
     (params : InitParams)
@@ -1881,7 +1900,7 @@ lemma pool_solvent
     show _ ≤ ((r.ws r.txs.length).poolBalance : ℤ) + inputs.extAmt
     linarith
 
--- LEMMA (used by G3): G3 with every hypothesis spelled out.
+-- LEMMA (used by G3a): G3a with every hypothesis spelled out.
 /-- `ownsNote` and `knowsNote` together: the note the spender claims is the note stored at the
     position it opens. -/
 lemma GenuineInput.inNote_eq {wit : ℕ → Witness} {w : Witness} {i : Fin 2} {bound : ℕ}
@@ -1906,7 +1925,7 @@ lemma GenuineInput.of_eq {wit : ℕ → Witness} {w : Witness} {i : Fin 2} {boun
     exact ⟨rfl, rfl, rfl⟩
 
 -- Every check of `transact`, field by field. `spendable_core` proves the three facts assumed
--- here. The table in `Spec/Statements.lean` (G3) lists what ensures each check.
+-- here. The table in `Spec/Statements.lean` (G3a) lists what ensures each check.
 theorem all_checks_accounted {w0 : World} (r : Run w0) (wit : ℕ → Witness)
     (inputs : TxInputs) (witness : Witness) (k : ℕ)
     (hHonest : HonestSpend r wit inputs witness k)
@@ -1931,6 +1950,7 @@ theorem all_checks_accounted {w0 : World} (r : Run w0) (wit : ℕ → Witness)
   amountRange := hHonest.wellFormed.amountRange
   encOutLength := hHonest.wellFormed.encOutLength
   poolSeparate := hHonest.wellFormed.poolSeparate
+  signerSignature := hHonest.wellFormed.signed
 
 lemma spendable_core
     (params : InitParams)
@@ -1997,9 +2017,9 @@ lemma spendable_core
   refine ⟨?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
   exact all_checks_accounted r wit inputs witness k hHonest hLimits hR0 hFresh hSolvent
 
--- PROOF of G3. Statement and explanation: `Spec/Statements.lean`.
+-- PROOF of G3a. Statement and explanation: `Spec/Statements.lean`.
 
-theorem unspent_note_is_spendable
+theorem honest_spend_is_accepted
     -- [premise] a pool initialized with `params`
     (params : InitParams)
     -- [attacker] any history; [assumption T1] the witnesses behind its proofs
@@ -2015,40 +2035,75 @@ theorem unspent_note_is_spendable
     rcases h with h | h | h
     exacts [Or.inr (Or.inr (Or.inr h)), Or.inr (Or.inl h), Or.inr (Or.inr (Or.inl h))]
 
+-- LEMMA (used by G3b, G5): the run's recorded admin changes produce the config of each world.
+lemma Run.adminChanges_reachable (params : InitParams) (r : Run (initWorld params)) :
+    ∀ j ≤ r.txs.length,
+      ReachableByAdminChanges (r.adminChangesUpTo j) params.cfg (r.ws j).state.config := by
+  intro j
+  induction j with
+  | zero =>
+    intro _
+    rw [r.start]
+    exact .noChange _
+  | succ j ih =>
+    intro hj
+    have hlt : j < r.txs.length := hj
+    have hc := (config_and_rent_exempt_min_step _ _ _ (r.step j hlt)).1
+    have hb : ((r.ws j).withUpdatedValues (r.updatedValues j)).state.config
+        = (r.updatedValues j).config := rfl
+    rw [hc, hb]
+    have : r.adminChangesUpTo (j+1)
+        = r.adminChangesUpTo j ++ (r.updatedValues j).adminChanges := by
+      simp [Run.adminChangesUpTo, List.range_succ, List.flatMap_append]
+    rw [this]
+    exact (ih (by omega)).trans (r.allowed j hlt).config
+
+-- LEMMA (used by G3b): a withdrawal's fee of at least its amount passes the fee check at any
+-- rate up to 100%, whatever the fee error margin.
+lemma feeSufficient_of_amount_le_fee {c : config} {extAmt : ℤ} {f : ℕ}
+    (hw : c.withdrawalFeeRate ≤ 10000) (hneg : extAmt < 0) (hf : extAmt.natAbs ≤ f) :
+    feeSufficient c extAmt f := by
+  simp only [feeSufficient]
+  rw [if_neg (by omega)]
+  have hexp : extAmt.natAbs * c.withdrawalFeeRate / 10000 ≤ extAmt.natAbs :=
+    Nat.div_le_of_le_mul (by rw [Nat.mul_comm]; exact Nat.mul_le_mul_right _ hw)
+  have hmin : (extAmt.natAbs * c.withdrawalFeeRate / 10000) * (10000 - c.feeErrorMargin) / 10000
+      ≤ extAmt.natAbs * c.withdrawalFeeRate / 10000 := by
+    apply Nat.div_le_of_le_mul
+    calc (extAmt.natAbs * c.withdrawalFeeRate / 10000) * (10000 - c.feeErrorMargin)
+        ≤ (extAmt.natAbs * c.withdrawalFeeRate / 10000) * 10000 := Nat.mul_le_mul_left _ (by omega)
+      _ = 10000 * (extAmt.natAbs * c.withdrawalFeeRate / 10000) := Nat.mul_comm _ _
+  omega
+
+-- PROOF of G3b. Statement and explanation: `Spec/Statements.lean`.
+theorem admins_cannot_lock_withdrawals
+    (params : InitParams)
+    (r : Run (initWorld params)) (wit : ℕ → Witness) (hwit : r.WitnessesFor wit)
+    (value : ℕ) (hvalue : 2 ≤ value) :
+    ∃ payout fee : ℕ, 0 < payout ∧ payout + fee = value ∧
+      feeSufficient r.final.state.config (-(payout : ℤ)) fee ∧ value / 2 ≤ payout ∧
+      ∀ (inputs : TxInputs) (witness : Witness) (k : ℕ),
+        HonestSpend r wit inputs witness k →
+        inputs.extAmt = -(payout : ℤ) → inputs.f = fee →
+        inputs.R ∈ Set.range r.final.state.tree.history →
+        treeHasRoom r.final.state.tree →
+        balancesFit inputs r.final →
+        CanBeAccepted inputs r.final ∨ SpendBlockedByBreak r wit witness k := by
+  have hw : r.final.state.config.withdrawalFeeRate ≤ 10000 :=
+    (Run.adminChanges_reachable params r _ le_rfl).keeps.2.2.2.2 params.withdrawalFeeRate_init
+  have hfee : feeSufficient r.final.state.config (-((value / 2 : ℕ) : ℤ)) (value - value / 2) :=
+    feeSufficient_of_amount_le_fee hw (by omega) (by omega)
+  refine ⟨value / 2, value - value / 2, by omega, by omega, hfee, le_rfl, ?_⟩
+  intro inputs witness k hHonest hAmt hF hWindow hRoom hFit
+  have hLimits : LimitsNotHit r.final inputs :=
+    { inWindow := hWindow, treeRoom := hRoom, balancesFit := hFit
+      fee := by rw [hAmt, hF]; exact hfee
+      depositLimit := fun h => absurd h (by omega) }
+  exact honest_spend_is_accepted params r wit hwit inputs witness k hHonest hLimits
+
 /-! ## G4. Correct public payouts -/
 
--- PROOF of G4a. Statement and explanation: `Spec/Statements.lean`.
-theorem no_sol_created
-    (oldWorld newWorld : World) (inputs : TxInputs) (h : transact inputs oldWorld newWorld) :
-    ∑ k ∈ ({inputs.s, inputs.A, inputs.t, oldWorld.state.pool} : Finset Pubkey),
-        (newWorld.balances k : ℤ)
-    = ∑ k ∈ ({inputs.s, inputs.A, inputs.t, oldWorld.state.pool} : Finset Pubkey),
-        (oldWorld.balances k : ℤ)
-      - 2 * oldWorld.nullifierRent := by
-  classical
-  obtain ⟨hpre, hagree⟩ := h
-  set S : Finset Pubkey := {inputs.s, inputs.A, inputs.t, oldWorld.state.pool}
-  have hnew : ∑ k ∈ S, (newWorld.balances k : ℤ)
-      = ∑ k ∈ S, (oldWorld.balances k : ℤ)
-        + ∑ k ∈ S, balanceDelta inputs oldWorld.state.pool oldWorld.nullifierRent k := by
-    rw [← Finset.sum_add_distrib, hagree.balances]
-    exact Finset.sum_congr rfl (fun k _ => transactEffects_balances inputs oldWorld
-      hpre.signerSolvency hpre.poolSolvency hpre.poolSeparate k)
-  have hdelta : ∑ k ∈ S, balanceDelta inputs oldWorld.state.pool oldWorld.nullifierRent k
-      = (if inputs.extAmt < 0 then (inputs.extAmt.natAbs : ℤ) else 0) + inputs.f
-        - (if inputs.extAmt > 0 then inputs.extAmt else 0) - 2 * oldWorld.nullifierRent
-        + (inputs.extAmt - inputs.f) := by
-    unfold balanceDelta
-    simp only [ite_and, Finset.sum_sub_distrib, Finset.sum_add_distrib]
-    rw [Finset.sum_ite_eq', Finset.sum_ite_eq', Finset.sum_ite_eq', Finset.sum_ite_eq',
-      Finset.sum_ite_eq']
-    simp [S]
-  have hext : (if inputs.extAmt < 0 then (inputs.extAmt.natAbs : ℤ) else 0)
-      - (if inputs.extAmt > 0 then inputs.extAmt else 0) + inputs.extAmt = 0 := by
-    split_ifs <;> omega
-  linarith
-
--- PROOF of G4b. Statement and explanation: `Spec/Statements.lean`.
+-- LEMMA (used by G4a, G4b): every account changes by exactly `balanceDelta`.
 theorem balance_changes_exact
     (oldWorld newWorld : World) (inputs : TxInputs) (h : transact inputs oldWorld newWorld)
     (k : Pubkey) :
@@ -2059,22 +2114,113 @@ theorem balance_changes_exact
   exact transactEffects_balances inputs oldWorld hpre.signerSolvency hpre.poolSolvency
     hpre.poolSeparate k
 
-/-! ## G5. Config immutability -/
+-- HELPER: bounds on what `balanceDelta` charges an account as the depositor.
+lemma deposit_term_bounds (inputs : TxInputs) (k : Pubkey) :
+    0 ≤ (if k = inputs.s ∧ inputs.extAmt > 0 then inputs.extAmt else 0) ∧
+      (if k = inputs.s ∧ inputs.extAmt > 0 then inputs.extAmt else 0) ≤ max inputs.extAmt 0 := by
+  split_ifs with h
+  · exact ⟨le_of_lt h.2, le_max_left _ _⟩
+  · exact ⟨le_rfl, le_max_right _ _⟩
 
--- PROOF of G5. Statement and explanation: `Spec/Statements.lean`.
-theorem config_changes_only_by_authority
+-- HELPER: what `balanceDelta` pays an account as the recipient or fee recipient is never negative.
+lemma payee_terms_nonneg (inputs : TxInputs) (k : Pubkey) :
+    0 ≤ (if k = inputs.A ∧ inputs.extAmt < 0 then (inputs.extAmt.natAbs : ℤ) else 0) ∧
+      0 ≤ (if k = inputs.t then (inputs.f : ℤ) else 0) := by
+  constructor <;> split_ifs <;> omega
+
+-- PROOF of G4a. Statement and explanation: `Spec/Statements.lean`.
+theorem only_signers_pay
+    (oldWorld newWorld : World) (inputs : TxInputs) (h : transact inputs oldWorld newWorld)
+    (k : Pubkey) (hk : k ≠ oldWorld.state.pool)
+    (hlost : newWorld.balances k < oldWorld.balances k) :
+    k ∈ inputs.signers ∧
+      (oldWorld.balances k : ℤ) - newWorld.balances k
+        ≤ max inputs.extAmt 0 + 2 * oldWorld.nullifierRent := by
+  have hd := balance_changes_exact oldWorld newWorld inputs h k
+  have hsigned : inputs.s ∈ inputs.signers := h.1.signerSignature
+  have hlost' : (newWorld.balances k : ℤ) < oldWorld.balances k := by exact_mod_cast hlost
+  obtain ⟨hA, hT⟩ := payee_terms_nonneg inputs k
+  obtain ⟨hD0, hD⟩ := deposit_term_bounds inputs k
+  unfold balanceDelta at hd
+  rw [if_neg hk] at hd
+  by_cases hs : k = inputs.s
+  · refine ⟨hs ▸ hsigned, ?_⟩
+    rw [if_pos hs] at hd
+    linarith
+  · exfalso
+    have hdep : (if k = inputs.s ∧ inputs.extAmt > 0 then inputs.extAmt else 0) = 0 :=
+      if_neg (fun h => hs h.1)
+    rw [if_neg hs, hdep] at hd
+    linarith
+
+-- PROOF of G4b. Statement and explanation: `Spec/Statements.lean`.
+theorem exact_payouts
+    (oldWorld newWorld : World) (inputs : TxInputs) (h : transact inputs oldWorld newWorld) :
+    (newWorld.poolBalance : ℤ) = oldWorld.poolBalance + inputs.extAmt - inputs.f ∧
+    (∀ k, k ≠ oldWorld.state.pool →
+      (newWorld.balances k : ℤ) = oldWorld.balances k
+        + ((if k = inputs.A ∧ inputs.extAmt < 0 then (inputs.extAmt.natAbs : ℤ) else 0)
+          + (if k = inputs.t then (inputs.f : ℤ) else 0))
+        - ((if k = inputs.s ∧ inputs.extAmt > 0 then inputs.extAmt else 0)
+          + (if k = inputs.s then 2 * (oldWorld.nullifierRent : ℤ) else 0))) := by
+  refine ⟨sol_balance_correctness_step oldWorld newWorld inputs h, fun k hk => ?_⟩
+  have hd := balance_changes_exact oldWorld newWorld inputs h k
+  unfold balanceDelta at hd
+  rw [if_neg hk] at hd
+  linarith
+
+/-! ## G5. Admin control -/
+
+-- LEMMA (used by G5): every change in the list is signed by the shared authority, and the
+-- authorities stay.
+lemma ReachableByAdminChanges.signed {chs : List AdminChange} {c c' : config} {i : Pubkey}
+    (h : ReachableByAdminChanges chs c c') (ha : c.authority = i) (hl : c.limitAuthority = i) :
+    c'.authority = i ∧ c'.limitAuthority = i ∧ ∀ ch ∈ chs, i ∈ ch.signers := by
+  induction h with
+  | noChange => exact ⟨ha, hl, by simp⟩
+  | extend ch _ hap ih =>
+    obtain ⟨a2, l2, hs⟩ := ih ha hl
+    unfold AdminChange.apply at hap
+    split at hap
+    · split_ifs at hap with hc
+      cases hap
+      refine ⟨a2, l2, fun x hx => ?_⟩
+      rcases List.mem_append.mp hx with hx | hx
+      · exact hs x hx
+      · simp only [List.mem_singleton] at hx; subst hx; rw [← a2]; exact hc.1
+    · split_ifs at hap with hc
+      cases hap
+      refine ⟨a2, l2, fun x hx => ?_⟩
+      rcases List.mem_append.mp hx with hx | hx
+      · exact hs x hx
+      · simp only [List.mem_singleton] at hx; subst hx; rw [← l2]; exact hc
+
+-- PROOF of G5a. Statement and explanation: `Spec/Statements.lean`.
+theorem only_authorities_change_config
+    (params : InitParams)
+    (r : Run (initWorld params)) :
+    (∀ a, params.admin = some a → params.initializer = a) ∧
+    ∀ j ≤ r.txs.length,
+      ReachableByAdminChanges (r.adminChangesUpTo j) params.cfg (r.ws j).state.config ∧
+      (∀ ch ∈ r.adminChangesUpTo j, params.initializer ∈ ch.signers) := by
+  refine ⟨params.admin_init, fun j hj => ?_⟩
+  have hc := Run.adminChanges_reachable params r j hj
+  exact ⟨hc, (hc.signed params.authority_init params.limitAuthority_init).2.2⟩
+
+-- PROOF of G5b. Statement and explanation: `Spec/Statements.lean`.
+theorem admin_powers_limited
     (params : InitParams)
     (r : Run (initWorld params)) :
     ∀ j ≤ r.txs.length,
-      ReachableByAdminChanges params.cfg (r.ws j).state.config ∧
       (r.ws j).state.config.authority = params.initializer ∧
       (r.ws j).state.config.limitAuthority = params.initializer ∧
       (r.ws j).state.config.feeErrorMargin ≤ 10000 ∧
-      (r.ws j).rentExemptMin = params.rentExemptMin := by
+      (r.ws j).state.config.depositFeeRate ≤ 10000 ∧
+      (r.ws j).state.config.withdrawalFeeRate ≤ 10000 := by
   intro j hj
-  obtain ⟨hc, hr⟩ := config_and_rent_exempt_min_constant params _ (r.reachable j hj)
-  obtain ⟨ha, hl, hm⟩ := hc.keeps
-  exact ⟨hc, ha.trans params.authority_init, hl.trans params.limitAuthority_init,
-    hm params.feeErrorMargin_init, hr⟩
+  obtain ⟨ha, hl, hm, hd, hw⟩ := (Run.adminChanges_reachable params r j hj).keeps
+  exact ⟨ha.trans params.authority_init, hl.trans params.limitAuthority_init,
+    hm params.feeErrorMargin_init, hd params.depositFeeRate_init,
+    hw params.withdrawalFeeRate_init⟩
 
 end LeanSpec

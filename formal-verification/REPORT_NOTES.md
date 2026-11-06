@@ -18,11 +18,29 @@ gains), other accounts spent from, and admin changes signed by the right authori
 Solana details `transact_connection` excludes (a pre-funded nullifier address, a payee that is
 a nullifier account) are covered here: they are such allowed changes.
 
-**Admin fee updates: the code is stricter than the spec.** The code rejects a deposit or
-withdrawal fee rate above 10000 basis points; the spec limits only the fee error margin
-(`AdminChange.apply`). This doesn't affect safety, since the spec allows every update the code
-accepts, and the spec doesn't need the extra rule. The spec's results therefore also cover fee
-rates the code can never set.
+**The run is the execution's own.** `IsRunOf` fixes the spec run to what the execution did:
+what `initialize` set up, each transaction, the chain's state and pool balance around each
+transaction, and each admin instruction with the signers of its transaction. The one thing it leaves
+open mid-run is the balances of other accounts, which can differ for the two Solana details above. So
+`adminInstructionsSigned_code` says of the execution's own events that every admin instruction was
+signed by the initializer, and a missing signer check would make it false.
+
+**Admins and withdrawals.** G3b shows that after any admin changes, a way to withdraw at least 2
+lamports exists, and at least half (rounded down) reaches the recipient; the rest is the fee, which
+goes to the recipient the owner chooses. An honest transaction using that way is accepted, unless
+another limit of G3a or a hash break blocks it. It needs the limit of 100% on the withdrawal fee rate.
+A 1-lamport note can't get out at a 100% rate and a zero fee error margin. A rate raised after a
+transaction is built can make its fee too low; the owner then builds another.
+
+**G3 for the code assumes Anchor's account checks pass.** `honestSpendIsAccepted_code` and
+`adminsCannotLockWithdrawals_code` say: if the transaction passes Anchor's account checks, `step`
+accepts it, or a hash break occurs. They cover Anchor's `init`s, the handler and the lamport check.
+Assumed, not machine-checked: the program's accounts are in place, and the four nullifier addresses
+meet Anchor's `init` and `SystemAccount` constraints. The second holds for an unspent nullifier
+because only the program can create accounts at its derived addresses, and it does so only for
+nullifiers it spends, which is visible in `execTransact`. Internal transfers aren't covered (L1), nor
+a change in the gap since the last transaction. "Accepted" is by the code model, which leaves out
+some of Solana's rejections.
 
 **A difference between code and spec shows up as a theorem that fails.** Lean then proves
 the faithful statement false, with a concrete counterexample. No theorem is weakened to make
@@ -49,8 +67,8 @@ Lean does not warn about this.
 inputs and of the proof points, and requires canonical encodings, so the check against input
 aliasing is a spec requirement the connection proves the code enforces.
 
-**Some goals hold by definition.** G4a and G4b restate a precondition or effect of the
-spec's `transact`, and G5 restates `UpdatedValuesBetweenTransacts.Allowed`. They check that
+**Some goals hold almost by definition.** G4a and G4b follow directly from a precondition and
+the effects of the spec's `transact`, and G5a and G5b restate `UpdatedValuesBetweenTransacts.Allowed`. They check that
 the spec says what we intend; their value for the code comes entirely from the connection
 theorems. The other goals
 (G1a–G1d, G2, G3) are consequences that take real proof.
@@ -60,7 +78,7 @@ rule only if it needs one, marked ADDED MANUALLY (docs silent) (a rule the docs 
 or SOLANA FACT (how Solana behaves). Each such rule is either enforced by the code (the
 connection proves it) or by Solana (proved from the runtime model). Example:
 `poolIsSeparate` (the pool is not the signer, the recipient of a withdrawal or the fee
-recipient of a non-zero fee) is needed for G1c and G4a. The program does not check it;
+recipient of a non-zero fee) is needed for G1c and G4. The program does not check it;
 the runtime's lamport-conservation check enforces it, and the connection proves this from the
 model of that check. It is not an assumption of any theorem.
 
@@ -82,6 +100,9 @@ models the proof's bytes (so the two decoders became comparable).
 Solana behaviour the documentation leaves implicit, marked SOLANA FACT in `Spec/Spec.lean`.
 Each is how Solana works, not a rule of the program; keep this list in sync with the labels.
 
+- **Only a signature lets an account be debited** (`signerSigned`, `InitParams.initializer_signed`).
+  The signer of a `transact` and the initializer of the pool really signed; Anchor's `Signer`
+  check enforces both.
 - **Rent.** An account must hold a rent-exempt minimum, which grows with its size: the pool's
   (`rentExemptMin`) and a nullifier account's (`nullifierRent`) differ. The pool is created
   holding exactly its minimum; the signer pays one nullifier rent per nullifier account.
@@ -124,7 +145,7 @@ Includes the notes in `FINDINGS.md` ("Notes: behaviour the documentation should 
 keep those in sync. Items that are not findings are listed only here.
 
 - The external amount `−2^63` is rejected.
-- The fee error margin is at most 100%.
+- The fee rates and the fee error margin are each at most 100%.
 - Only the admin key can initialize the pool; deployments must use a build with it set.
 - There are two authorities: one over the fee settings, one over the deposit limit.
 - Admins can change only the fee settings and the deposit limit (`update_global_config`,

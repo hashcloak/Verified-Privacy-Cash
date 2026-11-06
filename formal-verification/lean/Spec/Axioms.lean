@@ -26,17 +26,23 @@ without reading the proofs. -/
 /-- info: 'LeanSpec.Goals.shared_nullifier_requires_owner_key' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms LeanSpec.Goals.shared_nullifier_requires_owner_key
 
-/-- info: 'LeanSpec.Goals.unspent_note_is_spendable' depends on axioms: [propext, Classical.choice, Quot.sound] -/
-#guard_msgs in #print axioms LeanSpec.Goals.unspent_note_is_spendable
+/-- info: 'LeanSpec.Goals.honest_spend_is_accepted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms LeanSpec.Goals.honest_spend_is_accepted
 
-/-- info: 'LeanSpec.Goals.no_sol_created' depends on axioms: [propext, Classical.choice, Quot.sound] -/
-#guard_msgs in #print axioms LeanSpec.Goals.no_sol_created
+/-- info: 'LeanSpec.Goals.admins_cannot_lock_withdrawals' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms LeanSpec.Goals.admins_cannot_lock_withdrawals
 
-/-- info: 'LeanSpec.Goals.balance_changes_exact' depends on axioms: [propext, Classical.choice, Quot.sound] -/
-#guard_msgs in #print axioms LeanSpec.Goals.balance_changes_exact
+/-- info: 'LeanSpec.Goals.only_signers_pay' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms LeanSpec.Goals.only_signers_pay
 
-/-- info: 'LeanSpec.Goals.config_changes_only_by_authority' depends on axioms: [propext, Classical.choice, Quot.sound] -/
-#guard_msgs in #print axioms LeanSpec.Goals.config_changes_only_by_authority
+/-- info: 'LeanSpec.Goals.exact_payouts' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms LeanSpec.Goals.exact_payouts
+
+/-- info: 'LeanSpec.Goals.only_authorities_change_config' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms LeanSpec.Goals.only_authorities_change_config
+
+/-- info: 'LeanSpec.Goals.admin_powers_limited' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms LeanSpec.Goals.admin_powers_limited
 
 /-- info: 'LeanSpec.Goals.NonVacuous.nonvacuous_spend' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms LeanSpec.Goals.NonVacuous.nonvacuous_spend
@@ -44,6 +50,15 @@ without reading the proofs. -/
 /-- info: 'LeanSpec.Goals.NonVacuous.nonvacuous_G3_hypotheses' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms LeanSpec.Goals.NonVacuous.nonvacuous_G3_hypotheses
 
+/-- info: 'LeanSpec.Goals.NonVacuous.nonvacuous_G3b_hypotheses' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms LeanSpec.Goals.NonVacuous.nonvacuous_G3b_hypotheses
+
 /-- info: 'LeanSpec.Goals.NonVacuous.nonvacuous_withdrawal_accepted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms LeanSpec.Goals.NonVacuous.nonvacuous_withdrawal_accepted
+
+/-- info: 'LeanSpec.Goals.NonVacuous.nonvacuous_G2a_hypotheses' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms LeanSpec.Goals.NonVacuous.nonvacuous_G2a_hypotheses
+
+/-- info: 'LeanSpec.Goals.NonVacuous.nonvacuous_G2b_hypotheses' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms LeanSpec.Goals.NonVacuous.nonvacuous_G2b_hypotheses
 

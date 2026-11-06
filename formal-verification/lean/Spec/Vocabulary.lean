@@ -113,6 +113,10 @@ structure Run (w0 : World) where
   step : ∀ j (h : j < txs.length),
     transact txs[j] ((ws j).withUpdatedValues (updatedValues j)) (ws (j+1))
 
+/-- `r.adminChangesUpTo j`: the admin changes made before world `j`, in order. -/
+def Run.adminChangesUpTo {w0 : World} (r : Run w0) (j : ℕ) : List AdminChange :=
+  (List.range j).flatMap fun i => (r.updatedValues i).adminChanges
+
 /-- `r.donations j`: the SOL sent to the pool from outside just before transaction `j`.
 
     The pool's balance in `updatedValues j` minus its balance in `ws j`. The pool can only gain
@@ -328,6 +332,8 @@ structure TxWellFormed (inputs : TxInputs) (pool : Pubkey) : Prop where
   encodings : publicInputsEncoded inputs
   /-- The pool is not named where it would be paid. -/
   poolSeparate : poolIsSeparate inputs pool
+  /-- The signer signed the transaction. -/
+  signed : signerSigned inputs
 
 /-- `InputUsedInRun r wit w i`: some input of the run has the same commitment at the same
     position as input `i` of `w`. -/
@@ -352,7 +358,8 @@ structure HonestSpend {w0 : World} (r : Run w0) (wit : ℕ → Witness) (inputs 
   /-- The current spend's two inputs don't double spend a note (G1b's notion). -/
   notDoubleSpend : ¬ DoubleSpendInputs witness 0 witness 1
   /-- No input of this spend has been used before, so its nullifier is new, unless an `H3`
-      collision occurs. -/
+      collision occurs. Apart from the note's key holder, only someone with an `H1` or `H4`
+      collision can make this false (T2). -/
   inputNotUsedBefore : ∀ i, ¬ InputUsedInRun r wit witness i
   /-- The spend's root is a real past root. -/
   root : RootIsPast r inputs k

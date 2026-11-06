@@ -68,6 +68,10 @@ mention, so users and integrators cannot know it.
   above 10000 basis points. Our specification includes this rule, because its fee rule computes
   `10000 − feeErrorMargin`; the documentation gives the default (5%) but no bound, and should
   state it.
+- **The fee rates are at most 100%.** `update_global_config` refuses a deposit or withdrawal fee
+  rate above 10000 basis points. Our specification includes this rule, because without it admins
+  could set a rate that locks notes in the pool; the documentation gives defaults but no bound,
+  and should state it.
 - **Only the admin key can initialize the pool.** `initialize` checks the caller against a
   hard-coded admin key; whoever initializes becomes the authority over fees and the deposit
   limit. In the localnet and test builds there is no admin key, so anyone can initialize.
@@ -87,3 +91,9 @@ mention, so users and integrators cannot know it.
   values. Without this, `x` and `x + p` would be two encodings of the same field element, so
   one nullifier could be sent as two different byte strings. Our specification includes this
   rule; the documentation should state the wire format.
+- **The sender chooses the fee recipient, by design.** `fee_recipient_account` can be any
+  account; the program checks only that it matches the external data hash and that the fee
+  meets the minimum. A sender can therefore pay the fee to themselves, which avoids the
+  protocol fee. The client confirmed this is intentional, for decentralization (Zigtur,
+  Kriko); Veridise recommends documenting it. Our specification leaves the fee recipient
+  unconstrained, as the code does; the documentation should state this.

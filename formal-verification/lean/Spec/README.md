@@ -5,7 +5,7 @@ only Mathlib. The files, in order:
 
 - `Spec.lean`: the model: state, `transact`, its preconditions and effects, `initWorld`.
 - `Vocabulary.lean`: the building blocks the statements use (runs, notes, hash breaks, the
-  pieces of G3).
+  pieces of G3a).
 - `Statements.lean`: the review surface: goals (each a property and its theorem), trusted
   assumptions.
   Start here ("How to review" at its top).

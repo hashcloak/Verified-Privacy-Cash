@@ -78,10 +78,15 @@ theorem env_between {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSp
     exact lp
   · have : (toWorld d rent spent s').state.config = (toWorld d rent spent s).state.config := by
       simp only [toWorld, treeAt, configAt, dt, dc]
-    show LeanSpec.ReachableByAdminChanges _ (toWorld d rent spent s').state.config
+    show LeanSpec.ReachableByAdminChanges [] _ (toWorld d rent spent s').state.config
     rw [this]; exact .noChange _
 
 /-! ## Admin instructions -/
+
+/-- The values `w` already has, reached by the admin changes `chs`. -/
+def recordChanges (w : LeanSpec.World) (chs : List LeanSpec.AdminChange) :
+    LeanSpec.UpdatedValuesBetweenTransacts :=
+  { LeanSpec.UpdatedValuesBetweenTransacts.unchanged w with adminChanges := chs }
 
 /-- What `update_global_config` computes: each given setting replaces the old one, and the
     fee error margin, when given, is at most 10000. -/
@@ -115,8 +120,8 @@ theorem ugc_between {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSp
     (h : execUpdateGlobalConfig d s tx a dep wd m = .ok s') :
     Initialized d s' ∧
       toWorld d rent spent s' = (toWorld d rent spent s).withUpdatedValues
-        (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent spent s')) ∧
-      (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent spent s')).Allowed
+        (recordChanges (toWorld d rent spent s') (toAdminChange d s tx (.updateGlobalConfig a dep wd m)).toList) ∧
+      (recordChanges (toWorld d rent spent s') (toAdminChange d s tx (.updateGlobalConfig a dep wd m)).toList).Allowed
         (toWorld d rent spent s) := by
   unfold execUpdateGlobalConfig at h
   split at h
@@ -156,10 +161,14 @@ theorem ugc_between {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSp
     have hcfg' : configAt s' (configAddr d) = config' := by
       simp only [configAt, ← hka, hkey]
     show LeanSpec.ReachableByAdminChanges
+      [⟨tx.signers.map toPubkey,
+        .feeSettings (dep.getD (configAt s (configAddr d)).deposit_fee_rate).val
+          (wd.getD (configAt s (configAddr d)).withdrawal_fee_rate).val
+          (m.getD (configAt s (configAddr d)).fee_error_margin).val⟩]
       (toConfig (configAt s (configAddr d)) (treeAt s (treeAddr d)))
       (toConfig (configAt s' (configAddr d)) (treeAt s' (treeAddr d)))
     rw [hcfg, hcfg', htree]
-    refine .extend ⟨tx.signers.map toPubkey,
+    refine .extend (chs := []) ⟨tx.signers.map toPubkey,
       .feeSettings (dep.getD config.deposit_fee_rate).val (wd.getD config.withdrawal_fee_rate).val
         (m.getD config.fee_error_margin).val⟩ (.noChange _) ?_
     have hsig : toPubkey config.authority ∈ tx.signers.map toPubkey := by
@@ -168,7 +177,9 @@ theorem ugc_between {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSp
       rcases m with _ | v
       · exact hm0
       · exact hmv v rfl
-    simp only [LeanSpec.AdminChange.apply, toConfig, if_pos (And.intro hsig hErrorMargin), hc']
+    obtain ⟨hd1, hw1, -⟩ := ugc_rates config config' dep wd m (ofResult_ok hres) hd0 hw0 hm0
+    rw [hc'] at hd1 hw1
+    simp only [LeanSpec.AdminChange.apply, toConfig, if_pos (And.intro hsig (And.intro hd1 (And.intro hw1 hErrorMargin))), hc']
 
 /-- **`update_deposit_limit` is an allowed admin change.** It sets the deposit limit, signed by
     the tree's authority; the spec's tree and everything else are unchanged. -/
@@ -178,8 +189,8 @@ theorem udl_between {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSp
     (h : execUpdateDepositLimit d s tx a newLimit = .ok s') :
     Initialized d s' ∧
       toWorld d rent spent s' = (toWorld d rent spent s).withUpdatedValues
-        (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent spent s')) ∧
-      (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent spent s')).Allowed
+        (recordChanges (toWorld d rent spent s') (toAdminChange d s tx (.updateDepositLimit a newLimit)).toList) ∧
+      (recordChanges (toWorld d rent spent s') (toAdminChange d s tx (.updateDepositLimit a newLimit)).toList).Allowed
         (toWorld d rent spent s) := by
   unfold execUpdateDepositLimit at h
   split at h
@@ -214,11 +225,11 @@ theorem udl_between {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSp
   · show publicBalance s (fromPubkey (toPubkey (poolAddr d)))
       ≤ publicBalance s' (fromPubkey (toPubkey (poolAddr d)))
     simp only [fromPubkey_toPubkey, publicBalance, keep _ hpne, le_refl]
-  · show LeanSpec.ReachableByAdminChanges
+  · show LeanSpec.ReachableByAdminChanges [⟨tx.signers.map toPubkey, .depositLimit newLimit.val⟩]
       (toConfig (configAt s (configAddr d)) (treeAt s (treeAddr d)))
       (toConfig (configAt s' (configAddr d)) (treeAt s' (treeAddr d)))
     rw [hC, hT, hT', ht']
-    refine .extend ⟨tx.signers.map toPubkey, .depositLimit newLimit.val⟩ (.noChange _) ?_
+    refine .extend (chs := []) ⟨tx.signers.map toPubkey, .depositLimit newLimit.val⟩ (.noChange _) ?_
     have hsig : toPubkey tree.authority ∈ tx.signers.map toPubkey := by
       rw [hval.treeAccount.2.2]; exact List.mem_map_of_mem hval.authority
     simp only [LeanSpec.AdminChange.apply, toConfig, if_pos hsig]
@@ -539,6 +550,9 @@ theorem init_between [LeanSpec.PoseidonHashes] {d : Deployment} {rent : Nat → 
       params.pool = toPubkey (poolAddr d) ∧ params.rentExemptMin = (rent treeTokenAccountSpace).val ∧
       params.nullifierRent = (rent nullifierAccountSpace).val ∧
       params.admin = d.adminPubkey.map toPubkey ∧
+      params.initializer = toPubkey a.authority ∧ params.signers = tx.signers.map toPubkey ∧
+      params.cfg = (toWorld d rent ∅ s').state.config ∧
+      params.balances = (toWorld d rent ∅ s').balances ∧
       toWorld d rent ∅ s' = (LeanSpec.initWorld params).withUpdatedValues
         (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent ∅ s')) ∧
       (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent ∅ s')).Allowed
@@ -622,9 +636,14 @@ theorem init_between [LeanSpec.PoseidonHashes] {d : Deployment} {rent : Nat → 
     obtain ⟨k, hk, rfl⟩ := Option.map_eq_some_iff.mp hx
     rw [hadmin k hk]
   have pm : (toConfig config tree).feeErrorMargin ≤ 10000 := by simp [toConfig, hc]
+  have pdr : (toConfig config tree).depositFeeRate ≤ 10000 := by simp [toConfig, hc]
+  have pwr : (toConfig config tree).withdrawalFeeRate ≤ 10000 := by simp [toConfig, hc]
+  have psg : toPubkey a.authority ∈ tx.signers.map toPubkey :=
+    List.mem_map_of_mem hvalid.authority
   refine ⟨hinit, ⟨toConfig config tree, (toWorld d rent ∅ s').balances, (rent treeTokenAccountSpace).val,
     (rent nullifierAccountSpace).val, toPubkey (poolAddr d), toPubkey a.authority,
-    d.adminPubkey.map toPubkey, pa, pl, pad, pm⟩, rfl, rfl, rfl, rfl, ?_, ?_, ?_⟩
+    tx.signers.map toPubkey, psg, d.adminPubkey.map toPubkey, pa, pl, pad, pm, pdr, pwr⟩,
+    rfl, rfl, rfl, rfl, rfl, rfl, hcfg.symm, rfl, ?_, ?_, ?_⟩
   · simp only [toWorld, LeanSpec.initWorld, LeanSpec.World.withUpdatedValues,
       LeanSpec.UpdatedValuesBetweenTransacts.unchanged, hT,
       htree]
@@ -633,7 +652,7 @@ theorem init_between [LeanSpec.PoseidonHashes] {d : Deployment} {rent : Nat → 
     simp only [LeanSpec.World.poolBalance, LeanSpec.initWorld, Function.update_self,
       fromPubkey_toPubkey, publicBalance, dP]
     rw [← hpA, (hs'k _).2.1]; exact hpl
-  · show LeanSpec.ReachableByAdminChanges (toConfig config tree)
+  · show LeanSpec.ReachableByAdminChanges [] (toConfig config tree)
       (toWorld d rent ∅ s').state.config
     rw [hcfg]; exact .noChange _
 
@@ -695,52 +714,61 @@ variable [LeanSpec.PoseidonHashes] [LeanSpec.Sha] {G1 G2 GT : Type} [AddCommGrou
 
 /-- What the bridge keeps along an execution. -/
 def BridgeInv (d : Deployment) (rent : Nat → U64) (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT)
-    (laws : PairingLaws C.e) (spent : Finset LeanSpec.F) (txs : List LeanSpec.TxInputs) (s : State) :
-    Prop :=
-  WellFormed d spent s ∧
-    ((NoProgramAccounts d s ∧ txs = [] ∧ spent = ∅) ∨
+    (laws : PairingLaws C.e) (v : ExecutionView) (spent : Finset LeanSpec.F)
+    (txs : List LeanSpec.TxInputs) (s : State) : Prop :=
+  WellFormed d spent s ∧ v.spent = spent ∧
+    ((NoProgramAccounts d s ∧ txs = [] ∧ spent = ∅ ∧ v = {}) ∨
       (Initialized d s ∧
         letI : LeanSpec.Groups := syscallGroups C
         letI : LeanSpec.Pairing := syscallPairing C laws
         letI : LeanSpec.Deployment := ⟨programKey C⟩
-        IsSpecRun d rent spent txs s))
+        ∃ (params : LeanSpec.InitParams) (r : LeanSpec.Run (LeanSpec.initWorld params)),
+          RunMatchesView d rent v spent txs s params r))
 
-/-- A change between transactions after the end of a spec run. -/
-theorem IsSpecRun.between {d : Deployment} {rent : Nat → U64}
+/-- A change between transactions after the end of a spec run: the view's open gap gains the
+    admin changes `chs`. -/
+theorem RunMatchesView.between {d : Deployment} {rent : Nat → U64}
     {C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT} {laws : PairingLaws C.e}
-    {spent : Finset LeanSpec.F} {txs : List LeanSpec.TxInputs} {s s' : State}
+    {v v' : ExecutionView} {spent : Finset LeanSpec.F} {txs : List LeanSpec.TxInputs} {s s' : State}
+    {chs : List LeanSpec.AdminChange}
+    (hv : v' = { v with openGap := v.openGap ++ chs })
     (h : letI : LeanSpec.Groups := syscallGroups C
       letI : LeanSpec.Pairing := syscallPairing C laws
       letI : LeanSpec.Deployment := ⟨programKey C⟩
-      IsSpecRun d rent spent txs s)
+      ∃ (params : LeanSpec.InitParams) (r : LeanSpec.Run (LeanSpec.initWorld params)),
+        RunMatchesView d rent v spent txs s params r)
     (hw : toWorld d rent spent s' = (toWorld d rent spent s).withUpdatedValues
-      (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent spent s')))
-    (ha : (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent spent s')).Allowed
-      (toWorld d rent spent s)) :
+      (recordChanges (toWorld d rent spent s') chs))
+    (ha : (recordChanges (toWorld d rent spent s') chs).Allowed (toWorld d rent spent s)) :
     letI : LeanSpec.Groups := syscallGroups C
     letI : LeanSpec.Pairing := syscallPairing C laws
     letI : LeanSpec.Deployment := ⟨programKey C⟩
-    IsSpecRun d rent spent txs s' := by
+    ∃ (params : LeanSpec.InitParams) (r : LeanSpec.Run (LeanSpec.initWorld params)),
+      RunMatchesView d rent v' spent txs s' params r := by
   letI : LeanSpec.Groups := syscallGroups C
   letI : LeanSpec.Pairing := syscallPairing C laws
   letI : LeanSpec.Deployment := ⟨programKey C⟩
-  obtain ⟨params, r, h1, h2, h3, h4, htx, b, hb, heq⟩ := h
-  refine ⟨params, r, h1, h2, h3, h4, htx,
-    LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent spent s'), ?_, ?_⟩
+  subst hv
+  obtain ⟨params, r, h1, h2, h3, h4, hi, htx, hpl, hp, hal, ha', hgl, hg, b, hb, hgap, heq⟩ := h
+  refine ⟨params, r, h1, h2, h3, h4, hi, htx, hpl, hp, hal, ha', hgl, hg,
+    b.andThen (recordChanges (toWorld d rent spent s') chs), ?_, ?_, ?_⟩
   · rw [heq] at ha
     exact hb.trans ha
+  · show b.adminChanges ++ chs = v.openGap ++ chs
+    rw [hgap]
   · rw [hw, heq]; rfl
 
 /-- **Outside actions keep the invariant.** -/
 theorem bridge_env {d : Deployment} {rent : Nat → U64}
     {C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT} {laws : PairingLaws C.e}
-    {spent : Finset LeanSpec.F} {txs : List LeanSpec.TxInputs} {s s' : State}
-    (hinv : BridgeInv d rent C laws spent txs s) (h : EnvStep d.programId s s') :
-    BridgeInv d rent C laws spent txs s' := by
-  obtain ⟨wf, hn | ⟨hi, hr⟩⟩ := hinv
-  · exact ⟨wf_envStep wf h, Or.inl ⟨env_noProgramAccounts h hn.1, hn.2⟩⟩
+    {v : ExecutionView} {spent : Finset LeanSpec.F} {txs : List LeanSpec.TxInputs} {s s' : State}
+    (hinv : BridgeInv d rent C laws v spent txs s) (h : EnvStep d.programId s s') :
+    BridgeInv d rent C laws v spent txs s' := by
+  obtain ⟨wf, hsp, hn | ⟨hi, hr⟩⟩ := hinv
+  · exact ⟨wf_envStep wf h, hsp, Or.inl ⟨env_noProgramAccounts h hn.1, hn.2⟩⟩
   · obtain ⟨hw, ha⟩ := env_between (rent := rent) (spent := spent) h hi
-    exact ⟨wf_envStep wf h, Or.inr ⟨env_initialized h hi, hr.between hw ha⟩⟩
+    refine ⟨wf_envStep wf h, hsp, Or.inr ⟨env_initialized h hi, ?_⟩⟩
+    exact RunMatchesView.between (chs := []) (by cases v; simp) hr hw ha
 
 /-- The program's three fixed accounts differ (from `ExecutionAssumptions.fixedAddressesDiffer`). -/
 theorem fixed_addresses_differ {d : Deployment} {rent : Nat → U64} {s₀ : State} {evs : List Event}
@@ -750,33 +778,39 @@ theorem fixed_addresses_differ {d : Deployment} {rent : Nat → U64} {s₀ : Sta
 
 /-- **Each instruction keeps the invariant.** `initialize` starts the spec run; `transact`
     extends it by its transaction (the main per-step theorem); the admin instructions are
-    allowed changes between transactions. -/
+    allowed changes between transactions, recorded with their signers. -/
 theorem bridge_step {d : Deployment} {rent : Nat → U64}
     {C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT} {laws : PairingLaws C.e}
-    {spent : Finset LeanSpec.F} {txs : List LeanSpec.TxInputs} {s s' : State} {tx : TxEnv}
-    {ix : Instruction} {em : List CommitmentData}
-    (hinv : BridgeInv d rent C laws spent txs s)
+    {v : ExecutionView} {spent : Finset LeanSpec.F} {txs : List LeanSpec.TxInputs} {s s' : State}
+    {tx : TxEnv} {ix : Instruction} {em : List CommitmentData}
+    (hinv : BridgeInv d rent C laws v spent txs s)
     (hpid : d.programId ≠ systemProgram) (hashes : HashesAgree d.crypto)
     (hdist : treeAddr d ≠ poolAddr d ∧ treeAddr d ≠ configAddr d ∧ poolAddr d ≠ configAddr d)
     (hstepA : StepAssumptions d rent tx ix) (h : step d s tx ix = .ok (s', em)) :
-    BridgeInv d rent C laws (spent ∪ stepSpent ix) (txs ++ stepTxs ix) s' := by
+    BridgeInv d rent C laws (v.afterEvent d rent s (.program tx ix em) s')
+      (spent ∪ stepSpent ix) (txs ++ stepTxs tx ix) s' := by
   letI : LeanSpec.Groups := syscallGroups C
   letI : LeanSpec.Pairing := syscallPairing C laws
   letI : LeanSpec.Deployment := ⟨programKey C⟩
-  obtain ⟨wf, hn | ⟨hi, hr⟩⟩ := hinv
+  obtain ⟨wf, hsp, hn | ⟨hi, hr⟩⟩ := hinv
   · -- before initialization: only `initialize` succeeds, and it starts the spec run
     have wf' := wf_step hashes.poseidonCanonical hashes.zeroBytesCanonical wf h
     obtain ⟨a, rfl⟩ := noProgram_step hn.1 h
     obtain ⟨s₁, h1, h2⟩ := PrivacyCash.Model.Except.bind_ok h
     cases h2
-    obtain ⟨hi', params, hp1, hp2, hp3, hp4, heq, ha⟩ := init_between hdist
+    obtain ⟨hi', params, hp1, hp2, hp3, hp4, hp5, hp6, hp7, hp8, heq, ha⟩ := init_between hdist
       hpid hstepA hashes.zeroBytes h1
-    obtain ⟨-, rfl, rfl⟩ := hn
-    refine ⟨wf', Or.inr ⟨hi', ?_⟩⟩
-    refine ⟨params, LeanSpec.Run.empty _, hp1, hp2, hp3, hp4, by simp [stepTxs],
-      LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent ∅ s'), ha, ?_⟩
-    simpa [stepSpent] using heq
-  · cases ix with
+    obtain ⟨-, rfl, rfl, rfl⟩ := hn
+    refine ⟨wf', by simp [ExecutionView.afterEvent, stepSpent], Or.inr ⟨hi', ?_⟩⟩
+    refine ⟨params, LeanSpec.Run.empty _, hp1, hp2, hp3, hp4,
+      ⟨_, rfl, hp5, hp6, hp7, hp8⟩, by simp [stepTxs], rfl, ?_, rfl, ?_, rfl, ?_,
+      LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent ∅ s'), ha, rfl, ?_⟩
+    · intro j hj; exact absurd hj (by simp [LeanSpec.Run.empty])
+    · intro j hj; exact absurd hj (by simp [LeanSpec.Run.empty])
+    · intro j hj; exact absurd hj (by simp [LeanSpec.Run.empty])
+    · simpa [stepSpent] using heq
+  · subst hsp
+    cases ix with
     | «initialize» a => exact (initialized_no_initialize hpid hi h).elim
     | updateDepositLimit a l =>
       have wf' := wf_step hashes.poseidonCanonical hashes.zeroBytesCanonical wf h
@@ -784,68 +818,124 @@ theorem bridge_step {d : Deployment} {rent : Nat → U64}
       cases h2
       obtain ⟨hi', hw, ha⟩ := udl_between (rent := rent) wf hi h1
       simp only [stepSpent, Finset.union_empty, stepTxs, List.append_nil] at wf' ⊢
-      exact ⟨wf', Or.inr ⟨hi', hr.between hw ha⟩⟩
+      exact ⟨wf', rfl, Or.inr ⟨hi', RunMatchesView.between rfl hr hw ha⟩⟩
     | updateGlobalConfig a dep wd m =>
       have wf' := wf_step hashes.poseidonCanonical hashes.zeroBytesCanonical wf h
       obtain ⟨s₁, h1, h2⟩ := PrivacyCash.Model.Except.bind_ok h
       cases h2
       obtain ⟨hi', hw, ha⟩ := ugc_between (rent := rent) wf hi h1
       simp only [stepSpent, Finset.union_empty, stepTxs, List.append_nil] at wf' ⊢
-      exact ⟨wf', Or.inr ⟨hi', hr.between hw ha⟩⟩
+      exact ⟨wf', rfl, Or.inr ⟨hi', RunMatchesView.between rfl hr hw ha⟩⟩
     | transact a proof ext fee out1 out2 =>
       obtain ⟨solana, crypto, hrent⟩ := hstepA
-      obtain ⟨b₁, hb₁, b₂, htx, hb₂, wf'⟩ :=
+      obtain ⟨b₁, hb₁, b₂, htx, hb₂, wf', hb₁nil, hb₁pool, hb₂cfg, hb₂pool⟩ :=
         transact_refines_between_verified C laws h hashes wf solana crypto hrent
       have hi' := transact_initialized wf hi h
-      obtain ⟨params, r, hp1, hp2, hp3, hp4, htxs, b, hb, heq⟩ := hr
+      obtain ⟨params, r, hp1, hp2, hp3, hp4, hinit, htxs, hpl, hpb, hal, hafter, hgl, hgaps, b, hb, hgap, heq⟩ := hr
       rw [heq] at htx hb₁
       rw [LeanSpec.World.withUpdatedValues_twice] at htx
-      obtain ⟨r', hr'tx, hr'f, -⟩ := r.snoc b₁ (hb.trans hb₁) _ _ htx
-      refine ⟨wf', Or.inr ⟨hi', params, r', hp1, hp2, hp3, hp4, ?_,
+      obtain ⟨r', hr'tx, hr'f, hws, hup, hlast⟩ := r.snoc _ (hb.trans hb₁) _ _ htx
+      have hlen : r'.txs.length = r.txs.length + 1 := by rw [hr'tx]; simp
+      have hfinal : r'.ws (r.txs.length + 1) = r'.final := by
+        unfold LeanSpec.Run.final; rw [hlen]
+      refine ⟨wf', rfl, Or.inr ⟨hi', params, r', hp1, hp2, hp3, hp4, hinit, ?_, ?_, ?_, ?_, ?_, ?_, ?_,
         LeanSpec.UpdatedValuesBetweenTransacts.unchanged
-        (toWorld d rent (spent ∪ stepSpent (.transact a proof ext fee out1 out2)) s'), ?_, ?_⟩⟩
+        (toWorld d rent (v.spent ∪ stepSpent (.transact a proof ext fee out1 out2)) s'), ?_, rfl, ?_⟩⟩
       · rw [hr'tx, htxs]; rfl
+      · simp only [ExecutionView.afterEvent, List.length_append, List.length_singleton]
+        omega
+      · intro j hj
+        simp only [ExecutionView.afterEvent]
+        rcases Nat.lt_or_ge j r.txs.length with hlt | hge
+        · rw [List.getElem?_append_left (by omega), hpb j hlt, hup j hlt]
+        · have hj' : j = r.txs.length := by omega
+          subst hj'
+          rw [List.getElem?_append_right (by omega), hpl, Nat.sub_self, hlast]
+          simp only [List.length_singleton, List.getElem?_cons_zero, Option.some.injEq]
+          exact hb₁pool.symm
+      · simp only [ExecutionView.afterEvent, List.length_append, List.length_singleton]
+        omega
+      · intro j hj
+        simp only [ExecutionView.afterEvent]
+        rcases Nat.lt_or_ge j r.txs.length with hlt | hge
+        · rw [List.getElem?_append_left (by omega), hafter j hlt, hws (j+1) (by omega)]
+        · have hj' : j = r.txs.length := by omega
+          subst hj'
+          rw [List.getElem?_append_right (by omega), hal, Nat.sub_self, hfinal, hr'f]
+          simp only [List.length_singleton, List.getElem?_cons_zero, Option.some.injEq, Prod.mk.injEq]
+          refine ⟨?_, ?_⟩
+          · show _ = { (toWorld d rent (v.spent ∪ stepSpent (.transact a proof ext fee out1 out2)) s').state with
+              config := b₂.config }
+            rw [hb₂cfg]; rfl
+          · exact hb₂pool.symm
+      · simp only [ExecutionView.afterEvent, List.length_append, List.length_singleton]
+        omega
+      · intro j hj
+        simp only [ExecutionView.afterEvent]
+        rcases Nat.lt_or_ge j r.txs.length with hlt | hge
+        · rw [List.getElem?_append_left (by omega), hgaps j hlt, hup j hlt]
+        · have hj' : j = r.txs.length := by omega
+          subst hj'
+          rw [List.getElem?_append_right (by omega), hgl, Nat.sub_self, hlast]
+          simp only [List.length_singleton, List.getElem?_cons_zero, Option.some.injEq]
+          show v.openGap = b.adminChanges ++ b₁.adminChanges
+          rw [hb₁nil, hgap, List.append_nil]
       · rw [hr'f]; exact hb₂
       · rw [hr'f, LeanSpec.World.withUpdatedValues_twice]
         exact (LeanSpec.World.withUpdatedValues_self _).symm
 
-/-- **The invariant holds along any execution**, from any state where it holds. -/
+/-- An execution path is an execution. -/
+theorem ExecutionPath.toRun {d : Deployment} {s s' : State} {evs : List Event} {states : List State}
+    (h : ExecutionPath d s evs states s') : Run d s evs s' := by
+  induction h with
+  | nil => exact .nil _
+  | program hs _ ih => exact .program hs ih
+  | env he _ ih => exact .env he ih
+
+/-- **The invariant holds along any execution path**, from any state where it holds. -/
 theorem bridge_run {d : Deployment} {rent : Nat → U64}
     {C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT} {laws : PairingLaws C.e} {s₀ : State}
     {all : List Event} (hpid : d.programId ≠ systemProgram)
     (hashes : HashesAgree d.crypto) (assume : ExecutionAssumptions d rent s₀ all) :
-    ∀ {s s' : State} {evs pre : List Event} {spent : Finset LeanSpec.F} {txs : List LeanSpec.TxInputs},
-      all = pre ++ evs → Run d s₀ pre s → BridgeInv d rent C laws spent txs s → Run d s evs s' →
-      BridgeInv d rent C laws (spent ∪ runSpent evs) (txs ++ runTxs evs) s' := by
-  intro s s' evs pre spent txs hall hpre hinv hrun
-  induction hrun generalizing pre spent txs with
-  | nil => simpa [runSpent, runTxs] using hinv
-  | @program s₁ s₂ s₃ tx ix emitted events hstep _ ih =>
+    ∀ {s s' : State} {evs pre : List Event} {states : List State} {v : ExecutionView}
+      {spent : Finset LeanSpec.F} {txs : List LeanSpec.TxInputs},
+      all = pre ++ evs → Run d s₀ pre s → BridgeInv d rent C laws v spent txs s →
+      ExecutionPath d s evs states s' →
+      BridgeInv d rent C laws (ExecutionView.afterEvents d rent v s evs states)
+        (spent ∪ runSpent evs) (txs ++ runTxs evs) s' := by
+  intro s s' evs pre states v spent txs hall hpre hinv hrun
+  induction hrun generalizing pre v spent txs with
+  | nil => simpa [runSpent, runTxs, ExecutionView.afterEvents] using hinv
+  | @program s₁ s₂ s₃ tx ix emitted events states hstep hrest ih =>
     have hA := assume.eachStep pre events s₁ tx ix emitted hall hpre
     have hinv' := bridge_step hinv hpid hashes (fixed_addresses_differ assume) hA hstep
-    have := ih (by rw [hall]; simp) (hpre.append (.program hstep (.nil _))) hinv'
-    simpa [runSpent, runTxs, Finset.union_assoc, List.append_assoc] using this
-  | @env s₁ s₂ s₃ events henv _ ih =>
-    have := ih (by rw [hall]; simp) (hpre.append (.env henv (.nil _))) (bridge_env hinv henv)
-    simpa [runSpent, runTxs] using this
+    have := ih (pre := pre ++ [.program tx ix emitted]) (by rw [hall]; simp)
+      (hpre.append (.program hstep (.nil _))) hinv'
+    simpa [runSpent, runTxs, ExecutionView.afterEvents, Finset.union_assoc, List.append_assoc] using this
+  | @env s₁ s₂ s₃ events states henv hrest ih =>
+    have := ih (pre := pre ++ [.env]) (by rw [hall]; simp) (hpre.append (.env henv (.nil _)))
+      (bridge_env hinv henv)
+    simpa [runSpent, runTxs, ExecutionView.afterEvents, ExecutionView.afterEvent] using this
 
 /-- **The bridge.** Every execution of the code model from genesis either has not initialized
-    the pool, or is (read through `toWorld` and `runTxs`) a run of the spec from the start world
-    `initialize` set, up to what happened after its last transaction. -/
+    the pool, or is (read through `toWorld`, `runTxs` and `executionView`) a run of the spec from
+    the start world `initialize` set, up to what happened after its last transaction. -/
 theorem execution_is_spec_run_pf {d : Deployment} {rent : Nat → U64} {s₀ s : State} {evs : List Event}
-    (hgen : Genesis d.programId s₀) (hrun : Run d s₀ evs s) (hpid : d.programId ≠ systemProgram)
+    {states : List State}
+    (hgen : Genesis d.programId s₀) (hrun : ExecutionPath d s₀ evs states s)
+    (hpid : d.programId ≠ systemProgram)
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
     (hashes : HashesAgree d.crypto) (assume : ExecutionAssumptions d rent s₀ evs) :
     (NoProgramAccounts d s ∧ runTxs evs = []) ∨
       (letI : LeanSpec.Groups := syscallGroups C
        letI : LeanSpec.Pairing := syscallPairing C laws
        letI : LeanSpec.Deployment := ⟨programKey C⟩
-       IsSpecRun d rent (runSpent evs) (runTxs evs) s) := by
-  have h0 : BridgeInv d rent C laws ∅ [] s₀ :=
-    ⟨wf_genesis hgen hpid, Or.inl ⟨genesis_noProgramAccounts hgen, rfl, rfl⟩⟩
-  have := bridge_run (C := C) (laws := laws) hpid hashes assume (by simp) (.nil _) h0 hrun
+       IsSpecRun d rent s₀ evs states s) := by
+  have h0 : BridgeInv d rent C laws {} ∅ [] s₀ :=
+    ⟨wf_genesis hgen hpid, rfl, Or.inl ⟨genesis_noProgramAccounts hgen, rfl, rfl, rfl⟩⟩
+  have := bridge_run (C := C) (laws := laws) hpid hashes assume (pre := []) (by simp) (.nil _) h0 hrun
   simp only [Finset.empty_union, List.nil_append] at this
-  rcases this.2 with ⟨hn, ht, -⟩ | ⟨-, hr⟩
+  rcases this.2.2 with ⟨hn, ht, -⟩ | ⟨-, hr⟩
   · exact Or.inl ⟨hn, ht⟩
   · exact Or.inr hr
 
@@ -858,20 +948,24 @@ theorem ExecutionAssumptions.prefix {d : Deployment} {rent : Nat → U64} {s₀ 
 
 /-- An initialized execution is a spec run (the bridge, without its "not initialized" case). -/
 theorem code_spec_run {d : Deployment} {rent : Nat → U64} {s₀ s : State} {evs : List Event}
-    (hgen : Genesis d.programId s₀) (hrun : Run d s₀ evs s) (hpid : d.programId ≠ systemProgram)
+    {states : List State}
+    (hgen : Genesis d.programId s₀) (hrun : ExecutionPath d s₀ evs states s)
+    (hpid : d.programId ≠ systemProgram)
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
     (hashes : HashesAgree d.crypto) (assume : ExecutionAssumptions d rent s₀ evs) (hi : Initialized d s) :
     letI : LeanSpec.Groups := syscallGroups C
     letI : LeanSpec.Pairing := syscallPairing C laws
     letI : LeanSpec.Deployment := ⟨programKey C⟩
-    IsSpecRun d rent (runSpent evs) (runTxs evs) s := by
+    IsSpecRun d rent s₀ evs states s := by
   rcases execution_is_spec_run_pf hgen hrun hpid C laws hashes assume with ⟨hn, -⟩ | hr
   · obtain ⟨⟨t, ht⟩, -, -⟩ := hi; exact (hn.1 _ _ ht).elim
   · exact hr
 
 /-- **What the spec proves of all its runs holds of an initialized execution's run.** -/
 theorem run_satisfies {d : Deployment} {rent : Nat → U64} {s₀ s : State} {evs : List Event}
-    (hgen : Genesis d.programId s₀) (hrun : Run d s₀ evs s) (hpid : d.programId ≠ systemProgram)
+    {states : List State}
+    (hgen : Genesis d.programId s₀) (hrun : ExecutionPath d s₀ evs states s)
+    (hpid : d.programId ≠ systemProgram)
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
     (hashes : HashesAgree d.crypto) (assume : ExecutionAssumptions d rent s₀ evs) (hi : Initialized d s) :
     letI : LeanSpec.Groups := syscallGroups C
@@ -880,13 +974,117 @@ theorem run_satisfies {d : Deployment} {rent : Nat → U64} {s₀ s : State} {ev
     ∀ (P : ∀ params : LeanSpec.InitParams, LeanSpec.Run (LeanSpec.initWorld params) → Prop),
       (∀ params r, P params r) →
       ∃ (params : LeanSpec.InitParams) (r : LeanSpec.Run (LeanSpec.initWorld params)),
-        IsRunOf d rent (runSpent evs) (runTxs evs) s params r ∧ P params r := by
+        IsRunOf d rent s₀ evs states s params r ∧ P params r := by
   letI : LeanSpec.Groups := syscallGroups C
   letI : LeanSpec.Pairing := syscallPairing C laws
   letI : LeanSpec.Deployment := ⟨programKey C⟩
   intro P hP
   obtain ⟨params, r, h⟩ := code_spec_run hgen hrun hpid C laws hashes assume hi
   exact ⟨params, r, h, hP params r⟩
+
+/-- All the admin changes a view records. -/
+def ExecutionView.allChanges (v : ExecutionView) : List LeanSpec.AdminChange :=
+  v.closedGaps.flatten ++ v.openGap
+
+omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
+/-- An event keeps the admin changes the view has recorded. -/
+theorem allChanges_afterEvent {d : Deployment} {rent : Nat → U64} (v : ExecutionView) (before after : State)
+    (e : Event) {ch : LeanSpec.AdminChange} (h : ch ∈ v.allChanges) :
+    ch ∈ (v.afterEvent d rent before e after).allChanges := by
+  cases e with
+  | env => exact h
+  | program tx ix em =>
+    cases ix <;> simp_all [ExecutionView.afterEvent, ExecutionView.allChanges]
+    all_goals
+      rcases h with h | h
+      · exact Or.inl h
+      · exact Or.inr (Or.inl h)
+
+omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
+/-- Later events keep the admin changes the view has recorded. -/
+theorem allChanges_afterEvents {d : Deployment} {rent : Nat → U64} {s s' : State} {evs : List Event}
+    {states : List State} (hrun : ExecutionPath d s evs states s') (v : ExecutionView)
+    {ch : LeanSpec.AdminChange} (h : ch ∈ v.allChanges) :
+    ch ∈ (ExecutionView.afterEvents d rent v s evs states).allChanges := by
+  induction hrun generalizing v with
+  | nil => exact h
+  | program _ _ ih => exact ih _ (allChanges_afterEvent v _ _ _ h)
+  | env _ _ ih => exact ih _ (allChanges_afterEvent v _ _ _ h)
+
+omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
+/-- Every admin instruction of an execution is in the view, with the signers of its transaction. -/
+theorem adminTxs_recorded {d : Deployment} {rent : Nat → U64} {s s' : State} {evs : List Event}
+    {states : List State} (hrun : ExecutionPath d s evs states s') (v : ExecutionView) :
+    ∀ tx ∈ adminTxs evs, ∃ ch ∈ (ExecutionView.afterEvents d rent v s evs states).allChanges,
+      ch.signers = tx.signers.map toPubkey := by
+  induction hrun generalizing v with
+  | nil => simp [adminTxs]
+  | env _ _ ih => exact ih _
+  | @program s₁ s₂ s₃ tx' ix em events states hstep hrest ih =>
+    intro tx htx
+    cases ix with
+    | «initialize» a => exact ih _ tx htx
+    | transact a p e f o1 o2 => exact ih _ tx htx
+    | updateDepositLimit a l =>
+      rcases List.mem_cons.mp htx with rfl | htx
+      · exact ⟨_, allChanges_afterEvents hrest _ (ch := ⟨tx.signers.map toPubkey, .depositLimit l.val⟩)
+          (by simp [ExecutionView.afterEvent, ExecutionView.allChanges, toAdminChange]), rfl⟩
+      · exact ih _ tx htx
+    | updateGlobalConfig a dep wd m =>
+      rcases List.mem_cons.mp htx with rfl | htx
+      · exact ⟨_, allChanges_afterEvents hrest _ (ch := ⟨tx.signers.map toPubkey,
+          .feeSettings (dep.getD (configAt s₁ (configAddr d)).deposit_fee_rate).val
+            (wd.getD (configAt s₁ (configAddr d)).withdrawal_fee_rate).val
+            (m.getD (configAt s₁ (configAddr d)).fee_error_margin).val⟩)
+          (by simp [ExecutionView.afterEvent, ExecutionView.allChanges, toAdminChange]), rfl⟩
+      · exact ih _ tx htx
+
+/-- **G5a on the execution's events.** From G5a and G5b of the execution's spec run: what `initialize` set
+    up holds both authorities, its signer really signed, and so did every admin instruction's. -/
+theorem admin_instructions_signed_pf {d : Deployment} {rent : Nat → U64} {s₀ s : State}
+    {evs : List Event} {states : List State}
+    (hgen : Genesis d.programId s₀) (hrun : ExecutionPath d s₀ evs states s)
+    (hpid : d.programId ≠ systemProgram)
+    (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
+    (hashes : HashesAgree d.crypto) (assume : ExecutionAssumptions d rent s₀ evs) (hi : Initialized d s) :
+    ∃ i : InitRecord, (executionView d rent s₀ evs states).init = some i ∧
+      i.initializer ∈ i.signers ∧
+      (∀ a, d.adminPubkey.map toPubkey = some a → i.initializer = a) ∧
+      i.world.state.config.authority = i.initializer ∧
+      i.world.state.config.limitAuthority = i.initializer ∧
+      ∀ tx ∈ adminTxs evs, i.initializer ∈ tx.signers.map toPubkey := by
+  letI : LeanSpec.Groups := syscallGroups C
+  letI : LeanSpec.Pairing := syscallPairing C laws
+  letI : LeanSpec.Deployment := ⟨programKey C⟩
+  obtain ⟨params, r, -, -, -, hadm, ⟨i, hinit, hI, hS, hcfg, -⟩, -, -, -, -, -, hgl, hgaps, b, hb, hgap, -⟩ :=
+    code_spec_run hgen hrun hpid C laws hashes assume hi
+  obtain ⟨-, hsigned⟩ :=
+    (LeanSpec.Goals.only_authorities_change_config params r).2 r.txs.length le_rfl
+  obtain ⟨ha, hl, -⟩ := LeanSpec.Goals.admin_powers_limited params r r.txs.length le_rfl
+  refine ⟨i, hinit, ?_, ?_, ?_, ?_, ?_⟩
+  · rw [← hI, ← hS]; exact params.initializer_signed
+  · intro x hx; rw [← hI]; exact params.admin_init x (by rw [hadm]; exact hx)
+  · rw [← hcfg, ← hI]; exact params.authority_init
+  · rw [← hcfg, ← hI]; exact params.limitAuthority_init
+  · intro tx htx
+    obtain ⟨ch, hch, hsig⟩ := adminTxs_recorded hrun {} tx htx
+    rw [← hsig, ← hI]
+    rcases List.mem_append.mp hch with hc | hc
+    · obtain ⟨gap, hgapMem, hc⟩ := List.mem_flatten.mp hc
+      obtain ⟨j, hj, hjgap⟩ := List.getElem_of_mem hgapMem
+      have hjlen : j < r.txs.length := hgl ▸ hj
+      have hgapj : gap = (r.updatedValues j).adminChanges := by
+        have h2 : (executionView d rent s₀ evs states).closedGaps[j]? = some gap := by
+          have := List.getElem?_eq_getElem hj
+          rw [hjgap] at this
+          exact this
+        exact Option.some.inj (h2.symm.trans (hgaps j hjlen))
+      refine hsigned ch ?_
+      simp only [LeanSpec.Run.adminChangesUpTo, List.mem_flatMap, List.mem_range]
+      exact ⟨j, hjlen, hgapj ▸ hc⟩
+    · have hb' := hb.config
+      rw [hgap] at hb'
+      exact (hb'.signed ha hl).2.2 ch hc
 
 /-- The per-transaction connection, for a `transact` in an execution from genesis. -/
 theorem transact_connection_pf {d : Deployment} {rent : Nat → U64} {s₀ s s' : State}
@@ -900,7 +1098,7 @@ theorem transact_connection_pf {d : Deployment} {rent : Nat → U64} {s₀ s s' 
     letI : LeanSpec.Groups := syscallGroups C
     letI : LeanSpec.Pairing := syscallPairing C laws
     letI : LeanSpec.Deployment := ⟨programKey C⟩
-    let inputs := toInputs a proof extAmount fee out1 out2
+    let inputs := toInputs tx.signers a proof extAmount fee out1 out2
     LeanSpec.transact inputs (toWorld d rent (runSpent evs) s)
       (toWorld d rent (runSpent evs ∪ {inputs.k0, inputs.k1}) s') :=
   (transact_refines_verified C laws hstep hashes (wf_reachable hgen hrun hpid hashes) solana crypto

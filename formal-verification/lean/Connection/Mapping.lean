@@ -93,8 +93,7 @@ def toConfig (c : zkcash_core.admin.GlobalConfig)
 
 /-- `publicBalance s k`: the balance the spec sees for account `k`: its lamports, except
     that nullifier accounts count as 0. MAPPING DECISION: the spec's balances are those of public accounts, and the
-    signer's nullifier rent leaves them (spec G4a: "no SOL is created or lost, except the
-    nullifier rent"). On-chain that rent goes to the two new nullifier accounts. -/
+    signer's nullifier rent leaves them (spec `nullifierRentEffects`). On-chain that rent goes to the two new nullifier accounts. -/
 def publicBalance (s : State) (k : Pubkey) : ℕ :=
   match (s k).data with
   | .nullifier _ => 0
@@ -118,11 +117,12 @@ def toWorld (d : Deployment) (rent : Nat → U64) (spent : Finset LeanSpec.F) (s
 
 /-! ## Transactions -/
 
-/-- `toInputs a proof extAmount fee out1 out2`: the spec inputs of a `transact` instruction.
+/-- `toInputs signers a proof extAmount fee out1 out2`: the spec inputs of a `transact`
+    instruction in a transaction signed by `signers`.
     The seven public inputs are given twice, as the spec's field elements (`toF`) and as the
     sender's 32 bytes (`pubInputBytes`, in circuit order); the proof is the sender's bytes of
     its three points. -/
-def toInputs (a : TransactAccounts) (proof : zkcash_core.transact.Proof) (extAmount : I64)
+def toInputs (signers : List Pubkey) (a : TransactAccounts) (proof : zkcash_core.transact.Proof) (extAmount : I64)
     (fee : U64) (out1 out2 : Slice U8) : LeanSpec.TxInputs where
   R := toF proof.root
   pubAmt := toF proof.public_amount
@@ -134,6 +134,7 @@ def toInputs (a : TransactAccounts) (proof : zkcash_core.transact.Proof) (extAmo
   extAmt := extAmount.val
   f := fee.val
   s := toPubkey a.signer
+  signers := signers.map toPubkey
   A := toPubkey a.recipient
   t := toPubkey a.feeRecipientAccount
   encOut0 := toBytes out1.val
@@ -144,17 +145,120 @@ def toInputs (a : TransactAccounts) (proof : zkcash_core.transact.Proof) (extAmo
 
 /-! ## Executions -/
 
-/-- `stepTxs ix`: the spec transactions of one instruction: a `transact`'s mapped inputs;
-    nothing for the other instructions (they are changes between transactions in the spec). -/
-def stepTxs : Instruction → List LeanSpec.TxInputs
-  | .transact a proof ext fee out1 out2 => [toInputs a proof ext fee out1 out2]
+/-- `stepTxs tx ix`: the spec transactions of one instruction in transaction `tx`: a `transact`'s
+    mapped inputs; nothing for the other instructions (they are changes between transactions in
+    the spec). -/
+def stepTxs (tx : TxEnv) : Instruction → List LeanSpec.TxInputs
+  | .transact a proof ext fee out1 out2 => [toInputs tx.signers a proof ext fee out1 out2]
   | _ => []
 
 /-- `runTxs evs`: the spec transactions of an execution, in order. -/
 def runTxs : List Event → List LeanSpec.TxInputs
   | [] => []
-  | .program _ ix _ :: es => stepTxs ix ++ runTxs es
+  | .program tx ix _ :: es => stepTxs tx ix ++ runTxs es
   | .env :: es => runTxs es
+
+/-- The nullifiers one instruction spends (only `transact` spends any). -/
+def stepSpent : Instruction → Finset LeanSpec.F
+  | .transact _ proof _ _ _ _ => {toF proof.input_nullifiers.val[0]!, toF proof.input_nullifiers.val[1]!}
+  | _ => ∅
+
+/-- The nullifiers an execution spends: those of its `transact` instructions. -/
+def runSpent : List Event → Finset LeanSpec.F
+  | [] => ∅
+  | .program _ ix _ :: es => stepSpent ix ∪ runSpent es
+  | .env :: es => runSpent es
+
+/-- `ExecutionPath d s evs states s'`: the execution `evs` from `s` to `s'`, with the state after
+    each event (`states`). The same steps as core-model's `Run`, which is a `Prop` and so can't
+    tell a theorem which states it went through. -/
+inductive ExecutionPath (d : Deployment) : State → List Event → List State → State → Prop where
+  | nil (s : State) : ExecutionPath d s [] [] s
+  | program {s s' s'' : State} {tx : TxEnv} {ix : Instruction} {emitted : List CommitmentData}
+      {events : List Event} {states : List State} :
+      step d s tx ix = .ok (s', emitted) → ExecutionPath d s' events states s'' →
+        ExecutionPath d s (.program tx ix emitted :: events) (s' :: states) s''
+  | env {s s' s'' : State} {events : List Event} {states : List State} :
+      EnvStep d.programId s s' → ExecutionPath d s' events states s'' →
+        ExecutionPath d s (.env :: events) (s' :: states) s''
+
+/-- `toAdminChange d before tx ix`: the spec's admin change for instruction `ix`, in a transaction
+    `tx` run on state `before`, with the signers of `tx`. A setting `update_global_config` isn't
+    given keeps its value in `before`. `none` for the other instructions. -/
+def toAdminChange (d : Deployment) (before : State) (tx : TxEnv) :
+    Instruction → Option LeanSpec.AdminChange
+  | .updateDepositLimit _ newLimit =>
+    some ⟨tx.signers.map toPubkey, .depositLimit newLimit.val⟩
+  | .updateGlobalConfig _ dep wd margin =>
+    let c := configAt before (configAddr d)
+    some ⟨tx.signers.map toPubkey, .feeSettings (dep.getD c.deposit_fee_rate).val
+      (wd.getD c.withdrawal_fee_rate).val (margin.getD c.fee_error_margin).val⟩
+  | _ => none
+
+/-- What `initialize` set up: its signing authority, the signers of its transaction, and the
+    spec world of the state it left. -/
+structure InitRecord where
+  initializer : LeanSpec.Pubkey
+  signers : List LeanSpec.Pubkey
+  world : LeanSpec.World
+
+/-- What the spec sees of an execution so far.
+
+    - `init`: what `initialize` set up, once it has run;
+    - `closedGaps`: for each transaction so far, the admin changes since the one before it;
+    - `openGap`: the admin changes since the last transaction;
+    - `poolBeforeTx`: just before each transaction so far, the chain's pool balance;
+    - `afterTx`: after each transaction so far, the chain's spec state and pool balance;
+    - `spent`: the nullifiers spent so far. -/
+structure ExecutionView where
+  init : Option InitRecord := none
+  closedGaps : List (List LeanSpec.AdminChange) := []
+  openGap : List LeanSpec.AdminChange := []
+  poolBeforeTx : List ℕ := []
+  afterTx : List (LeanSpec.State × ℕ) := []
+  spent : Finset LeanSpec.F := ∅
+
+/-- `v.afterEvent d rent before e after`: the view `v` after event `e` took the chain from
+    `before` to `after`. Outside actions change nothing the view records. -/
+def ExecutionView.afterEvent (v : ExecutionView) (d : Deployment) (rent : Nat → U64)
+    (before : State) (e : Event) (after : State) : ExecutionView :=
+  match e with
+  | .env => v
+  | .program tx ix _ =>
+    match ix with
+    | .initialize a =>
+      { v with init := some ⟨toPubkey a.authority, tx.signers.map toPubkey,
+          toWorld d rent v.spent after⟩ }
+    | .transact .. =>
+      let spent' := v.spent ∪ stepSpent ix
+      { v with
+        closedGaps := v.closedGaps ++ [v.openGap]
+        openGap := []
+        poolBeforeTx := v.poolBeforeTx ++ [publicBalance before (poolAddr d)]
+        afterTx := v.afterTx ++ [((toWorld d rent spent' after).state,
+          publicBalance after (poolAddr d))]
+        spent := spent' }
+    | _ => { v with openGap := v.openGap ++ (toAdminChange d before tx ix).toList }
+
+/-- `v.afterEvents d rent before evs states`: the view `v` after the events `evs`, from `before`
+    through `states`. -/
+def ExecutionView.afterEvents (d : Deployment) (rent : Nat → U64) :
+    ExecutionView → State → List Event → List State → ExecutionView
+  | v, before, e :: es, after :: states =>
+    ExecutionView.afterEvents d rent (v.afterEvent d rent before e after) after es states
+  | v, _, _, _ => v
+
+/-- `executionView d rent s₀ evs states`: what the spec sees of the whole execution. -/
+def executionView (d : Deployment) (rent : Nat → U64) (s₀ : State) (evs : List Event)
+    (states : List State) : ExecutionView :=
+  ExecutionView.afterEvents d rent {} s₀ evs states
+
+/-- `adminTxs evs`: the transactions of the execution's admin instructions, in order. -/
+def adminTxs : List Event → List TxEnv
+  | [] => []
+  | .program tx (.updateDepositLimit ..) _ :: es => tx :: adminTxs es
+  | .program tx (.updateGlobalConfig ..) _ :: es => tx :: adminTxs es
+  | _ :: es => adminTxs es
 
 /-- `Initialized d s`: the program holds its tree, pool and config at their canonical
     addresses. -/
@@ -172,28 +276,62 @@ variable [LeanSpec.PoseidonHashes] [LeanSpec.Sha] [LeanSpec.Groups] [AddCommGrou
   [Module LeanSpec.F LeanSpec.G1] [AddCommGroup LeanSpec.G2] [Module LeanSpec.F LeanSpec.G2]
   [CommGroup LeanSpec.GT] [LeanSpec.Pairing] [LeanSpec.Deployment]
 
-/-- `IsRunOf d rent spent txs s params r`: `r` is the spec run of the execution.
-
-    - **the start:** `r` starts at the world `initialize` set up (`params`: the pool's
-      address, the rent, the admin key);
-    - **the transactions:** its transactions are the execution's (`txs`);
-    - **the end:** the code state `s`, with the nullifiers `spent` spent so far, is its final
-      world after an allowed change (what happened after the last transaction). -/
-def IsRunOf (d : Deployment) (rent : Nat → U64) (spent : Finset LeanSpec.F)
+/-- `RunMatchesView d rent v spent txs s params r`: the spec run `r` is what the view `v` records,
+    and it ends at the code state `s`. The conditions are explained at `IsRunOf`, which applies this
+    to a whole execution. -/
+def RunMatchesView (d : Deployment) (rent : Nat → U64) (v : ExecutionView) (spent : Finset LeanSpec.F)
     (txs : List LeanSpec.TxInputs) (s : State) (params : LeanSpec.InitParams)
     (r : LeanSpec.Run (LeanSpec.initWorld params)) : Prop :=
+  -- the start
   params.pool = toPubkey (poolAddr d) ∧ params.rentExemptMin = (rent treeTokenAccountSpace).val ∧
     params.nullifierRent = (rent nullifierAccountSpace).val ∧
-    params.admin = d.adminPubkey.map toPubkey ∧ r.txs = txs ∧
+    params.admin = d.adminPubkey.map toPubkey ∧
+    (∃ i : InitRecord, v.init = some i ∧ params.initializer = i.initializer ∧
+      params.signers = i.signers ∧ params.cfg = i.world.state.config ∧
+      params.balances = i.world.balances) ∧
+    -- the transactions
+    r.txs = txs ∧
+    -- the pool's balance before each transaction, so the donations are the chain's
+    v.poolBeforeTx.length = r.txs.length ∧
+    (∀ j (_ : j < r.txs.length),
+      v.poolBeforeTx[j]? = some ((r.updatedValues j).balances (toPubkey (poolAddr d)))) ∧
+    -- each transaction's result
+    v.afterTx.length = r.txs.length ∧
+    (∀ j (_ : j < r.txs.length), v.afterTx[j]? = some ((r.ws (j+1)).state, (r.ws (j+1)).poolBalance)) ∧
+    -- the admin changes
+    v.closedGaps.length = r.txs.length ∧
+    (∀ j (_ : j < r.txs.length), v.closedGaps[j]? = some (r.updatedValues j).adminChanges) ∧
+    -- the end
     ∃ b : LeanSpec.UpdatedValuesBetweenTransacts, b.Allowed r.final ∧
-      toWorld d rent spent s = r.final.withUpdatedValues b
+      b.adminChanges = v.openGap ∧ toWorld d rent spent s = r.final.withUpdatedValues b
 
-/-- `IsSpecRun d rent spent txs s`: the code state `s` is the end of a spec run (some `r`
-    with `IsRunOf`). -/
-def IsSpecRun (d : Deployment) (rent : Nat → U64) (spent : Finset LeanSpec.F)
-    (txs : List LeanSpec.TxInputs) (s : State) : Prop :=
+/-- `IsRunOf d rent s₀ evs states s params r`: `r` is the spec run of this execution: the one
+    `evs` went through, from `s₀` to `s`, by the `states` of its `ExecutionPath`.
+
+    - **the start:** `r` starts at the world `initialize` set up (`view.init`): its config and
+      balances, its signing authority and the signers of its transaction; and `params` holds the
+      deployment's pool address, rents and admin key;
+    - **the transactions:** its transactions are the execution's (`runTxs evs`);
+    - **the pool before each transaction:** `r` has the chain's pool balance, so the SOL `r` counts
+      as sent to the pool (`r.donated`) is what the chain received;
+    - **each transaction's result:** after each transaction, `r` has the chain's tree, nullifiers,
+      pool address, config and pool balance. Other balances may differ (see
+      `OutsideSpecDetail`: a pre-funded nullifier address, or a payee that is a nullifier account);
+    - **the admin changes:** before each transaction, `r` records exactly the admin instructions
+      executed since the last one, with the signers of their transactions;
+    - **the end:** the code state `s`, with the nullifiers the execution spent, is its final world
+      after an allowed change that records the admin instructions executed since the last
+      transaction. -/
+def IsRunOf (d : Deployment) (rent : Nat → U64) (s₀ : State) (evs : List Event)
+    (states : List State) (s : State) (params : LeanSpec.InitParams)
+    (r : LeanSpec.Run (LeanSpec.initWorld params)) : Prop :=
+  RunMatchesView d rent (executionView d rent s₀ evs states) (runSpent evs) (runTxs evs) s params r
+
+/-- `IsSpecRun d rent s₀ evs states s`: the execution is a spec run (some `r` with `IsRunOf`). -/
+def IsSpecRun (d : Deployment) (rent : Nat → U64) (s₀ : State) (evs : List Event)
+    (states : List State) (s : State) : Prop :=
   ∃ (params : LeanSpec.InitParams) (r : LeanSpec.Run (LeanSpec.initWorld params)),
-    IsRunOf d rent spent txs s params r
+    IsRunOf d rent s₀ evs states s params r
 
 end
 

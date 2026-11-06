@@ -595,17 +595,6 @@ theorem wf_initialize {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State
     exact wf.storedSubtrees k t ⟨e1 ▸ ho, by rw [← (hoth k ht hp hc).2]; exact hd⟩
 
 
-/-- The nullifiers one instruction spends (only `transact` spends any). -/
-def stepSpent : Instruction → Finset LeanSpec.F
-  | .transact _ proof _ _ _ _ => {toF proof.input_nullifiers.val[0]!, toF proof.input_nullifiers.val[1]!}
-  | _ => ∅
-
-/-- The nullifiers an execution spends: those of its `transact` instructions. -/
-def runSpent : List Event → Finset LeanSpec.F
-  | [] => ∅
-  | .program _ ix _ :: es => stepSpent ix ∪ runSpent es
-  | .env :: es => runSpent es
-
 omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
 theorem wf_step {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State} {tx : TxEnv}
     {ix : Instruction} {evs : List CommitmentData}
