@@ -12,7 +12,8 @@ path = "../core-model"
 # Hand-written specification of the protocol. Independent of the model: imports none of it.
 [[lean_lib]]
 name = "Spec"
-globs = ["Spec.Spec", "Spec.Vocabulary", "Spec.Proofs", "Spec.NonVacuity", "Spec.Statements",
+globs = ["Spec.Spec", "Spec.Vocabulary", "Spec.Proofs", "Spec.Statements", "Spec.NonVacuitySetting",
+  "Spec.NonVacuityProofs", "Spec.NonVacuityStatements",
   "Spec.Axioms"]
 
 # Connection theorems: the code model (core-model) satisfies the spec.

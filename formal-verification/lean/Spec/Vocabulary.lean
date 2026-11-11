@@ -304,7 +304,7 @@ def NullifierTakenByCollision {w0 : World} (r : Run w0) (wit : ℕ → Witness) 
     ∧ H3Collision (w.nullifierArgs i) ((wit j).nullifierArgs i')
 
 
-/-! ### The pieces of G3 (liveness) -/
+/-! ### The pieces of G3a (liveness) -/
 
 /-- `RootIsPast r inputs k`: the spend's root is a real past root of `r`: the root of the
     tree after its first `k` leaves. -/

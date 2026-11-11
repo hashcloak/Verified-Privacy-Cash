@@ -1,8 +1,9 @@
-import Spec.Statements
+import Spec.NonVacuityStatements
 
 /-! # Axiom check
 
-For every theorem in `Spec/Statements.lean`, the axioms it depends on. `#guard_msgs` makes
+For every theorem in `Spec/Statements.lean` and `Spec/NonVacuityStatements.lean`, the axioms
+it depends on. `#guard_msgs` makes
 the build fail if the list changes: a `sorry` would show up as `sorryAx`, an extra axiom by
 its name. The only axioms are Lean's standard three (`propext`, `Classical.choice`,
 `Quot.sound`). So a successful build of this file means no theorem relies on anything else,
@@ -53,8 +54,8 @@ without reading the proofs. -/
 /-- info: 'LeanSpec.Goals.NonVacuous.nonvacuous_G3b_hypotheses' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms LeanSpec.Goals.NonVacuous.nonvacuous_G3b_hypotheses
 
-/-- info: 'LeanSpec.Goals.NonVacuous.nonvacuous_withdrawal_accepted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
-#guard_msgs in #print axioms LeanSpec.Goals.NonVacuous.nonvacuous_withdrawal_accepted
+/-- info: 'LeanSpec.Goals.NonVacuous.nonvacuous_G4_hypotheses' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms LeanSpec.Goals.NonVacuous.nonvacuous_G4_hypotheses
 
 /-- info: 'LeanSpec.Goals.NonVacuous.nonvacuous_G2a_hypotheses' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms LeanSpec.Goals.NonVacuous.nonvacuous_G2a_hypotheses

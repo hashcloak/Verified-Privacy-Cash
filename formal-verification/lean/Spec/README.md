@@ -10,7 +10,9 @@ only Mathlib. The files, in order:
   assumptions.
   Start here ("How to review" at its top).
 - `Proofs.lean`: lemmas and proofs (not for review).
-- `NonVacuity.lean`: toy-model checks that the hypotheses can hold.
+- `NonVacuitySetting.lean`, `NonVacuityStatements.lean`: review surface of the toy-model checks
+  that the hypotheses can hold (the toy setting, and the statements).
+- `NonVacuityProofs.lean`: their proofs (not for review).
 - `Axioms.lean`: machine check that no theorem uses `sorry` or an extra axiom.
 - `written_spec.md`: the protocol in prose (being updated to match the Lean spec).
 

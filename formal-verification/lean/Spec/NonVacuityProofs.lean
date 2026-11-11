@@ -1,20 +1,22 @@
 import Spec.Proofs
-import Mathlib.Algebra.Group.PUnit
+import Spec.NonVacuitySetting
 
-/-! ## Non-vacuity check (not for review)
+/-! ## Non-vacuity proofs (not for review)
 
-The theorems quantify over runs with witnesses (`r.WitnessesFor wit`), and G3a has many
-hypotheses. This checks that they can all hold at once, in a toy model of the hash
-functions, for any groups and pairing given Groth16 completeness on the wire
-(`Groth16CompleteBytes`; and, at the end of this file, for a toy pairing in which it is
-proved, `toyCompleteBytes`):
+The proofs of the statements in `Spec/NonVacuityStatements.lean`, in the toy setting of
+`Spec/NonVacuitySetting.lean`. They work for any groups and pairing given Groth16 completeness
+on the wire (`Groth16CompleteBytes`), proved at the end of this file for the toy pairing
+(`toyCompleteBytes`):
 - `run_with_witnesses_exists`: a run of one deposit, with a witness for its proof;
-- `toy_G3_hypotheses`: G3a applies to withdrawing that deposit's note: every hypothesis
-  of G3a holds;
-- `toy_G3b_hypotheses`: so does G3b: that withdrawal is the split G3b picks for its note;
-- `run_with_spend_exists`: a run of two transactions (the deposit, then that withdrawal)
-  with witnesses, where the second spends a non-zero note, so the hypotheses of G1a–G1d
-  hold for a real spend. -/
+- `run_with_spend_exists`: a run of two transactions (the deposit, then a withdrawal of its
+  note) with witnesses, where the second spends the deposit's non-zero note, so the
+  hypotheses of G1a–G1d hold for a real spend;
+- `toy_G3_hypotheses`: every hypothesis of G3a holds for that withdrawal after the deposit, and
+  it is accepted;
+- `toy_G3b_hypotheses`: every hypothesis of G3b's `WayIsAccepted` holds for that withdrawal with
+  any split of the note between recipient and fee, so for whichever split G3b picks;
+- `toy_G4_hypotheses`, `toy_G2a_hypotheses`, `toy_G2b_hypotheses`: likewise for G4a/G4b, G2a
+  and G2b. -/
 namespace LeanSpec.NonVacuity
 open LeanSpec
 
@@ -28,16 +30,6 @@ variable [Groups] [AddCommGroup G1] [Module F G1] [AddCommGroup G2] [Module F G2
 def Groth16CompleteBytes [PoseidonHashes] [Sha] : Prop :=
   ∀ x w, RelationS x w → ∃ πb : Groth16.ProofBytes, ∃ π,
     πb.decode = some π ∧ Groth16.verify Deployment.vk π x
-
-/-- Toy hashes. `H2` is constant, so every Merkle path reaches the root `1`; `H3` is linear,
-    so the nullifiers below differ. -/
-@[reducible] def toyHashes : PoseidonHashes where
-  H1 := fun a => a
-  H2 := fun _ _ => 1
-  H3 := fun a b c => a + 2 * b + 3 * c
-  H4 := fun a b c d => a + b + c + d
-
-@[reducible] def toySha : Sha where sha256 := fun _ => []
 
 attribute [local instance] toyHashes toySha
 
@@ -81,10 +73,13 @@ def toyPool : Pubkey := 1
 
 lemma toyPool_ne : (0 : Pubkey) ≠ toyPool := by decide
 
-/-- The pool, freshly initialized; every other account holds 2 lamports, rents are `0`. -/
-abbrev toyInit : World :=
-  initWorld ⟨toyCfg, fun _ => 2, 0, 0, toyPool, 0, [0], (by simp), none, rfl, rfl,
+/-- The pool's parameters: every other account holds 2 lamports, rents are `0`. -/
+abbrev toyParams : InitParams :=
+  ⟨toyCfg, fun _ => 2, 0, 0, toyPool, 0, [0], (by simp), none, rfl, rfl,
     (fun _ h => by cases h), (by decide), (by decide), (by decide)⟩
+
+/-- The pool, freshly initialized. -/
+abbrev toyInit : World := initWorld toyParams
 
 /-! ### Transaction 0: a deposit of 2 lamports -/
 
@@ -398,42 +393,6 @@ lemma wdWitness_real : wdWitness.inAmt 0 ≠ 0 := by
   simp only [wdWitness, Matrix.cons_val_zero]
   have := natCast_ne_zero 2 (by norm_num) (by norm_num [p]); exact_mod_cast this
 
-/-- **The hypotheses of G3a can all hold.** After `toyRun1`, withdrawing the deposit's note (a
-    real, non-zero spend) against the current root (`k = 2`) satisfies every hypothesis of G3a. -/
-theorem toy_G3_hypotheses (hCompl : Groth16CompleteBytes) :
-    ∃ (inputs : TxInputs) (witness : Witness) (k : ℕ),
-      witness.inAmt 0 ≠ 0
-      ∧ (toyRun1 hCompl).WitnessesFor (fun _ => toyWitness)
-      ∧ HonestSpend (toyRun1 hCompl) (fun _ => toyWitness) inputs witness k
-      ∧ LimitsNotHit (toyRun1 hCompl).final inputs := by
-  have hfin := toyRun1_final hCompl
-  refine ⟨toyWithdrawal hCompl, wdWitness, 2, wdWitness_real, toyRun1_wit hCompl,
-    toy_withdrawal_honest hCompl, ?_⟩
-  refine { inWindow := by rw [hfin]; exact W1_root_mem hCompl, treeRoom := ?_,
-           balancesFit := by rw [hfin]; exact wd_fit hCompl _, fee := ?_, depositLimit := ?_ }
-  · rw [hfin]; unfold treeHasRoom; rw [W1_nextIndex]; norm_num
-  · rw [hfin]; simp [feeSufficient, W1, transactEffects, transferEffects_state, initWorld, toyCfg, wdInputs]
-  · simp [depositWithinLimit, wdInputs]
-
-/-- **The hypotheses of G3b can all hold.** The same withdrawal: a payout of 1 and a fee of 1. -/
-theorem toy_G3b_hypotheses (hCompl : Groth16CompleteBytes) :
-    ∃ (inputs : TxInputs) (witness : Witness) (k : ℕ),
-      witness.inAmt 0 ≠ 0
-      ∧ (toyRun1 hCompl).WitnessesFor (fun _ => toyWitness)
-      ∧ HonestSpend (toyRun1 hCompl) (fun _ => toyWitness) inputs witness k
-      ∧ witness.inAmt 0 + witness.inAmt 1 = ((2 : ℕ) : F)
-      ∧ inputs.extAmt = -((1 : ℕ) : ℤ)
-      ∧ inputs.f = 1
-      ∧ inputs.R ∈ Set.range (toyRun1 hCompl).final.state.tree.history
-      ∧ treeHasRoom (toyRun1 hCompl).final.state.tree
-      ∧ balancesFit inputs (toyRun1 hCompl).final := by
-  have hfin := toyRun1_final hCompl
-  refine ⟨toyWithdrawal hCompl, wdWitness, 2, wdWitness_real, toyRun1_wit hCompl,
-    toy_withdrawal_honest hCompl, by simp [wdWitness], by simp [wdInputs], rfl, ?_, ?_, ?_⟩
-  · rw [hfin]; exact W1_root_mem hCompl
-  · rw [hfin]; unfold treeHasRoom; rw [W1_nextIndex]; norm_num
-  · rw [hfin]; exact wd_fit hCompl _
-
 /-! ### The run of both transactions -/
 
 lemma toy_withdrawal_step (hCompl : Groth16CompleteBytes) :
@@ -484,15 +443,18 @@ noncomputable def toyRun2 (hCompl : Groth16CompleteBytes) : Run toyInit where
     · simpa [World.withUpdatedValues_self] using toy_withdrawal_step hCompl
 
 theorem run_with_spend_exists (hCompl : Groth16CompleteBytes) :
-    ∃ (r : Run toyInit) (wit : ℕ → Witness),
-      r.txs.length = 2 ∧ r.WitnessesFor wit ∧ (wit 1).inAmt 0 ≠ 0 := by
-  refine ⟨toyRun2 hCompl, fun j => if j = 0 then toyWitness else wdWitness, rfl, ?_, ?_⟩
+    ∃ (params : InitParams) (r : Run (initWorld params)) (wit : ℕ → Witness),
+      r.txs.length = 2 ∧ r.WitnessesFor wit ∧ (wit 1).inAmt 0 ≠ 0 ∧ openedPos wit 1 0 = 0
+      ∧ (wit 1).inNote 0 = leafNote wit 0 := by
+  refine ⟨toyParams, toyRun2 hCompl, fun j => if j = 0 then toyWitness else wdWitness, rfl, ?_, ?_,
+    rfl, ?_⟩
   · intro j hj
     simp only [toyRun2, List.length_cons, List.length_nil] at hj
     rcases (show j = 0 ∨ j = 1 by omega) with rfl | rfl
     · exact fun _ => toy_relation _
     · exact fun _ => wd_relation _
   · exact wdWitness_real
+  · simp [Witness.inNote, leafNote, Witness.outNote, Witness.inPk, wdWitness, toyWitness, toy_H1]
 
 
 /-- **The toy withdrawal is accepted.** After `toyRun1`, the program accepts the withdrawal of
@@ -502,57 +464,122 @@ theorem toy_withdrawal_accepted (hCompl : Groth16CompleteBytes) :
   rw [toyRun1_final]
   exact toy_withdrawal_step hCompl
 
+/-- **The hypotheses of G3a can all hold, on a real spend, and the program accepts it.** After
+    `toyRun1`, withdrawing the deposit's note against the current root (`k = 2`). -/
+theorem toy_G3_hypotheses (hCompl : Groth16CompleteBytes) :
+    ∃ (params : InitParams) (r : Run (initWorld params)) (wit : ℕ → Witness) (inputs : TxInputs)
+      (witness : Witness) (k : ℕ),
+      r.WitnessesFor wit ∧ HonestSpend r wit inputs witness k ∧ LimitsNotHit r.final inputs
+      ∧ witness.inAmt 0 ≠ 0 ∧ CanBeAccepted inputs r.final := by
+  have hfin := toyRun1_final hCompl
+  refine ⟨toyParams, toyRun1 hCompl, fun _ => toyWitness, toyWithdrawal hCompl, wdWitness, 2,
+    toyRun1_wit hCompl, toy_withdrawal_honest hCompl, ?_, wdWitness_real, toy_withdrawal_accepted hCompl⟩
+  refine { inWindow := by rw [hfin]; exact W1_root_mem hCompl, treeRoom := ?_,
+           balancesFit := by rw [hfin]; exact wd_fit hCompl _, fee := ?_, depositLimit := ?_ }
+  · rw [hfin]; unfold treeHasRoom; rw [W1_nextIndex]; norm_num
+  · rw [hfin]; simp [feeSufficient, W1, transactEffects, transferEffects_state, initWorld, toyCfg, wdInputs]
+  · simp [depositWithinLimit, wdInputs]
+
+/-! ### Every split of that note between recipient and fee -/
+
+/-- The toy withdrawal, paying `payout` to the recipient and `fee` as the fee. -/
+def wdSplit (payout fee : ℕ) (π : Groth16.ProofBytes) : TxInputs :=
+  { wdInputs π with extAmt := -(payout : ℤ), f := fee }
+
+lemma split_cases {payout fee : ℕ} (h : payout + fee = 2) :
+    (payout = 0 ∧ fee = 2) ∨ (payout = 1 ∧ fee = 1) ∨ (payout = 2 ∧ fee = 0) := by omega
+
+lemma wdSplit_fit (hCompl : Groth16CompleteBytes) (π : Groth16.ProofBytes) {payout fee : ℕ}
+    (h : payout + fee = 2) : balancesFit (wdSplit payout fee π) (W1 hCompl) := by
+  refine ⟨fun k _ => ?_, fun h' => by simp [wdSplit] at h'; omega⟩
+  have h1 := W1_bal hCompl k
+  have h2 : balanceDelta (wdSplit payout fee π) (W1 hCompl).state.pool (W1 hCompl).nullifierRent k
+      ≤ 2 := by
+    rw [(W1_rent hCompl).1]
+    rcases split_cases h with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;>
+      (unfold balanceDelta; split_ifs <;> simp_all [wdSplit, wdInputs])
+  linarith
+
+/-- With any split, the toy withdrawal is an honest spend of the deposit's note: only the amounts
+    differ from `toy_withdrawal_honest`. -/
+lemma toy_split_honest (hCompl : Groth16CompleteBytes) {payout fee : ℕ} (h : payout + fee = 2) :
+    HonestSpend (toyRun1 hCompl) (fun _ => toyWitness) (wdSplit payout fee (wdProof hCompl))
+      wdWitness 2 := by
+  have hw := toy_withdrawal_honest hCompl
+  have hfin := toyRun1_final hCompl
+  refine { genuine := hw.genuine, notDoubleSpend := hw.notDoubleSpend,
+           inputNotUsedBefore := hw.inputNotUsedBefore, root := ?_, circuit := hw.circuit,
+           wellFormed := { validProof := hw.wellFormed.validProof, externalData := rfl,
+                           publicAmount := ?_, amountRange := ?_,
+                           encOutLength := hw.wellFormed.encOutLength,
+                           encodings := hw.wellFormed.encodings,
+                           poolSeparate := ?_, signed := hw.wellFormed.signed },
+           signerCanPay := ?_ }
+  · have hcap2 : ((leaves (toyRun1 hCompl).txs).take 2).length < 2^26 := by
+      rw [List.length_take, leaves_length]; simp [toyRun1]
+    exact { isPrefix := by simp [toyRun1]
+            isPrefixRoot := by rw [Run.firstLeaves, toy_root _ hcap2]; rfl }
+  · rcases split_cases h with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;>
+      simp [pubAmtConsistent, wdSplit, wdInputs] <;> norm_num
+  · rcases split_cases h with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;>
+      simp [amountsInRange, wdSplit, wdInputs]
+  · rw [hfin, W1_pool]; exact ⟨toyPool_ne, fun _ => toyPool_ne, fun _ => toyPool_ne⟩
+  · rw [hfin]; unfold signerSolvent; rw [(W1_rent hCompl).1]
+    rcases split_cases h with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;> simp [wdSplit, wdInputs]
+
+/-- **The hypotheses of G3b's `WayIsAccepted` can all hold, on a real spend, for every split.**
+    After the deposit, withdrawing its 2-lamport note with any payout and fee that add up to 2. -/
+theorem toy_G3b_hypotheses (hCompl : Groth16CompleteBytes) :
+    ∃ (params : InitParams) (r : Run (initWorld params)) (wit : ℕ → Witness),
+      r.WitnessesFor wit
+      ∧ ∀ payout fee : ℕ, payout + fee = 2 →
+        ∃ (inputs : TxInputs) (witness : Witness) (k : ℕ),
+          HonestSpend r wit inputs witness k
+          ∧ witness.inAmt 0 ≠ 0
+          ∧ witness.inAmt 0 + witness.inAmt 1 = ((2 : ℕ) : F)
+          ∧ inputs.extAmt = -(payout : ℤ) ∧ inputs.f = fee
+          ∧ inputs.R ∈ Set.range r.final.state.tree.history
+          ∧ treeHasRoom r.final.state.tree
+          ∧ balancesFit inputs r.final := by
+  have hfin := toyRun1_final hCompl
+  refine ⟨toyParams, toyRun1 hCompl, fun _ => toyWitness, toyRun1_wit hCompl, fun payout fee h =>
+    ⟨wdSplit payout fee (wdProof hCompl), wdWitness, 2, toy_split_honest hCompl h, wdWitness_real,
+      by simp [wdWitness], rfl, rfl, ?_, ?_, ?_⟩⟩
+  · rw [hfin]; exact W1_root_mem hCompl
+  · rw [hfin]; unfold treeHasRoom; rw [W1_nextIndex]; norm_num
+  · rw [hfin]; exact wdSplit_fit hCompl _ h
+
+/-- **The hypotheses of G4a and G4b can hold.** The toy withdrawal is accepted. -/
+theorem toy_G4_hypotheses (hCompl : Groth16CompleteBytes) :
+    ∃ (inputs : TxInputs) (oldWorld newWorld : World), transact inputs oldWorld newWorld :=
+  ⟨_, _, _, toy_withdrawal_accepted hCompl⟩
+
 /-- **The hypotheses of G2a can hold together.** The toy withdrawal, as both the honest and the
     attacker's transaction: it is well formed (its external data hashes to what its proof
     commits to, and its amounts and encrypted outputs are in range), and it is accepted. -/
 theorem toy_G2a_hypotheses (hCompl : Groth16CompleteBytes) :
-    (externalDataBound (toyWithdrawal hCompl)
-      ∧ amountsInRange (toyWithdrawal hCompl).extAmt (toyWithdrawal hCompl).f
-      ∧ encOutsFit (toyWithdrawal hCompl))
-    ∧ CanBeAccepted (toyWithdrawal hCompl) (toyRun1 hCompl).final := by
+    ∃ (T T' : TxInputs) (oldWorld' newWorld' : World),
+      (externalDataBound T ∧ amountsInRange T.extAmt T.f ∧ encOutsFit T)
+      ∧ T.pubInputs = T'.pubInputs ∧ transact T' oldWorld' newWorld' := by
   have h := toy_withdrawal_accepted hCompl
-  exact ⟨⟨h.1.externalDataBinding, h.1.amountRange, h.1.encOutLength⟩, h⟩
+  exact ⟨_, _, _, _, ⟨h.1.externalDataBinding, h.1.amountRange, h.1.encOutLength⟩, rfl, h⟩
 
-/-- **The hypotheses of G2b can hold together.** The toy withdrawal's witness satisfies the
-    circuit for its public inputs (so it can serve as both witnesses, sharing a nullifier). -/
+/-- **The hypotheses of G2b can hold together.** The toy withdrawal's witness, as both
+    witnesses: it satisfies the circuit for its public inputs, so the two share a nullifier. -/
 theorem toy_G2b_hypotheses (hCompl : Groth16CompleteBytes) :
-    RelationS (toyWithdrawal hCompl).pubInputs wdWitness :=
-  (toy_withdrawal_honest hCompl).circuit
+    ∃ (x : PubInputs) (w : Witness) (x' : PubInputs) (w' : Witness) (i i' : Fin 2),
+      RelationS x w ∧ RelationS x' w' ∧ x.nullifiers i = x'.nullifiers i' :=
+  have h := (toy_withdrawal_honest hCompl).circuit
+  ⟨_, _, _, _, 0, 0, h, h, rfl⟩
 
 end LeanSpec.NonVacuity
 
-/-! ### A toy pairing, so that Groth16 completeness holds
-
-Everything above holds for any groups and pairing, given Groth16 completeness on the wire. Here the groups
-and the pairing are a deliberately broken toy, like the hashes: `G1 = G2 = F`, `GT = Unit`,
-every pairing is `1`, a byte string decodes to its length, and the key is all zeros. Every
-proof then verifies, and the empty bytes decode to the point `0`, so completeness on the wire
-holds (`toyCompleteBytes`). This shows the hypotheses can hold together; it says nothing about real cryptography. -/
 namespace LeanSpec.NonVacuity
 open LeanSpec
 
-/-- Toy groups: `G1 = G2 = F`, `GT = Unit`; a byte string decodes to its length. -/
-@[reducible] def toyGroups : Groups :=
-  ⟨F, F, Unit, fun b => some (b.length : F), fun b => some (b.length : F)⟩
+attribute [local instance] toyGroups toyG1Group toyG2Group toyG1Module toyG2Module toyGTGroup
+  toyPairing toyDeployment
 
-attribute [local instance] toyGroups
-
--- The toy groups' structure: that of `F` and of `Unit`.
-@[reducible] def toyG1Group : AddCommGroup G1 := inferInstanceAs (AddCommGroup F)
-@[reducible] def toyG2Group : AddCommGroup G2 := inferInstanceAs (AddCommGroup F)
-attribute [local instance] toyG1Group toyG2Group
-@[reducible] def toyG1Module : Module F G1 := inferInstanceAs (Module F F)
-@[reducible] def toyG2Module : Module F G2 := inferInstanceAs (Module F F)
-@[reducible] def toyGTGroup : CommGroup GT := inferInstanceAs (CommGroup Unit)
-attribute [local instance] toyG1Module toyG2Module toyGTGroup
-
-/-- Toy pairing: always `1` (`GT = Unit` has no other element). Bilinear, trivially. -/
-@[reducible] def toyPairing : Pairing := ⟨fun _ _ => 1, fun _ _ _ => rfl, fun _ _ _ => rfl⟩
-
-/-- Toy key: all points `0`. -/
-@[reducible] def toyDeployment : Deployment := ⟨⟨0, 0, 0, 0, fun _ => 0⟩⟩
-
-attribute [local instance] toyPairing toyDeployment
 
 /-- Toy completeness on the wire: in the toy groups every proof verifies, and the empty bytes
     decode to the point `0`. -/
