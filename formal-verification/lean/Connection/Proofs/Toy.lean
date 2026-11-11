@@ -120,9 +120,27 @@ theorem toySyscalls : SyscallsSucceed toyC where
     · exact ⟨fun _ => rfl, fun _ => by decide⟩
 
 theorem toyLaws : PairingLaws toyC.e :=
-  ⟨fun _ _ _ => rfl, fun _ _ _ => rfl, fun _ _ => rfl⟩
+  ⟨fun _ _ => rfl⟩
 
 theorem toyKey : KeyG2Decodes toyC := ⟨by simp [toyC], by simp [toyC], by simp [toyC]⟩
+
+/-! The spec's groups, pairing and key for the toy deployment, as the connection theorems fix
+them (`syscallGroups`, `syscallPairing`, `programKey`), with the group structure of `Unit`. Used
+as local instances by statements about the toy. -/
+
+section
+@[reducible] def toySpecGroups : LeanSpec.Groups := syscallGroups toyC
+attribute [local instance] toySpecGroups
+@[reducible] def toySpecG1Group : AddCommGroup LeanSpec.G1 := inferInstanceAs (AddCommGroup Unit)
+@[reducible] def toySpecG2Group : AddCommGroup LeanSpec.G2 := inferInstanceAs (AddCommGroup Unit)
+attribute [local instance] toySpecG1Group toySpecG2Group
+@[reducible] def toySpecG1Module : Module LeanSpec.F LeanSpec.G1 := inferInstanceAs (Module LeanSpec.F Unit)
+@[reducible] def toySpecG2Module : Module LeanSpec.F LeanSpec.G2 := inferInstanceAs (Module LeanSpec.F Unit)
+@[reducible] def toySpecGTGroup : CommGroup LeanSpec.GT := inferInstanceAs (CommGroup Unit)
+attribute [local instance] toySpecG1Module toySpecG2Module toySpecGTGroup
+@[reducible] def toySpecPairing : LeanSpec.Pairing := syscallPairing toyC
+@[reducible] def toySpecDeployment : LeanSpec.Deployment := ⟨programKey toyC⟩
+end
 
 /-! ## The hashes -/
 
@@ -249,17 +267,17 @@ theorem toy_zeros_decodes : toyC.decodeG1 zeros64 = some () := by
 /-- The spec's preconditions for the handler's view, with the groups' instances as parameters. -/
 def HandlerPre (G1 G2 GT : Type) [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGroup G2]
     [Module LeanSpec.F G2] [CommGroup GT] [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
-    (signers : List Pubkey) (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
+    (signers : List Pubkey) (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT)
     (a : TransactAccounts) (s₁ : State) (v : U64) (tree : merkle_tree.MerkleTreeAccount)
     (config : admin.GlobalConfig) (spent : Finset LeanSpec.F) (proof : transact.Proof)
     (ext : I64) (fee : U64) (out1 out2 : Slice U8) : Prop :=
   @LeanSpec.transactPreconditions _ (syscallGroups C) (inferInstanceAs (AddCommGroup G1))
-    (inferInstanceAs (Module LeanSpec.F G1)) (inferInstanceAs (AddCommGroup G2))
-    (inferInstanceAs (Module LeanSpec.F G2)) (inferInstanceAs (CommGroup GT))
-    (syscallPairing C laws) (@LeanSpec.Deployment.mk (syscallGroups C) (programKey C)) (toInputs signers a proof ext fee out1 out2)
+    (inferInstanceAs (Module LeanSpec.F G1))
+    (inferInstanceAs (CommGroup GT))
+    (syscallPairing C) (@LeanSpec.Deployment.mk (syscallGroups C) (programKey C)) (toInputs signers a proof ext fee out1 out2)
     (handlerWorld a s₁ v tree config spent)
 
-theorem toy_pre_L1 : HandlerPre Unit Unit Unit toySigners toyCrypto toyC toyLaws toyAccounts (toyState 0#u64)
+theorem toy_pre_L1 : HandlerPre Unit Unit Unit toySigners toyCrypto toyC toyAccounts (toyState 0#u64)
     0#u64 toyTree toyConfig ∅ (toyProof verifying_key.VERIFYING_KEY.vk_alpha_g1 zeros32) 0#i64 0#u64
     emptySlice emptySlice := by
   unfold HandlerPre
@@ -273,9 +291,9 @@ theorem toy_pre_L1 : HandlerPre Unit Unit Unit toySigners toyCrypto toyC toyLaws
   have hf : (toInputs toySigners toyAccounts (toyProof verifying_key.VERIFYING_KEY.vk_alpha_g1 zeros32) 0#i64 0#u64
       emptySlice emptySlice).f = 0 := by simp [toInputs]
   refine @LeanSpec.transactPreconditions.mk _ (syscallGroups toyC) (inferInstanceAs (AddCommGroup Unit))
-    (inferInstanceAs (Module LeanSpec.F Unit)) (inferInstanceAs (AddCommGroup Unit))
-    (inferInstanceAs (Module LeanSpec.F Unit)) (inferInstanceAs (CommGroup Unit))
-    (syscallPairing toyC toyLaws) (@LeanSpec.Deployment.mk (syscallGroups toyC) (programKey toyC)) _ _
+    (inferInstanceAs (Module LeanSpec.F Unit))
+    (inferInstanceAs (CommGroup Unit))
+    (syscallPairing toyC) (@LeanSpec.Deployment.mk (syscallGroups toyC) (programKey toyC)) _ _
     ?_ ?_ ?_ ?_ ⟨_, hdec, rfl⟩ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_
   · show LeanSpec.rootBytesKnown (toTree toyTree) (toBytes one32.val)
     rw [rootBytesKnown_iff]
@@ -318,23 +336,25 @@ theorem toy_pre_L1 : HandlerPre Unit Unit Unit toySigners toyCrypto toyC toyLaws
     unfold LeanSpec.balanceDelta at hk
     rw [he, hf] at hk
     simp at hk
-theorem toy_pre_A0 : HandlerPre Unit Unit Unit toySigners toyCrypto toyC toyLaws toyAccounts (toyState 1#u64)
-    0#u64 toyTree toyConfig ∅ (toyProof zeros64 one32) 1#i64 0#u64
+/-- The spec allows the toy deposit (amount 1, fee 0) for any `proof_a` the syscalls decode. -/
+theorem toy_pre_deposit (pa : Std.Array U8 64#usize) (hpa : toyC.decodeG1 pa = some ()) :
+    HandlerPre Unit Unit Unit toySigners toyCrypto toyC toyAccounts (toyState 1#u64)
+    0#u64 toyTree toyConfig ∅ (toyProof pa one32) 1#i64 0#u64
     emptySlice emptySlice := by
   unfold HandlerPre
-  have hdec := decode_toInputs (signers := toySigners) toyC (toyProof zeros64 one32)
-    toyAccounts 1#i64 0#u64 emptySlice emptySlice toy_zeros_decodes rfl toy_zeros_decodes
-  have hk0 : (toyProof zeros64 one32).input_nullifiers.val[0]! = zeros32 := rfl
-  have hk1 : (toyProof zeros64 one32).input_nullifiers.val[1]! = one32 := rfl
+  have hdec := decode_toInputs (signers := toySigners) toyC (toyProof pa one32)
+    toyAccounts 1#i64 0#u64 emptySlice emptySlice hpa rfl toy_zeros_decodes
+  have hk0 : (toyProof pa one32).input_nullifiers.val[0]! = zeros32 := rfl
+  have hk1 : (toyProof pa one32).input_nullifiers.val[1]! = one32 := rfl
   have h10 : (1 : LeanSpec.F) ≠ 0 := by decide
-  have he : (toInputs toySigners toyAccounts (toyProof zeros64 one32) 1#i64 0#u64
+  have he : (toInputs toySigners toyAccounts (toyProof pa one32) 1#i64 0#u64
       emptySlice emptySlice).extAmt = 1 := by simp [toInputs]
-  have hf : (toInputs toySigners toyAccounts (toyProof zeros64 one32) 1#i64 0#u64
+  have hf : (toInputs toySigners toyAccounts (toyProof pa one32) 1#i64 0#u64
       emptySlice emptySlice).f = 0 := by simp [toInputs]
   refine @LeanSpec.transactPreconditions.mk _ (syscallGroups toyC) (inferInstanceAs (AddCommGroup Unit))
-    (inferInstanceAs (Module LeanSpec.F Unit)) (inferInstanceAs (AddCommGroup Unit))
-    (inferInstanceAs (Module LeanSpec.F Unit)) (inferInstanceAs (CommGroup Unit))
-    (syscallPairing toyC toyLaws) (@LeanSpec.Deployment.mk (syscallGroups toyC) (programKey toyC)) _ _
+    (inferInstanceAs (Module LeanSpec.F Unit))
+    (inferInstanceAs (CommGroup Unit))
+    (syscallPairing toyC) (@LeanSpec.Deployment.mk (syscallGroups toyC) (programKey toyC)) _ _
     ?_ ?_ ?_ ?_ ⟨_, hdec, rfl⟩ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_
   · show LeanSpec.rootBytesKnown (toTree toyTree) (toBytes one32.val)
     rw [rootBytesKnown_iff]
@@ -383,6 +403,25 @@ theorem toy_pre_A0 : HandlerPre Unit Unit Unit toySigners toyCrypto toyC toyLaws
       rw [he]; simp [handlerWorld, toyState]
 
 
+
+theorem toy_pre_A0 : HandlerPre Unit Unit Unit toySigners toyCrypto toyC toyAccounts (toyState 1#u64)
+    0#u64 toyTree toyConfig ∅ (toyProof zeros64 one32) 1#i64 0#u64
+    emptySlice emptySlice :=
+  toy_pre_deposit zeros64 toy_zeros_decodes
+
+/-- The toy proof of handler completeness's non-vacuity: the deposit with `proof_a` the
+    verifying key's `alpha` (a decodable point other than the 64 zero bytes). -/
+abbrev okProof : transact.Proof := toyProof verifying_key.VERIFYING_KEY.vk_alpha_g1 one32
+
+theorem toy_pre_ok : HandlerPre Unit Unit Unit toySigners toyCrypto toyC toyAccounts (toyState 1#u64)
+    0#u64 toyTree toyConfig ∅ okProof 1#i64 0#u64 emptySlice emptySlice :=
+  toy_pre_deposit _ toy_alpha_decodes
+
+theorem okProof_notA0 : okProof.proof_a.val ≠ List.replicate 64 0#u8 := by
+  intro h
+  have h0 := congrArg List.head? h
+  simp [okProof, toyProof, verifying_key.VERIFYING_KEY, Std.Array.make] at h0
+
 /-- L1: the toy internal transfer is rejected (`check_public_amount` rejects `extAmt = 0`). -/
 theorem toy_L1_rejects (ap : transact.Appended) (e : SolEnv) (t : merkle_tree.MerkleTreeAccount) :
     transact.transact toyCrypto.hasher arkFr toyCrypto.sha256 toyCrypto.proofVerifier solRuntime
@@ -410,7 +449,7 @@ theorem toy_A0_rejects (ap : transact.Appended) (e : SolEnv) (t : merkle_tree.Me
 
 /-- The faithful statement, instantiated at the L1 toy transaction, is false. -/
 theorem toy_refutes_L1 {Q : transact.Appended → SolEnv → merkle_tree.MerkleTreeAccount → Prop}
-    (h : HandlerPre Unit Unit Unit toySigners toyCrypto toyC toyLaws toyAccounts (toyState 0#u64) 0#u64 toyTree
+    (h : HandlerPre Unit Unit Unit toySigners toyCrypto toyC toyAccounts (toyState 0#u64) 0#u64 toyTree
       toyConfig ∅ (toyProof verifying_key.VERIFYING_KEY.vk_alpha_g1 zeros32) 0#i64 0#u64 emptySlice emptySlice →
       ∃ ap e t, transact.transact toyCrypto.hasher arkFr toyCrypto.sha256 toyCrypto.proofVerifier solRuntime
         (handlerEnv toyAccounts (toyState 0#u64) 0#u64) toyTree toyConfig
@@ -422,7 +461,7 @@ theorem toy_refutes_L1 {Q : transact.Appended → SolEnv → merkle_tree.MerkleT
 
 /-- The statement excluding only L1, instantiated at the A0 toy transaction, is false. -/
 theorem toy_refutes_A0 {Q : transact.Appended → SolEnv → merkle_tree.MerkleTreeAccount → Prop}
-    (h : HandlerPre Unit Unit Unit toySigners toyCrypto toyC toyLaws toyAccounts (toyState 1#u64) 0#u64 toyTree
+    (h : HandlerPre Unit Unit Unit toySigners toyCrypto toyC toyAccounts (toyState 1#u64) 0#u64 toyTree
       toyConfig ∅ (toyProof zeros64 one32) 1#i64 0#u64 emptySlice emptySlice →
       ∃ ap e t, transact.transact toyCrypto.hasher arkFr toyCrypto.sha256 toyCrypto.proofVerifier solRuntime
         (handlerEnv toyAccounts (toyState 1#u64) 0#u64) toyTree toyConfig
@@ -437,14 +476,15 @@ abbrev l1Proof : transact.Proof := toyProof verifying_key.VERIFYING_KEY.vk_alpha
 /-- The toy proof of the A0 counterexample (`proof_a` the 64 zero bytes). -/
 abbrev a0Proof : transact.Proof := toyProof zeros64 one32
 
-/-- The toy deployment satisfies the completeness assumptions. -/
-theorem toyAssumptions : CompletenessAssumptions toyCrypto toyC :=
-  ⟨toyHashesAgree, toyHashesSucceed, toySyscalls, toyKey⟩
+/-- The toy deployment satisfies the completeness assumptions, on a 64-bit `usize` (not provable
+    in Lean: `Usize.max` depends on the platform running Lean). -/
+theorem toyAssumptions (h64 : Usize.max = 2 ^ 64 - 1) : CompletenessAssumptions toyCrypto toyC :=
+  ⟨toyHashesAgree, toyHashesSucceed, toySyscalls, toyKey, h64⟩
 
 /-- The toy handler context holds. -/
 theorem toyContext (n : U64) :
-    HandlerContext toyAccounts (toyState n) toyTree toyConfig emptySlice emptySlice :=
+    HandlerContext toyAccounts (toyState n) toyTree toyConfig :=
   ⟨toyTree_shape, toyTree_hist, toyTree_sub, by simp [toyConfig], by simp [toyConfig],
-    by simp [toyConfig], ⟨rfl, rfl⟩, toyFit⟩
+    by simp [toyConfig], ⟨rfl, rfl⟩⟩
 
 end Connection.Toy

@@ -232,9 +232,9 @@ theorem publicBalance_le (s : State) (k : Pubkey) : publicBalance s k ≤ (s k).
     address is empty, possibly nothing if it already holds enough), then the account becomes the
     program's, with the given data. -/
 theorem initAccount_spec {pid : Pubkey} {s s' : State} {mb : Nat → U64} {payer key : Pubkey}
-    {space : Nat} {data : AccountData} (hpos : 0 < (mb space).val)
+    {space : Nat} {data : AccountData} (hpk : payer ≠ key)
     (h : s.initAccount pid mb payer key space data = some s') :
-    ∃ top : ℕ, payer ≠ key ∧ top ≤ (s payer).lamports.val ∧
+    ∃ top : ℕ, top ≤ (s payer).lamports.val ∧
       (0 < top → (s payer).owner = systemProgram ∧ (s payer).data.isEmpty) ∧
       ((s key).lamports.val = 0 → top = (mb space).val) ∧
       (fun k => (s' k).lamports.val) = moveN (fun k => (s k).lamports.val) payer key top ∧
@@ -242,12 +242,9 @@ theorem initAccount_spec {pid : Pubkey} {s s' : State} {mb : Nat → U64} {payer
       (∀ k, k ≠ key → (s' k).owner = (s k).owner ∧ (s' k).data = (s k).data) := by
   by_cases hz : (s key).lamports.val = 0
   · obtain ⟨ho, hd, hle, hlam, hown, hdat, hoth⟩ := initAccount_empty hz h
-    refine ⟨(mb space).val, fun e => ?_, hle, fun _ => ⟨ho, hd⟩, fun _ => rfl, hlam, hown, hdat, hoth⟩
-    rw [e] at hle; omega
+    exact ⟨(mb space).val, hle, fun _ => ⟨ho, hd⟩, fun _ => rfl, hlam, hown, hdat, hoth⟩
   unfold State.initAccount at h
   simp only [hz, if_false] at h
-  by_cases hpk : payer = key
-  · simp [hpk] at h
   simp only [hpk, if_false] at h
   have fin : ∀ s₂ : State, (fun k => (s₂ k).lamports.val) = moveN (fun k => (s k).lamports.val) payer key 0 ∨
       True → s' = s₂.set key { s₂ key with owner := pid, data := data } →
@@ -263,7 +260,7 @@ theorem initAccount_spec {pid : Pubkey} {s s' : State} {mb : Nat → U64} {payer
   · rename_i ht
     simp only [Option.map_some, Option.some.injEq] at h
     obtain ⟨hown, hdat, hoth, hlam⟩ := fin s (Or.inr trivial) h.symm
-    exact ⟨0, hpk, Nat.zero_le _, fun h0 => absurd h0 (lt_irrefl 0), fun h0 => absurd h0 hz,
+    exact ⟨0, Nat.zero_le _, fun h0 => absurd h0 (lt_irrefl 0), fun h0 => absurd h0 hz,
       by rw [hlam, moveN_zero], hown, hdat, hoth⟩
   · cases hb : systemTransferBalances s s.balances payer key ⟨BitVec.ofNat 64 ((max (mb space).val 1) - (s key).lamports.val)⟩ with
     | none => simp [State.systemTransfer, hb] at h
@@ -271,7 +268,7 @@ theorem initAccount_spec {pid : Pubkey} {s s' : State} {mb : Nat → U64} {payer
     simp only [State.systemTransfer, hb, Option.map_some, Option.some.injEq] at h
     obtain ⟨ho, hd, hle, hv⟩ := stb_spec hb
     obtain ⟨hown, hdat, hoth, hlam⟩ := fin _ (Or.inr trivial) h.symm
-    refine ⟨_, hpk, hle, fun _ => ⟨ho, hd⟩, fun h0 => absurd h0 hz, ?_, hown, hdat,
+    refine ⟨_, hle, fun _ => ⟨ho, hd⟩, fun h0 => absurd h0 hz, ?_, hown, hdat,
       fun k hk => by obtain ⟨a1, a2⟩ := hoth k hk; exact ⟨a1, a2⟩⟩
     rw [hlam]; funext k
     have := congrFun hv k
@@ -341,7 +338,7 @@ theorem transact_refines_core
     (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
     (hashes : HashesAgree d.crypto)
     (wf : WellFormed d spent s)
-    (solana : SolanaFacts d rent tx out1 out2)
+    (solana : SolanaFacts d rent tx)
     (crypto : CryptoFacts d proof)
     (rentFixed : tx.minimumBalance = some rent)
     (hProofValid : d.crypto.proofVerifier.verify proof = ok true →
@@ -377,8 +374,11 @@ theorem transact_refines_core
   set nr := (rent nullifierAccountSpace).val with hnrdef
   -- the two `init`s: the signer tops each nullifier address up (by `top0`, `top1`)
   obtain ⟨sA, hA1, hA2⟩ := Option.bind_eq_some_iff.mp hs₁
-  obtain ⟨top0, hs_nf0, htop0, hsys0, hfull0, hlamA, hownA, hdataA, hotherA⟩ := initAccount_spec hnr hA1
-  obtain ⟨top1, hs_nf1, htop1, hsys1, hfull1, hlam1, hown1, hdata1, hother1⟩ := initAccount_spec hnr hA2
+  -- the signer is not a nullifier account: a PDA does not sign
+  have hs_nf0 : a.signer ≠ a.nullifier0 := fun e => solana.pdasDoNotSign _ (by rw [← hnf0, ← e]; exact hvalid.signer)
+  have hs_nf1 : a.signer ≠ a.nullifier1 := fun e => solana.pdasDoNotSign _ (by rw [← hnf1, ← e]; exact hvalid.signer)
+  obtain ⟨top0, htop0, hsys0, hfull0, hlamA, hownA, hdataA, hotherA⟩ := initAccount_spec hs_nf0 hA1
+  obtain ⟨top1, htop1, hsys1, hfull1, hlam1, hown1, hdata1, hother1⟩ := initAccount_spec hs_nf1 hA2
   have hsA : (sA a.signer).lamports.val = (s a.signer).lamports.val - top0 := by
     have := congrFun hlamA a.signer
     simp only [moveN, Function.update_of_ne hs_nf0, Function.update_self] at this; exact this
@@ -413,8 +413,8 @@ theorem transact_refines_core
     simp only [configAt, ← hcfgAddr, hvalid.globalConfig.1.2]
   have hpoolData : (s a.treeTokenAccount).data = .treeToken tt := hvalid.treeTokenAccount.1.2
   have hpoolOwner : (s a.treeTokenAccount).owner = d.programId := hvalid.treeTokenAccount.1.1
-  have hsigNotPool : a.signer ≠ a.treeTokenAccount := fun e => solana.poolDoesNotSign (by
-    rw [← hpoolAddr, ← e]; exact hvalid.signer)
+  have hsigNotPool : a.signer ≠ a.treeTokenAccount := fun e => solana.pdasDoNotSign treeTokenSeeds (by
+    rw [← poolAddr, ← hpoolAddr, ← e]; exact hvalid.signer)
   have hnf0Init : Initializable s a.nullifier0 := hvalid.nullifier0.2
   have hnf1Init : Initializable s a.nullifier1 := hvalid.nullifier1.2
   have hpool_nf0 : a.treeTokenAccount ≠ a.nullifier0 := fun e => wf.programNotSystem (by
@@ -505,9 +505,11 @@ theorem transact_refines_core
   obtain ⟨hT2, hsh2, hroom2, -, hau2, hmax2, -⟩ := append_ok' d.crypto hashes _ t1 tree' p2 hsh1 hap2
   -- external data
   obtain ⟨hsh, hcalc, hEq⟩ := hok.extHash
+  -- the code returned a hash, so the serialized data fit in a vector
+  have hvecFit := extDataHash_ok_fits hcalc
   have hcalc' := (extDataHash_eq d.crypto.sha256 a.recipient a.feeRecipientAccount
     zkcash_core.transact.SOL_ADDRESS extAmount out1 out2 fee inputs rfl rfl rfl rfl rfl rfl rfl
-    solana.fitsInVector).symm.trans hcalc
+    hvecFit).symm.trans hcalc
   have hfits : LeanSpec.encOutsFit inputs := by
     by_contra hn; rw [if_neg hn] at hcalc'; have := Result.ok_injective hcalc'; simp at this
   rw [if_pos hfits] at hcalc'
@@ -520,7 +522,7 @@ theorem transact_refines_core
       rw [serLength]
       have : inputs.encOut0.length + inputs.encOut1.length = out1.length + out2.length := by
         simp [inputs, toInputs, toBytes, Slice.length]
-      have := solana.fitsInVector; omega
+      have := hvecFit; omega
     rw [toBytes_toSlice _ hlen] at hb
     simp only [LeanSpec.externalDataHash, ← hb, natOfLE_toBytes]
     exact hEq
@@ -974,7 +976,7 @@ theorem transact_refines
     (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
     (hashes : HashesAgree d.crypto)
     (wf : WellFormed d spent s)
-    (solana : SolanaFacts d rent tx out1 out2)
+    (solana : SolanaFacts d rent tx)
     (crypto : CryptoFacts d proof)
     (outside : OutsideSpecDetail d rent s tx a proof)
     (hProofValid : d.crypto.proofVerifier.verify proof = ok true →
@@ -1004,7 +1006,7 @@ theorem transact_refines_between
     (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
     (hashes : HashesAgree d.crypto)
     (wf : WellFormed d spent s)
-    (solana : SolanaFacts d rent tx out1 out2)
+    (solana : SolanaFacts d rent tx)
     (crypto : CryptoFacts d proof)
     (rentFixed : tx.minimumBalance = some rent)
     (hProofValid : d.crypto.proofVerifier.verify proof = ok true →

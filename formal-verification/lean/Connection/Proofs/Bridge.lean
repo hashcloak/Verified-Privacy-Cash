@@ -52,13 +52,13 @@ theorem verifier_bridge (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT)
     (h : c.proofVerifier.verify proof = ok true)
     (a : TransactAccounts) (ext : I64) (fee : U64) (out1 out2 : Slice U8) :
     letI : LeanSpec.Groups := syscallGroups C
-    letI : LeanSpec.Pairing := syscallPairing C laws
+    letI : LeanSpec.Pairing := syscallPairing C
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     LeanSpec.proofValid (toInputs signers a proof ext fee out1 out2) := by
   obtain ⟨-, -, A, Cp, α, B, β, γ, δ, d1, d2, d3, d4, d5, d6, d7, heq⟩ :=
     programVerifier_groth16 c C proof h
   letI : LeanSpec.Groups := syscallGroups C
-  letI : LeanSpec.Pairing := syscallPairing C laws
+  letI : LeanSpec.Pairing := syscallPairing C
   letI : LeanSpec.Deployment := ⟨programKey C⟩
   -- the decoded points
   have hdec : (toInputs signers a proof ext fee out1 out2).π.decode = some ⟨A, B, Cp⟩ := by
@@ -109,18 +109,18 @@ theorem transact_refines_verified [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
     (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
     (hashes : HashesAgree d.crypto)
     (wf : WellFormed d spent s)
-    (solana : SolanaFacts d rent tx out1 out2)
+    (solana : SolanaFacts d rent tx)
     (crypto : CryptoFacts d proof)
     (outside : OutsideSpecDetail d rent s tx a proof) :
     letI : LeanSpec.Groups := syscallGroups C
-    letI : LeanSpec.Pairing := syscallPairing C laws
+    letI : LeanSpec.Pairing := syscallPairing C
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     let inputs := toInputs tx.signers a proof extAmount fee out1 out2
     let spent' := spent ∪ {inputs.k0, inputs.k1}
     LeanSpec.transact inputs (toWorld d rent spent s) (toWorld d rent spent' s') ∧
       WellFormed d spent' s' := by
   letI : LeanSpec.Groups := syscallGroups C
-  letI : LeanSpec.Pairing := syscallPairing C laws
+  letI : LeanSpec.Pairing := syscallPairing C
   letI : LeanSpec.Deployment := ⟨programKey C⟩
   exact transact_refines hstep hashes wf solana crypto outside
     (fun hv => verifier_bridge d.crypto C laws proof hv a extAmount fee out1 out2)
@@ -134,11 +134,11 @@ theorem transact_refines_between_verified [LeanSpec.PoseidonHashes] [LeanSpec.Sh
     (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
     (hashes : HashesAgree d.crypto)
     (wf : WellFormed d spent s)
-    (solana : SolanaFacts d rent tx out1 out2)
+    (solana : SolanaFacts d rent tx)
     (crypto : CryptoFacts d proof)
     (rentFixed : tx.minimumBalance = some rent) :
     letI : LeanSpec.Groups := syscallGroups C
-    letI : LeanSpec.Pairing := syscallPairing C laws
+    letI : LeanSpec.Pairing := syscallPairing C
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     let inputs := toInputs tx.signers a proof extAmount fee out1 out2
     let spent' := spent ∪ {inputs.k0, inputs.k1}
@@ -153,7 +153,7 @@ theorem transact_refines_between_verified [LeanSpec.PoseidonHashes] [LeanSpec.Sh
       b₂.config = (toWorld d rent spent' s').state.config ∧
       b₂.balances (toPubkey (poolAddr d)) = publicBalance s' (poolAddr d) := by
   letI : LeanSpec.Groups := syscallGroups C
-  letI : LeanSpec.Pairing := syscallPairing C laws
+  letI : LeanSpec.Pairing := syscallPairing C
   letI : LeanSpec.Deployment := ⟨programKey C⟩
   exact transact_refines_between hstep hashes wf solana crypto rentFixed
     (fun hv => verifier_bridge d.crypto C laws proof hv a extAmount fee out1 out2)

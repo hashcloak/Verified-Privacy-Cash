@@ -1,4 +1,5 @@
 import Connection.Proofs.Checks
+import Connection.Proofs.Tree
 open Aeneas Aeneas.Std Result PrivacyCash.Model
 
 /-! # Proofs: the external data serialization and hash
@@ -311,4 +312,199 @@ theorem extDataHash_eq (sha : ext_data.Sha256 Unit) (recipient feeRecipient mint
     have hfit' : LeanSpec.encOutsFit inputs := by rw [hfits, ← hsome]; simp
     rw [if_pos hfit', hser, ← hbytes v rfl, toSlice_toBytes]
 
+/-! ## Code accepted ⟹ the external data fit in a vector (soundness: no length assumption)
+-/
+theorem vecPush_ok {v v' : alloc.vec.Vec U8} {x : U8} (h : alloc.vec.Vec.push v x = ok v') :
+    v'.val = v.val ++ [x] := by
+  by_cases hl : v.val.length < Usize.max
+  · obtain ⟨w, hw, hwv⟩ := (WP.spec_equiv_exists _ _).mp (alloc.vec.Vec.push_spec v x hl)
+    rw [hw] at h; rw [← Result.ok_injective h]; exact hwv
+  · exfalso
+    have hu : U32.max ≤ Usize.max := by scalar_tac
+    unfold alloc.vec.Vec.push at h
+    simp only at h
+    split at h
+    · rename_i hc; simp at hc; omega
+    · exact fail_not_ok h
+
+theorem usizeAdd_ok {x y z : Usize} (h : x + y = ok z) : z.val = x.val + y.val := by
+  have := UScalar.add_equiv x y
+  rw [h] at this; simp at this; exact this.2.1
+
+theorem i32Add_ok {x y z : I32} (h : x + y = ok z) : z.val = x.val + y.val := by
+  have := IScalar.add_equiv x y
+  rw [h] at this; simp at this; exact this.2.2.1
+
+
+
+/-- If `push_bytes` from index `i` returned, it appended the rest of `bytes`
+    (length only). -/
+theorem pushBytesLoop_ok_len {out r : alloc.vec.Vec U8} {bytes : Slice U8} {i : Usize}
+    (hi : i.val ≤ bytes.length) (h : ext_data.push_bytes_loop out bytes i = ok r) :
+    r.val.length = out.val.length + (bytes.length - i.val) := by
+  unfold ext_data.push_bytes_loop at h
+  refine loop_ok_induction (fun (x : alloc.vec.Vec U8 × Usize) => ext_data.push_bytes_loop.body bytes x.1 x.2)
+    (fun x => bytes.length - x.2.val)
+    (fun x => x.2.val ≤ bytes.length ∧ x.1.val.length + (bytes.length - x.2.val) = out.val.length + (bytes.length - i.val))
+    (fun r => r.val.length = out.val.length + (bytes.length - i.val)) ?_ (out, i) r ⟨hi, rfl⟩ h
+  rintro ⟨o, j⟩ c ⟨hj, heq⟩ hb
+  dsimp only at hj heq hb ⊢
+  unfold ext_data.push_bytes_loop.body at hb
+  dsimp only at hb
+  split at hb
+  · rename_i hlt
+    obtain ⟨i2, -, hb⟩ := bindOk hb
+    obtain ⟨o1, ho1, hb⟩ := bindOk hb
+    obtain ⟨j1, hj1, hb⟩ := bindOk hb
+    rw [← Result.ok_injective hb]
+    have e1 := vecPush_ok ho1
+    have e2 := usizeAdd_ok hj1
+    have hlt' : j.val < bytes.length := by scalar_tac
+    have h1 : (1#usize : Usize).val = 1 := by simp
+    simp only [Slice.length] at hj heq hlt' ⊢
+    simp only [e1, e2, h1, List.length_append, List.length_singleton]
+    refine ⟨⟨by omega, by omega⟩, by omega⟩
+  · rename_i hge
+    rw [← Result.ok_injective hb]
+    have : j.val = bytes.length := by scalar_tac
+    simp only [Slice.length] at this heq ⊢; omega
+
+theorem pushU64Loop_ok_len {out r : alloc.vec.Vec U8} {x : U64} {i : I32}
+    (h0 : 0 ≤ i.val) (h8 : i.val ≤ 8) (h : ext_data.push_u64_le_loop out x i = ok r) :
+    r.val.length = out.val.length + (8 - i.val.toNat) := by
+  unfold ext_data.push_u64_le_loop at h
+  refine loop_ok_induction (fun (y : alloc.vec.Vec U8 × I32) => ext_data.push_u64_le_loop.body x y.1 y.2)
+    (fun y => 8 - y.2.val.toNat)
+    (fun y => 0 ≤ y.2.val ∧ y.2.val ≤ 8 ∧ y.1.val.length + (8 - y.2.val.toNat) = out.val.length + (8 - i.val.toNat))
+    (fun r => r.val.length = out.val.length + (8 - i.val.toNat)) ?_ (out, i) r ⟨h0, h8, rfl⟩ h
+  rintro ⟨o, j⟩ c ⟨hj0, hj8, heq⟩ hb
+  dsimp only at hj0 hj8 heq hb ⊢
+  unfold ext_data.push_u64_le_loop.body at hb
+  split at hb
+  · rename_i hlt
+    obtain ⟨_, -, hb⟩ := bindOk hb
+    obtain ⟨_, -, hb⟩ := bindOk hb
+    obtain ⟨_, -, hb⟩ := bindOk hb
+    obtain ⟨o1, ho1, hb⟩ := bindOk hb
+    obtain ⟨j1, hj1, hb⟩ := bindOk hb
+    rw [← Result.ok_injective hb]
+    have e1 := vecPush_ok ho1
+    have e2 := i32Add_ok hj1
+    have h1 : (1#i32 : I32).val = 1 := by simp
+    have hlt' : j.val < 8 := by scalar_tac
+    simp only [e1, List.length_append, List.length_singleton]
+    rw [h1] at e2
+    refine ⟨⟨by omega, by omega, by omega⟩, by omega⟩
+  · rename_i hge
+    rw [← Result.ok_injective hb]
+    have : j.val = 8 := by scalar_tac
+    simp only; omega
+
+theorem pushLenLoop_ok_len {out r : alloc.vec.Vec U8} {x : U32} {i : I32}
+    (h0 : 0 ≤ i.val) (h4 : i.val ≤ 4) (h : ext_data.push_len_prefixed_loop out x i = ok r) :
+    r.val.length = out.val.length + (4 - i.val.toNat) := by
+  unfold ext_data.push_len_prefixed_loop at h
+  refine loop_ok_induction (fun (y : alloc.vec.Vec U8 × I32) => ext_data.push_len_prefixed_loop.body x y.1 y.2)
+    (fun y => 4 - y.2.val.toNat)
+    (fun y => 0 ≤ y.2.val ∧ y.2.val ≤ 4 ∧ y.1.val.length + (4 - y.2.val.toNat) = out.val.length + (4 - i.val.toNat))
+    (fun r => r.val.length = out.val.length + (4 - i.val.toNat)) ?_ (out, i) r ⟨h0, h4, rfl⟩ h
+  rintro ⟨o, j⟩ c ⟨hj0, hj4, heq⟩ hb
+  dsimp only at hj0 hj4 heq hb ⊢
+  unfold ext_data.push_len_prefixed_loop.body at hb
+  split at hb
+  · rename_i hlt
+    obtain ⟨_, -, hb⟩ := bindOk hb
+    obtain ⟨_, -, hb⟩ := bindOk hb
+    obtain ⟨_, -, hb⟩ := bindOk hb
+    obtain ⟨o1, ho1, hb⟩ := bindOk hb
+    obtain ⟨j1, hj1, hb⟩ := bindOk hb
+    rw [← Result.ok_injective hb]
+    have e1 := vecPush_ok ho1
+    have e2 := i32Add_ok hj1
+    have h1 : (1#i32 : I32).val = 1 := by simp
+    have hlt' : j.val < 4 := by scalar_tac
+    simp only [e1, List.length_append, List.length_singleton]
+    rw [h1] at e2
+    refine ⟨⟨by omega, by omega, by omega⟩, by omega⟩
+  · rename_i hge
+    rw [← Result.ok_injective hb]
+    have : j.val = 4 := by scalar_tac
+    simp only; omega
+
+theorem pushLenPrefixed_ok_len {out r : alloc.vec.Vec U8} {bytes : Slice U8}
+    (h : ext_data.push_len_prefixed out bytes = ok (true, r)) :
+    r.val.length = out.val.length + 4 + bytes.length := by
+  unfold ext_data.push_len_prefixed at h
+  dsimp only at h
+  split at h
+  · have := Result.ok_injective h; simp at this
+  · obtain ⟨_, -, h⟩ := bindOk h
+    obtain ⟨o1, ho1, h⟩ := bindOk h
+    obtain ⟨o2, ho2, h⟩ := bindOk h
+    have e := Result.ok_injective h
+    simp only [Prod.mk.injEq] at e
+    rw [← e.2]
+    have l1 := pushLenLoop_ok_len (by simp) (by simp) ho1
+    have l2 := pushBytesLoop_ok_len (by simp) ho2
+    simp only [Slice.length] at l1 l2 ⊢; simp at l1 l2; omega
+
+/-- If the serialization returned bytes, it wrote `120` bytes plus the two encrypted outputs. -/
+theorem serialize_ok_len {recipient feeRecipient mint : Pubkey} {ext : I64} {out1 out2 : Slice U8}
+    {fee : U64} {v : alloc.vec.Vec U8}
+    (h : ext_data.serialize_complete_ext_data recipient ext out1 out2 fee feeRecipient mint = ok (some v)) :
+    v.val.length = out1.length + out2.length + 120 := by
+  unfold ext_data.serialize_complete_ext_data at h
+  obtain ⟨s, hs, h⟩ := bindOk h
+  obtain ⟨o1, ho1, h⟩ := bindOk h
+  obtain ⟨_, -, h⟩ := bindOk h
+  obtain ⟨o2, ho2, h⟩ := bindOk h
+  obtain ⟨⟨b, o3⟩, ho3, h⟩ := bindOk h
+  cases b
+  · have := Result.ok_injective h; simp at this
+  obtain ⟨⟨b1, o4⟩, ho4, h⟩ := bindOk h
+  cases b1
+  · have := Result.ok_injective h; simp at this
+  obtain ⟨o5, ho5, h⟩ := bindOk h
+  obtain ⟨s1, hs1, h⟩ := bindOk h
+  obtain ⟨o6, ho6, h⟩ := bindOk h
+  obtain ⟨s2, hs2, h⟩ := bindOk h
+  obtain ⟨o7, ho7, h⟩ := bindOk h
+  have e := Result.ok_injective h
+  simp only [Option.some.injEq] at e
+  subst e
+  have l1 := pushBytesLoop_ok_len (by simp) ho1
+  have l2 := pushU64Loop_ok_len (by simp) (by simp) ho2
+  have l3 := pushLenPrefixed_ok_len ho3
+  have l4 := pushLenPrefixed_ok_len ho4
+  have l5 := pushU64Loop_ok_len (by simp) (by simp) ho5
+  have l6 := pushBytesLoop_ok_len (by simp) ho6
+  have l7 := pushBytesLoop_ok_len (by simp) ho7
+  simp only [lift, Result.ok.injEq] at hs hs1 hs2
+  subst hs hs1 hs2
+  simp [Slice.length] at l1 l2 l3 l4 l5 l6 l7 ⊢
+  omega
+
+/-- If the external-data hash returned a hash, the serialized data fit in a vector. -/
+theorem extDataHash_ok_fits {S : Type} {sha : ext_data.Sha256 S} {recipient feeRecipient mint : Pubkey}
+    {ext : I64} {out1 out2 : Slice U8} {fee : U64} {h : Array U8 32#usize}
+    (hok : ext_data.calculate_complete_ext_data_hash sha recipient ext out1 out2 fee feeRecipient mint
+      = ok (some h)) :
+    out1.length + out2.length + 120 ≤ Usize.max := by
+  unfold ext_data.calculate_complete_ext_data_hash at hok
+  obtain ⟨o, ho, hok⟩ := bindOk hok
+  cases o with
+  | none => have := Result.ok_injective hok; simp at this
+  | some v =>
+    rw [← serialize_ok_len ho]; exact v.property
+
+/-- With a 64-bit `usize`, the spec's bound on the encrypted outputs (each below `2^32` bytes)
+    makes the serialized external data fit in a vector (completeness). -/
+theorem fits_of_encOutsFit {out1 out2 : Slice U8} {inputs : LeanSpec.TxInputs}
+    (h64 : Usize.max = 2 ^ 64 - 1)
+    (he0 : inputs.encOut0 = toBytes out1.val) (he1 : inputs.encOut1 = toBytes out2.val)
+    (hfit : LeanSpec.encOutsFit inputs) :
+    out1.length + out2.length + 120 ≤ Usize.max := by
+  have : out1.length < 2 ^ 32 ∧ out2.length < 2 ^ 32 := by
+    simpa [LeanSpec.encOutsFit, he0, he1, toBytes, Slice.length] using hfit
+  omega
 end Connection

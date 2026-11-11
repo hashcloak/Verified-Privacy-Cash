@@ -1,4 +1,6 @@
 import Connection.Mapping
 import Connection.Hypotheses
 import Connection.ConnectionTheorems
+import Connection.CodeModelStatements
 import Connection.Findings
+import Connection.Proofs.ToyDup

@@ -253,13 +253,6 @@ def executionView (d : Deployment) (rent : Nat → U64) (s₀ : State) (evs : Li
     (states : List State) : ExecutionView :=
   ExecutionView.afterEvents d rent {} s₀ evs states
 
-/-- `adminTxs evs`: the transactions of the execution's admin instructions, in order. -/
-def adminTxs : List Event → List TxEnv
-  | [] => []
-  | .program tx (.updateDepositLimit ..) _ :: es => tx :: adminTxs es
-  | .program tx (.updateGlobalConfig ..) _ :: es => tx :: adminTxs es
-  | _ :: es => adminTxs es
-
 /-- `Initialized d s`: the program holds its tree, pool and config at their canonical
     addresses. -/
 def Initialized (d : Deployment) (s : State) : Prop :=

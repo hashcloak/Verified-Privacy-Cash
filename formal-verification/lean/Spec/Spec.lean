@@ -230,13 +230,12 @@ variable
   [AddCommGroup G2] [Module F G2]
   [CommGroup GT]
 
--- Define of the pairing property only what's needed for the Groth16 verification
+-- The pairing used by Groth16 verification. Meant to be bilinear (BN254's optimal ate pairing),
+-- but no law is required: the spec states only the verification equation, and Groth16's soundness
+-- is assumed (T0), not derived from bilinearity.
 class Pairing where
   -- Pairing operation
   e: G1 → G2 → GT
-  -- Bilinearity of e
-  e_smul_left: ∀ (s: F) (a: G1) (b: G2), e (s • a) b = (e a b) ^ s.val
-  e_smul_right: ∀ (s: F) (a: G1) (b: G2), e a (s • b) = (e a b) ^ s.val
 
 variable [Pairing]
 

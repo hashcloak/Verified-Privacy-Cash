@@ -22,7 +22,7 @@ a nullifier account) are covered here: they are such allowed changes.
 what `initialize` set up, each transaction, the chain's state and pool balance around each
 transaction, and each admin instruction with the signers of its transaction. The one thing it leaves
 open mid-run is the balances of other accounts, which can differ for the two Solana details above. So
-`adminInstructionsSigned_code` says of the execution's own events that every admin instruction was
+`onlyAuthoritiesChangeConfig_code` (G5a) says of the execution's own admin instructions that each was
 signed by the initializer, and a missing signer check would make it false.
 
 **Admins and withdrawals.** G3b shows that after any admin changes, a way to withdraw at least 2
@@ -78,9 +78,10 @@ rule only if it needs one, marked ADDED MANUALLY (docs silent) (a rule the docs 
 or SOLANA FACT (how Solana behaves). Each such rule is either enforced by the code (the
 connection proves it) or by Solana (proved from the runtime model). Example:
 `poolIsSeparate` (the pool is not the signer, the recipient of a withdrawal or the fee
-recipient of a non-zero fee) is needed for G1c and G4. The program does not check it;
-the runtime's lamport-conservation check enforces it, and the connection proves this from the
-model of that check. It is not an assumption of any theorem.
+recipient of a non-zero fee) is needed for G1c and G4. The program does not check it. For the
+payees, the runtime's lamport-conservation check enforces it, and the connection proves this
+from the model of that check. For the signer, it follows from the assumed Solana fact that a
+program-derived address cannot sign (`SolanaFacts.pdasDoNotSign`).
 
 **Completeness.** Handler completeness covers the program's own logic (the extracted
 handler), not Anchor's checks or the runtime. It is proved except at L1 and A0.

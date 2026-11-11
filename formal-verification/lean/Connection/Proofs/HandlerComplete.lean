@@ -359,12 +359,12 @@ theorem programVerifier_complete (c : Crypto) (C : AltBn128Contracts c.altBn128 
     (hcan : ∀ j, j < 7 → Canonical ((publicInputs proof)[j]!))
     (hz : proof.proof_a.val ≠ List.replicate 64 0#u8) :
     letI : LeanSpec.Groups := syscallGroups C
-    letI : LeanSpec.Pairing := syscallPairing C laws
+    letI : LeanSpec.Pairing := syscallPairing C
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     LeanSpec.proofValid (toInputs signers a proof ext fee out1 out2) → c.proofVerifier.verify proof = ok true := by
   intro hpv
   letI : LeanSpec.Groups := syscallGroups C
-  letI : LeanSpec.Pairing := syscallPairing C laws
+  letI : LeanSpec.Pairing := syscallPairing C
   letI : LeanSpec.Deployment := ⟨programKey C⟩
   obtain ⟨π, hdec, hver⟩ := hpv
   obtain ⟨dA, dB, dC⟩ := decode_toInputs_inv C proof a ext fee out1 out2 π hdec
@@ -800,7 +800,42 @@ variable {signers : List Pubkey}
 variable {G1 G2 GT : Type} [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGroup G2]
   [Module LeanSpec.F G2] [CommGroup GT]
 
-theorem handler_ok_exists [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
+/-- The spec's preconditions (`LeanSpec.transactPreconditions`) except `distinctNullifiers`: what
+    the handler needs to accept. It never checks that the two input nullifiers differ (finding
+    I1, `ToyDup.lean`). -/
+structure PreExceptDistinct [LeanSpec.PoseidonHashes] [LeanSpec.Sha] [LeanSpec.Groups]
+    [AddCommGroup LeanSpec.G1] [Module LeanSpec.F LeanSpec.G1] 
+    [CommGroup LeanSpec.GT] [LeanSpec.Pairing] [LeanSpec.Deployment]
+    (inputs : LeanSpec.TxInputs) (oldWorld : LeanSpec.World) : Prop where
+  knownRoot : LeanSpec.rootBytesKnown oldWorld.state.tree (inputs.pubInputBytes 0)
+  externalDataBinding : LeanSpec.externalDataBound inputs
+  minimumFee : LeanSpec.feeSufficient oldWorld.state.config inputs.extAmt inputs.f
+  pubAmtConsistency : LeanSpec.pubAmtConsistent inputs.extAmt inputs.f inputs.pubAmt
+  validZKP : LeanSpec.proofValid inputs
+  newNullifiers : LeanSpec.nullifiersFresh oldWorld.state.nullifiers inputs.k0 inputs.k1
+  depositLimit : LeanSpec.depositWithinLimit oldWorld.state.config inputs.extAmt
+  poolSolvency : LeanSpec.poolSolvent oldWorld.poolBalance oldWorld.rentExemptMin inputs.extAmt inputs.f
+  signerSolvency : LeanSpec.signerSolvent oldWorld.balances inputs.s inputs.extAmt oldWorld.nullifierRent
+  signerSignature : LeanSpec.signerSigned inputs
+  treeNotFull : LeanSpec.treeHasRoom oldWorld.state.tree
+  amountRange : LeanSpec.amountsInRange inputs.extAmt inputs.f
+  encOutLength : LeanSpec.encOutsFit inputs
+  poolSeparate : LeanSpec.poolIsSeparate inputs oldWorld.state.pool
+  canonicalInputs : LeanSpec.publicInputsEncoded inputs
+  balancesFit : LeanSpec.balancesFit inputs oldWorld
+
+/-- The spec's preconditions give `PreExceptDistinct`. -/
+theorem PreExceptDistinct.of_pre [LeanSpec.PoseidonHashes] [LeanSpec.Sha] [LeanSpec.Groups]
+    [AddCommGroup LeanSpec.G1] [Module LeanSpec.F LeanSpec.G1] 
+    [CommGroup LeanSpec.GT] [LeanSpec.Pairing] [LeanSpec.Deployment]
+    {inputs : LeanSpec.TxInputs} {w : LeanSpec.World} (h : LeanSpec.transactPreconditions inputs w) :
+    PreExceptDistinct inputs w :=
+  ⟨h.knownRoot, h.externalDataBinding, h.minimumFee, h.pubAmtConsistency, h.validZKP, h.newNullifiers,
+    h.depositLimit, h.poolSolvency, h.signerSolvency, h.signerSignature, h.treeNotFull, h.amountRange,
+    h.encOutLength, h.poolSeparate, h.canonicalInputs, h.balancesFit⟩
+
+/-- The handler accepts when the spec's preconditions hold, `distinctNullifiers` aside. -/
+theorem handler_ok_exists_nd [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
     (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
     (hashes : HashesAgree c) (succ : HashesSucceed c) (sys : SyscallsSucceed C) (key : KeyG2Decodes C)
     (a : TransactAccounts) (s₁ : State) (v : U64) (tree : merkle_tree.MerkleTreeAccount)
@@ -814,16 +849,16 @@ theorem handler_ok_exists [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
     (hfit : out1.length + out2.length + 120 ≤ Usize.max)
     (hL1 : ext.val ≠ 0) (hA0 : proof.proof_a.val ≠ List.replicate 64 0#u8) :
     letI : LeanSpec.Groups := syscallGroups C
-    letI : LeanSpec.Pairing := syscallPairing C laws
+    letI : LeanSpec.Pairing := syscallPairing C
     letI : LeanSpec.Deployment := ⟨programKey C⟩
-    LeanSpec.transactPreconditions (toInputs signers a proof ext fee out1 out2)
+    PreExceptDistinct (toInputs signers a proof ext fee out1 out2)
       (handlerWorld a s₁ v tree config spent) →
     ∃ ap env' tree', transact.transact c.hasher arkFr c.sha256 c.proofVerifier solRuntime
       (handlerEnv a s₁ v) tree config proof ext fee a.recipient a.feeRecipientAccount out1 out2
       = ok (.Ok ap, env', tree') := by
   intro hpre
   letI : LeanSpec.Groups := syscallGroups C
-  letI : LeanSpec.Pairing := syscallPairing C laws
+  letI : LeanSpec.Pairing := syscallPairing C
   letI : LeanSpec.Deployment := ⟨programKey C⟩
   set inputs := toInputs signers a proof ext fee out1 out2 with hinputs
   set W := handlerWorld a s₁ v tree config spent with hW
@@ -1010,9 +1045,8 @@ theorem handler_ok_exists [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
   simp only at hap; subst hap
   exact ⟨ap, e', t', hres⟩
 
-
-/-- **Handler completeness, exact version.** -/
-theorem handler_complete_exact' [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
+/-- The handler accepts when the spec's preconditions hold (`handler_ok_exists_nd`). -/
+theorem handler_ok_exists [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
     (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
     (hashes : HashesAgree c) (succ : HashesSucceed c) (sys : SyscallsSucceed C) (key : KeyG2Decodes C)
     (a : TransactAccounts) (s₁ : State) (v : U64) (tree : merkle_tree.MerkleTreeAccount)
@@ -1026,7 +1060,37 @@ theorem handler_complete_exact' [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
     (hfit : out1.length + out2.length + 120 ≤ Usize.max)
     (hL1 : ext.val ≠ 0) (hA0 : proof.proof_a.val ≠ List.replicate 64 0#u8) :
     letI : LeanSpec.Groups := syscallGroups C
-    letI : LeanSpec.Pairing := syscallPairing C laws
+    letI : LeanSpec.Pairing := syscallPairing C
+    letI : LeanSpec.Deployment := ⟨programKey C⟩
+    LeanSpec.transactPreconditions (toInputs signers a proof ext fee out1 out2)
+      (handlerWorld a s₁ v tree config spent) →
+    ∃ ap env' tree', transact.transact c.hasher arkFr c.sha256 c.proofVerifier solRuntime
+      (handlerEnv a s₁ v) tree config proof ext fee a.recipient a.feeRecipientAccount out1 out2
+      = ok (.Ok ap, env', tree') := by
+  intro hpre
+  letI : LeanSpec.Groups := syscallGroups C
+  letI : LeanSpec.Pairing := syscallPairing C
+  letI : LeanSpec.Deployment := ⟨programKey C⟩
+  exact handler_ok_exists_nd c C laws hashes succ sys key a s₁ v tree config spent proof ext fee
+    out1 out2 hshape hhist hsub hd hw hm hsigner hfit hL1 hA0 (PreExceptDistinct.of_pre hpre)
+
+
+/-- **Handler completeness, exact version.** -/
+theorem handler_complete_exact' [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
+    (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
+    (hashes : HashesAgree c) (succ : HashesSucceed c) (sys : SyscallsSucceed C) (key : KeyG2Decodes C)
+    (a : TransactAccounts) (s₁ : State) (v : U64) (tree : merkle_tree.MerkleTreeAccount)
+    (config : admin.GlobalConfig) (spent : Finset LeanSpec.F) (proof : transact.Proof)
+    (ext : I64) (fee : U64) (out1 out2 : Slice U8)
+    (hshape : TreeShape tree) (hhist : ∀ j : Fin 100, Canonical tree.root_history.val[j.val]!)
+    (hsub : ∀ j : Fin 26, Canonical tree.subtrees.val[j.val]!)
+    (hd : config.deposit_fee_rate.val ≤ 10000) (hw : config.withdrawal_fee_rate.val ≤ 10000)
+    (hm : config.fee_error_margin.val ≤ 10000)
+    (hsigner : (s₁ a.signer).owner = systemProgram ∧ (s₁ a.signer).data.isEmpty)
+    (h64 : Usize.max = 2 ^ 64 - 1)
+    (hL1 : ext.val ≠ 0) (hA0 : proof.proof_a.val ≠ List.replicate 64 0#u8) :
+    letI : LeanSpec.Groups := syscallGroups C
+    letI : LeanSpec.Pairing := syscallPairing C
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     let inputs := toInputs signers a proof ext fee out1 out2
     let W := handlerWorld a s₁ v tree config spent
@@ -1038,10 +1102,11 @@ theorem handler_complete_exact' [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
       toTree tree' = (LeanSpec.transactEffects inputs W).state.tree := by
   intro inputs W hpre
   letI : LeanSpec.Groups := syscallGroups C
-  letI : LeanSpec.Pairing := syscallPairing C laws
+  letI : LeanSpec.Pairing := syscallPairing C
   letI : LeanSpec.Deployment := ⟨programKey C⟩
   obtain ⟨ap, e', t', hres⟩ := handler_ok_exists c C laws hashes succ sys key a s₁ v tree config spent
-    proof ext fee out1 out2 hshape hhist hsub hd hw hm hsigner hfit hL1 hA0 hpre
+    proof ext fee out1 out2 hshape hhist hsub hd hw hm hsigner
+    (fits_of_encOutsFit h64 rfl rfl hpre.encOutLength) hL1 hA0 hpre
   have hok := handler_ok c (handlerEnv a s₁ v) tree config proof ext fee a.recipient a.feeRecipientAccount
     out1 out2 ap e' t' hres
   refine ⟨ap, e', t', hres, ?_, ?_⟩
