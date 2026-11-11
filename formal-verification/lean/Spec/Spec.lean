@@ -1,0 +1,839 @@
+import Mathlib.Data.ZMod.Basic
+import Mathlib.Data.Fin.VecNotation
+import Mathlib.Tactic.Ring
+import Mathlib.Tactic.LinearCombination
+import Mathlib.Tactic.Linarith
+import Mathlib.Algebra.BigOperators.Fin
+
+--///////// Note: SOL ONLY.
+
+namespace LeanSpec
+
+-- Labels for what the spec adds beyond the documentation:
+-- ADDED MANUALLY (docs silent): a rule the documentation does not state; listed in
+-- FINDINGS.md.
+-- SOLANA FACT: how Solana behaves, which the documentation leaves implicit; listed in
+-- REPORT_NOTES.md.
+
+--/////////////////////////////////////////
+-- Definitions
+--/////////////////////////////////////////
+def p: ℕ := 21888242871839275222246405745257275088548364400416034343698204186575808495617
+
+-- Type aliases with `abbrev`
+abbrev F := ZMod p
+abbrev Pubkey := BitVec 256 -- Public key from Solana
+abbrev Byte := BitVec 8
+abbrev Bytes := List Byte
+
+-- Abstract definition of the hashes we use
+class PoseidonHashes where
+  H1: F → F
+  H2: F → F → F
+  H3: F → F → F → F
+  H4: F → F → F → F → F
+
+class Sha where
+  sha256: Bytes → Bytes
+
+/-- Read bytes as a number, little-endian (byte 0 is least significant),
+    as `Fr::from_le_bytes_mod_order` does. -/
+def natOfLE (bs : Bytes) : ℕ := bs.foldr (fun b acc => b.toNat + 256 * acc) 0
+
+/-- Read bytes as a number, big-endian (byte 0 is most significant), as the program's
+    Groth16 verifier reads its public inputs. -/
+def natOfBE (bs : Bytes) : ℕ := bs.foldl (fun acc b => 256 * acc + b.toNat) 0
+
+/-- `bs` is the canonical encoding of the field element `x`, as the sender sends a public
+    input: 32 bytes whose big-endian value is below `p` and is `x`. Every field element has
+    exactly one canonical encoding; a non-canonical one (value `x + p`, …) is rejected. -/
+def canonicalEncoding (bs : Bytes) (x : F) : Prop :=
+  bs.length = 32 ∧ natOfBE bs < p ∧ (natOfBE bs : F) = x
+
+-- open the namespaces defined by the class definition
+open PoseidonHashes Sha
+
+/-
+Supply instances of PoseidonHashes and Sha; this makes sure we can just use H1, H2, sha256 etc.
+https://lean-lang.org/doc/reference/4.26.0/Namespaces-and-Sections/#Lean___Parser___Command___variable
+"Section variables are parameters that are automatically added to declarations that mention them."
+-/
+variable [PoseidonHashes] [Sha]
+
+/-
+Security properties are stated as "the property holds, OR a hash collision at specific
+values determined by the theorem's hypotheses". We never assume collision-freeness
+(false for H2–H4 and unprovable for H1), and we never write the break as
+`∃ a b, …Collision a b` (always true, hence vacuous). Breaks are Prop-valued structures.
+-/
+
+/-- `a` and `b` are different inputs with the same `H1` output. -/
+structure H1Collision (a b : F) : Prop where
+  ne : a ≠ b
+  collision : H1 a = H1 b
+
+/-- A note: what a commitment commits to. -/
+structure Note where
+  amount : F
+  ownerPk : F   -- the owner's public key, `H1` of the owner's secret key
+  blinding : F
+  mint : F
+
+/-- Two different notes with the same `H4` output (so the same commitment). -/
+structure H4Collision (a b : Note) : Prop where
+  ne : a ≠ b
+  collision : H4 a.amount a.ownerPk a.blinding a.mint = H4 b.amount b.ownerPk b.blinding b.mint
+
+/-- Two different argument pairs with the same `H2` output -- the binary Merkle hash used
+    in `Opening.calcRoot` and `appendEffects`. Used by G1a (`PathCollision`). -/
+structure H2Collision (a b : F × F) : Prop where
+  ne : a ≠ b
+  collision : H2 a.1 a.2 = H2 b.1 b.2
+
+/-- Two different argument triples with the same `H3` output (`H3` builds nullifiers and
+    signatures). Needed by G2b. -/
+structure H3Collision (a b : F × F × F) : Prop where
+  ne : a ≠ b
+  collision : H3 a.1 a.2.1 a.2.2 = H3 b.1 b.2.1 b.2.2
+
+/-- Two different byte strings whose little-endian, mod-`p` reduced `sha256` digests
+    collide -- the actual hash used to bind external transaction data
+    (`externalDataHash`) into the circuit's public inputs. A weaker (hence easier to
+    obtain) break than a raw `sha256` collision, since it also holds when two distinct
+    digests happen to agree mod `p`. -/
+structure Sha256Collision (a b : Bytes) : Prop where
+  ne : a ≠ b
+  collision : (natOfLE (sha256 a) : F) = (natOfLE (sha256 b) : F)
+
+/-- An `H4` preimage of `0`. An unwritten leaf holds `Z 0 = 0`, so a spend that opens an
+    unwritten leaf with a real note needs a note that commits to `0`. Used by G1a. -/
+structure H4ZeroPreimage (a : Note) : Prop where
+  preimage : H4 a.amount a.ownerPk a.blinding a.mint = 0
+
+/-- An `H2` preimage of `0`: a pair that `H2` hashes to `0`. A Merkle root equal to `0`
+    (which `rootKnown` rejects) needs one. Used by G3a. -/
+structure H2ZeroPreimage (a : F × F) : Prop where
+  preimage : H2 a.1 a.2 = 0
+
+-- Keys, commitments, nullifiers
+def pubKey (sk: F): F := H1 sk
+def commit (amt pk r mint: F): F := H4 amt pk r mint
+def signature (sk c: F) (leafIndex: Fin (2^26)): F := H3 sk c leafIndex
+def nullifier (c sign: F) (leafIndex: Fin (2^26)): F := H3 c leafIndex sign
+
+-- If two commitments are equal, the (amount, pubkey, blinding, mint) tuples that
+-- produced them are equal too OR a hash collision occurred
+lemma commitment_determines_value_or_collision
+  (amt pk r mint amt' pk' r' mint' : F)
+  (h : commit amt pk r mint = commit amt' pk' r' mint')
+  : (⟨amt, pk, r, mint⟩ : Note) = ⟨amt', pk', r', mint'⟩
+    ∨ H4Collision ⟨amt, pk, r, mint⟩ ⟨amt', pk', r', mint'⟩ := by
+  by_cases heq : (⟨amt, pk, r, mint⟩ : Note) = ⟨amt', pk', r', mint'⟩
+  · exact Or.inl heq
+  · exact Or.inr ⟨heq, h⟩
+
+-- Merkle trees
+structure Opening where
+  -- leaf index
+  index: Fin (2^26)
+  -- map from level i to sibling hash for level i. For 26 levels.
+  -- easy to use; `siblings i` gives the hash on level i
+  siblings: Fin 26 → F
+
+-- Whether the accumulated hash for level i should be the right-side argument in hashing
+-- `Nat.testBit n i` returns bit i of n as a Bool
+def Opening.accIsRight (O: Opening) (i: Fin 26) : Bool := Nat.testBit O.index i
+
+-- Calculate root for opening (Merkle proof)
+def Opening.calcRoot (O: Opening) (leaf: F) : F :=
+  Fin.foldl 26 (fun acc i => if (O.accIsRight i) then H2 (O.siblings i) acc else H2 acc (O.siblings i)) (leaf)
+
+-- The opening is deemed valid if the actual root equals the root given by the opening
+def Opening.Valid (O: Opening) (leaf R: F): Prop := calcRoot O leaf = R
+
+-- Z_i's; zero hashes. The default state of the Merkle tree with all leaves equal to 0.
+def Z: ℕ → F
+  | 0 => 0 -- Leaves are 0
+  | i+1 => H2 (Z i) (Z i) -- Hash each next level
+
+-- ZKP related
+
+structure PubInputs where
+  R: F
+  pubAmt: F
+  extDataHash: F
+  nullifiers: Fin 2 → F
+  outCommitments: Fin 2 → F
+
+structure Witness where
+  mint: F
+  -- For all (2) inputs
+  inAmt: Fin 2 → F -- input amount
+  inSk: Fin 2 → F -- private key
+  inR: Fin 2 → F -- blinding factor
+  openings: Fin 2 → Opening -- merkle proof
+  -- For all (2) outputs
+  outAmt: Fin 2 → F -- output amount
+  outPk: Fin 2 → F -- output public key
+  outR: Fin 2 → F -- output blinding factor
+
+-- Derived values
+def Witness.inPk (w: Witness) (i: Fin 2): F := H1 (w.inSk i)
+def Witness.inC (w: Witness) (i: Fin 2) : F := commit (w.inAmt i) (w.inPk i) (w.inR i) w.mint
+def Witness.sign (w: Witness) (i: Fin 2): F := signature (w.inSk i) (w.inC i) (w.openings i).index
+
+/-
+Relation S
+  In a structure so the separate constraints are easy to extract/name
+  a term (h: RelationS pubInputs witness) would have to provide proofs for all constraints
+  However, we'll mainly use it as a given and then use specific properties
+-/
+structure RelationS (pubInputs: PubInputs) (w: Witness) : Prop where
+  -- Because of Fin 2 usage, range of j or i is deduced automatically
+  outputCommitmentIntegrity: ∀ j,(pubInputs.outCommitments j) = commit (w.outAmt j) (w.outPk j) (w.outR j) (w.mint)
+  nullifierCorrectness: ∀ i, pubInputs.nullifiers i = nullifier (w.inC i) (w.sign i) (w.openings i).index
+  noDuplicateNullifiers: pubInputs.nullifiers 0 ≠ pubInputs.nullifiers 1
+  correctOpenings: ∀ i ∈ {i | (w.inAmt i) ≠ 0}, (w.openings i).Valid (w.inC i) pubInputs.R
+  amountConservation: (w.inAmt 0) + (w.inAmt 1) + pubInputs.pubAmt = (w.outAmt 0) + (w.outAmt 1)
+  -- Inputs are not range-checked: G1a shows a spent amount equals the amount of the note
+  -- it opens, which was range-checked when that note was created as an output.
+  outputRangeChecks: ∀ j, (w.outAmt j).val < 2^248
+
+/-
+In math language:
+Let G_1, G_2, G_T be types
+G_1 is an additive commutative group with scalar multiplication
+G_2 is an additive commutative group with scalar multiplication
+G_T is an additive commutative group
+
+For Lean:
+Let Lean assume there is an AddCommGroup G1 instance available
+
+(We don't have to provide the actual types, but can use the abstraction)
+-/
+/-- The three groups of the pairing, and how a sender's bytes are read as points of `G1` and
+    `G2` (`none`: the bytes are not a point). A class rather than fixed `opaque` types, so
+    that a deployment (and the code connection) can instantiate them with the real BN254
+    groups and the syscalls' decoding. The spec says nothing about the encoding itself. -/
+class Groups where
+  G1 : Type
+  G2 : Type
+  GT : Type
+  decodeG1 : Bytes → Option G1
+  decodeG2 : Bytes → Option G2
+variable [Groups]
+abbrev G1 : Type := Groups.G1
+abbrev G2 : Type := Groups.G2
+abbrev GT : Type := Groups.GT
+variable
+  [AddCommGroup G1] [Module F G1]
+  [AddCommGroup G2] [Module F G2]
+  [CommGroup GT]
+
+-- The pairing used by Groth16 verification. Meant to be bilinear (BN254's optimal ate pairing),
+-- but no law is required: the spec states only the verification equation, and Groth16's soundness
+-- is assumed (T0), not derived from bilinearity.
+class Pairing where
+  -- Pairing operation
+  e: G1 → G2 → GT
+
+variable [Pairing]
+
+namespace Groth16
+
+structure Proof where
+  A: G1
+  B: G2
+  C: G1
+
+/-- A proof as the sender sends it: the bytes of its three points. -/
+structure ProofBytes where
+  A: Bytes
+  B: Bytes
+  C: Bytes
+
+/-- The proof's three points, decoded (`Groups.decodeG1`, `Groups.decodeG2`); `none` if one
+    of them is not a point. -/
+def ProofBytes.decode (πb: ProofBytes) : Option Proof :=
+  match Groups.decodeG1 πb.A, Groups.decodeG2 πb.B, Groups.decodeG1 πb.C with
+  | some A, some B, some C => some ⟨A, B, C⟩
+  | _, _, _ => none
+
+structure VerificationKey where
+  α: G1
+  β: G2
+  γ: G2
+  δ: G2
+  IC: Fin 8 → G1
+
+
+def toVector (x: PubInputs): Fin 7 → F :=
+    ![x.R, x.pubAmt, x.extDataHash, x.nullifiers 0, x.nullifiers
+  1, x.outCommitments 0, x.outCommitments 1]
+
+-- Groth16 verification
+-- e(A, B) = e(α, β) · e(vk_x, γ) · e(C, δ)
+-- where vk_x = IC[0] + Σ x_i · IC[i+1]
+def verify
+    (vk: VerificationKey)
+    (π: Proof)
+    (x: PubInputs): Prop :=
+    let pubInputsVec := toVector x
+    -- For scalar multiplication (•) \bu or \smul
+    let vkX : G1 := vk.IC 0 + ∑ i : Fin 7, (pubInputsVec i) • vk.IC i.succ
+    Pairing.e π.A π.B = Pairing.e vk.α vk.β * Pairing.e vkX vk.γ * Pairing.e π.C vk.δ
+
+end Groth16
+
+class Deployment where
+  vk: Groth16.VerificationKey -- the deployed verification key (a fixed circuit)
+
+variable [Deployment]
+
+-- No soundness axiom. Groth16 has only computational (knowledge) soundness, not perfect
+-- soundness ("a verifying proof implies a witness exists"). So the theorems take the
+-- witnesses as data instead (`wit`, read as the knowledge extractor's output; trusted
+-- assumption T1 in `Spec/Statements.lean`).
+
+-- Configurations for the privacy-cash contract
+structure config where
+  -- ADDED MANUALLY (docs silent): two authorities, `authority` over the fee settings and
+  -- `limitAuthority` over the deposit limit. Taken from the code (the global config's authority
+  -- and the tree's authority). The spec needs it to state who may change the config.
+  authority: Pubkey -- may change the fee settings (the global config's authority in the code)
+  limitAuthority: Pubkey -- may change the deposit limit (the tree's authority in the code)
+  depositFeeRate: ℕ -- in basis points, e.g. 25 = 0.25%, default = 0
+  withdrawalFeeRate: ℕ -- in basis points, default = 0.25%
+  feeErrorMargin: ℕ -- in basis points, default = 500 (5% tolerance)
+  -- NOTE: In solana code the max deposit limit in declared in the Merkle Tree but we have kept in here.
+  maxDepositLimit: ℕ -- maximum deposit amount in lamports
+
+--/////////////////////////////////////////
+-- (3) State
+--/////////////////////////////////////////
+structure Tree where
+  nextIndex: ℕ
+  subtrees: Fin 26 → F -- For each level, a hash
+  root: F
+  history: Fin 100 → F
+  rootIndex: Fin 100
+
+structure State where
+  tree: Tree
+  nullifiers: Finset F
+  pool: Pubkey -- the pool's account (the `tree_token` PDA), which holds the pool's SOL
+  config: config
+
+-- Needed: `balances` is how deposits/withdrawals/fees actually move real SOL between
+-- accounts (`transferEffects`, `transactEffects`), how `AgreesOnProgramEffects`
+-- states who is paid, and how `signerSolvent` checks a
+-- depositor can cover their deposit. Without it there'd be nothing to state those over.
+structure World where
+  state: State
+  balances: Pubkey → ℕ -- balances of (public) Solana accounts in lamports
+  -- SOLANA FACT: the pool's rent-exempt minimum, the lamports it must keep to keep existing
+  rentExemptMin: ℕ
+  -- SOLANA FACT: the lamports the signer pays (the rent-exempt minimum) for each nullifier
+  -- account a transaction creates
+  nullifierRent: ℕ
+
+--/////////////////////////////////////////
+-- (4) Operations
+--/////////////////////////////////////////
+
+-- Append a single commitment to the merkle tree
+-- Doc ref https://privacy-cash-privacy-cash.mintlify.app/concepts/merkle-trees#appending-commitments
+def appendEffects(c: F) (oldTree: Tree): Tree :=
+  let current := c
+  let index := oldTree.nextIndex
+  let newRootIndex := oldTree.rootIndex +1
+  let (newRoot, newSubtrees) :=
+  -- Update the complete subtrees array and output the new root by folding.
+  -- Fold left taking accumulator (current hash and subtrees values) and index (height)
+  Fin.foldl 26 (fun (current, subtrees) height =>
+      if Nat.testBit index height.val then
+        -- If the index bit is odd, the accumulator goes on the right.
+        (H2 (subtrees height) current, subtrees)
+        else
+        /-
+        If the index bit is even, the accumulator goes on the left.
+
+        Left siblings are stored, thus the subtrees gets updated.
+        Function.update f i v will update function f for point i with value v
+        -/
+        (H2 current (Z height.val), Function.update subtrees height current)
+    ) (current, oldTree.subtrees)
+  {
+    nextIndex := index +1
+    subtrees := newSubtrees
+    root := newRoot
+    history := Function.update oldTree.history newRootIndex newRoot
+    rootIndex := newRootIndex
+  }
+
+/-- The tree obtained by appending a sequence of commitments, in order, to `t0`. -/
+def foldAppend (cs: List F) (t0: Tree): Tree :=
+  cs.foldl (fun t c => appendEffects c t) t0
+
+structure TxInputs where
+  R: F -- Merkle root
+  pubAmt: F -- public amount
+  extDataHash: F -- external data hash
+  k0: F -- input nullifier 0
+  k1: F -- input nullifier 1
+  outC0: F -- output commitment 0
+  outC1: F -- output commitment 1
+  extAmt: ℤ -- external amount
+  f: ℕ -- fee
+  s: Pubkey -- signer
+  -- SOLANA FACT: the accounts that signed the transaction. Not part of the external data, so a
+  -- relayer can submit a copy of a proof under its own signature (G2a).
+  signers: List Pubkey
+  A : Pubkey -- recipient address
+  t : Pubkey -- fee recipient
+  encOut0: Bytes -- encrypted output 0
+  encOut1: Bytes -- encrypted output 1
+  π: Groth16.ProofBytes -- Groth16 proof for relation S, as the sender's bytes
+  mintAddr: Pubkey -- token type
+  -- The seven public inputs as the sender sends them, 32 bytes each, in circuit order
+  -- (`Groth16.toVector`: root, public amount, external data hash, the two nullifiers, the
+  -- two output commitments). `publicInputsEncoded` ties them to the field elements above.
+  pubInputBytes: Fin 7 → Bytes
+
+/-- The `PubInputs` record that `inputs` should produce a valid Groth16 proof for. -/
+def TxInputs.pubInputs (inputs : TxInputs) : PubInputs :=
+  { R := inputs.R, pubAmt := inputs.pubAmt, extDataHash := inputs.extDataHash,
+    nullifiers := ![inputs.k0, inputs.k1], outCommitments := ![inputs.outC0, inputs.outC1] }
+
+-- Borsh serialization (for the external data hash binding)
+def natToBytesLE (width n: ℕ ): Bytes :=
+  (List.range width).map (fun i => BitVec.ofNat 8 (n >>> (8 * i)))
+
+def u32LE (n: ℕ): Bytes := natToBytesLE 4 n
+def u64LE (n: ℕ): Bytes := natToBytesLE 8 n
+def i64LE (n: ℤ): Bytes := natToBytesLE 8 (n %(2^64 : ℤ)).toNat
+def PubkeyToBytes (pk: Pubkey): Bytes := natToBytesLE 32 pk.toNat
+def vecU8 (bytes: Bytes): Bytes := u32LE bytes.length ++ bytes
+
+def serealizeExternalData (inputs: TxInputs): Bytes :=
+  PubkeyToBytes inputs.A ++ i64LE inputs.extAmt ++ vecU8 inputs.encOut0 ++ vecU8 inputs.encOut1 ++ u64LE inputs.f ++ PubkeyToBytes inputs.t ++ PubkeyToBytes inputs.mintAddr
+
+def externalDataHash (inputs : TxInputs) : F :=
+  (natOfLE (sha256 (serealizeExternalData inputs)) : F)
+
+/-- The pool's SOL: the balance of the pool's account. -/
+def World.poolBalance (w : World) : ℕ := w.balances w.state.pool
+
+/-- Move `x` lamports from account `src` to account `dst`. -/
+def moveLamports (b : Pubkey → ℕ) (src dst : Pubkey) (x : ℕ) : Pubkey → ℕ :=
+  let b' := Function.update b src (b src - x)
+  Function.update b' dst (b' dst + x)
+
+/- The actual moving of funds (note that this does not pay fees)
+  **Transfer**([doc ref](https://privacy-cash-privacy-cash.mintlify.app/concepts/how-it-works#universal-joinsplit-transactions)):
+    - (deposit) if $extAmt>0$: move $extAmt$ from the signer $s$ to the pool
+    - (withdrawal) if $extAmt<0$: move $|extAmt|$ from the pool to the recipient $A$
+    - (transfer) if $extAmt=0$: no changes to external balances
+
+  No ℕ underflow: `signerSolvency` and `poolSolvency` rule it out.
+-/
+def transferEffects (inputs: TxInputs) (oldWorld: World): World :=
+  if inputs.extAmt = 0 then oldWorld else
+    let extAmtAbs := Int.natAbs inputs.extAmt
+    { oldWorld with
+      balances := if inputs.extAmt > 0
+        then moveLamports oldWorld.balances inputs.s oldWorld.state.pool extAmtAbs
+        else moveLamports oldWorld.balances oldWorld.state.pool inputs.A extAmtAbs }
+
+-- The signer pays the rent for the two nullifier accounts a transaction creates (Anchor
+-- `init` with `payer = signer` on `nullifier0` and `nullifier1`, before the instruction body
+-- runs). Network fees are charged by the runtime before the program runs, so they are not
+-- part of the balances the program sees.
+def nullifierRentEffects (inputs: TxInputs) (oldWorld: World): World :=
+  let rentPaid := oldWorld.balances inputs.s - 2 * oldWorld.nullifierRent
+  { oldWorld with balances := Function.update oldWorld.balances inputs.s rentPaid }
+
+-- Returns a new World after updating all necessary elements according to the txInputs
+def transactEffects (inputs: TxInputs)(oldWorld: World): World :=
+  -- Pay the nullifier rent, then move the actual funds. In separate functions for clarity
+  let worldAfterTransfers := transferEffects inputs (nullifierRentEffects inputs oldWorld)
+  { worldAfterTransfers with
+    state:= { worldAfterTransfers.state with
+      -- Append outC0, then append outC1.
+      -- This insert the output commitments & updates the Merkle root
+      tree:= appendEffects inputs.outC1 (appendEffects inputs.outC0 worldAfterTransfers.state.tree)
+      -- Add nullifiers to the state.
+      nullifiers := worldAfterTransfers.state.nullifiers ∪ {inputs.k0, inputs.k1}
+    }
+    -- The fee moves from the pool to the fee recipient
+    balances := moveLamports worldAfterTransfers.balances worldAfterTransfers.state.pool inputs.t
+      inputs.f
+  }
+
+/-- What one transaction moves into (positive) or out of (negative) account `k`, summed
+    over every role `k` plays: the recipient receives `|extAmt|` on a withdrawal, the fee
+    recipient receives `f`, the signer pays `extAmt` on a deposit and the rent for the two
+    nullifier accounts (`rent` each), and the pool gains `extAmt − f`. An account with
+    several roles (e.g. a relayer that signs and collects the fee) gets the sum. -/
+def balanceDelta (inputs : TxInputs) (pool : Pubkey) (rent : ℕ) (k : Pubkey) : ℤ :=
+  (if k = inputs.A ∧ inputs.extAmt < 0 then (inputs.extAmt.natAbs : ℤ) else 0)
+  + (if k = inputs.t then (inputs.f : ℤ) else 0)
+  - (if k = inputs.s ∧ inputs.extAmt > 0 then inputs.extAmt else 0)
+  - (if k = inputs.s then 2 * (rent : ℤ) else 0)
+  + (if k = pool then inputs.extAmt - inputs.f else 0)
+
+--/////////////////////////////////////////
+-- Preconditions, one named condition each.
+-- Each is stated over the plain values it depends on, so the code-side theorem for
+-- the corresponding Rust check can refer to it directly.
+--/////////////////////////////////////////
+
+-- R is a non-zero root in the tree's root history.
+def rootKnown (T: Tree) (R: F): Prop :=
+  R ∈ Set.range T.history ∧ R ≠ 0
+
+-- `rootKnown`, for the root as the sender sends it: 32 bytes, canonical (big-endian value
+-- below `p`), whose value is a known root. The program compares the bytes with the stored
+-- roots' bytes.
+def rootBytesKnown (T: Tree) (bs: Bytes): Prop :=
+  bs.length = 32 ∧ natOfBE bs < p ∧ rootKnown T (natOfBE bs : F)
+
+-- The external data (recipient, amounts, fee, encrypted outputs, mint) hashes to the
+-- value the proof commits to.
+def externalDataBound (inputs: TxInputs): Prop :=
+  externalDataHash inputs = inputs.extDataHash
+
+-- The fee is at least the configured rate, minus the allowed fee error margin.
+def feeSufficient (cfg: config) (extAmt: ℤ) (f: ℕ): Prop :=
+  let feeRate := if extAmt > 0 then cfg.depositFeeRate else cfg.withdrawalFeeRate
+  let expectedFee := (extAmt.natAbs * feeRate) / 10000
+  let minAcceptableFee := (expectedFee * (10000 - cfg.feeErrorMargin)) / 10000
+  f ≥ minAcceptableFee
+
+-- The public amount the proof commits to is extAmt - fee, and extAmt is in range.
+-- A deposit must exceed its fee. A transfer (extAmt = 0) is allowed; its fee is paid
+-- from the pool (see `transferEffects`).
+def pubAmtConsistent (extAmt: ℤ) (f: ℕ) (pubAmt: F): Prop :=
+  (extAmt > 0 → extAmt > f) ∧
+  pubAmt = (extAmt: F) - f
+
+-- The Groth16 proof is valid for the deployed key and these public inputs. Two checks:
+-- the proof's bytes decode to points (`Groups.decodeG1`, `decodeG2`; the wire format, NOT
+-- FROM THE DOCS), and the decoded points satisfy the Groth16 equation. Bytes that are not
+-- points are no proof at all, so decoding is part of validity, not a separate check.
+def proofValid (inputs: TxInputs): Prop :=
+  ∃ π, inputs.π.decode = some π ∧ Groth16.verify Deployment.vk π inputs.pubInputs
+
+-- Each of the seven public inputs is sent as its canonical encoding: 32 bytes whose
+-- big-endian value is below `p` and is the field element the spec uses.
+-- ADDED MANUALLY (docs silent): the canonical encoding check, big-endian value < p. Taken from
+-- the code (`prepare_inputs`). The spec needs it because without it the bytes of `x + p` would
+-- be accepted as `x`, so one nullifier could be sent as two different byte strings (two different
+-- nullifier accounts on-chain) while the spec sees one.
+def publicInputsEncoded (inputs: TxInputs): Prop :=
+  ∀ i, canonicalEncoding (inputs.pubInputBytes i) (Groth16.toVector inputs.pubInputs i)
+
+-- Neither input nullifier has been spent before.
+def nullifiersFresh (spent: Finset F) (k0 k1: F): Prop :=
+  k0 ∉ spent ∧ k1 ∉ spent
+
+-- The two input nullifiers differ. Enforced by the circuit (`noDuplicateNullifiers`),
+-- not checked by the program itself.
+def nullifiersDistinct (k0 k1: F): Prop :=
+  k0 ≠ k1
+
+-- A deposit does not exceed the configured maximum.
+def depositWithinLimit (cfg: config) (extAmt: ℤ): Prop :=
+  extAmt > 0 → extAmt ≤ cfg.maxDepositLimit
+
+-- The pool can pay out the withdrawal and the fee and still keep its rent reserve. On a
+-- deposit the fee is paid after the deposit has arrived (`transactEffects` moves the deposit
+-- first), so the deposit counts.
+def poolSolvent (poolBalance rentExemptMin: ℕ) (extAmt: ℤ) (f: ℕ): Prop :=
+  (extAmt < 0 → poolBalance ≥ |extAmt| + f + rentExemptMin) ∧
+  (extAmt ≥ 0 ∧ f > 0 → poolBalance + extAmt ≥ f + rentExemptMin)
+
+-- The signer can pay the rent for the two nullifier accounts and, on a deposit, the deposit.
+-- Enforced on-chain: Anchor's `init` fails if the signer can't pay the rent, and the deposit
+-- transfer fails if the signer can't cover it. It isn't a silent underflow.
+def signerSolvent (balances: Pubkey → ℕ) (s: Pubkey) (extAmt: ℤ) (nullifierRent: ℕ): Prop :=
+  balances s ≥ 2 * nullifierRent + (if extAmt > 0 then extAmt.natAbs else 0)
+
+-- The signer really signed the transaction.
+-- SOLANA FACT: an account's SOL can be spent only with its signature. Enforced on-chain by
+-- Anchor's `Signer` check. Without this rule, a transaction could name any funded account as
+-- the signer and take its SOL (G4a).
+def signerSigned (inputs: TxInputs): Prop :=
+  inputs.s ∈ inputs.signers
+
+-- There is room in the tree for the two output commitments (the tree holds `2^26` leaves).
+def treeHasRoom (T: Tree): Prop :=
+  T.nextIndex ≤ 2^26 - 2
+
+-- `extAmt` fits an i64 and the fee a u64. Needed because amounts are mod `p` in the proof:
+-- without it, `extAmt = −p` would look like a zero withdrawal to the proof yet pay out `p`.
+-- ADDED MANUALLY (docs silent): the check extAmt ≠ −2^63. Taken from the code
+-- (`check_public_amount`, `validate_fee`). The spec needs it because the withdrawal amount `2^63`
+-- doesn't fit an i64 (no real amount is that large).
+def amountsInRange (extAmt: ℤ) (f: ℕ): Prop :=
+  -2^63 < extAmt ∧ extAmt < 2^63 ∧ f < 2^64
+
+-- SOLANA FACT: each encrypted output is shorter than `2^32` bytes. Borsh writes a vector's length as a
+-- `u32` and fails on longer vectors (`u32::try_from`); Solana's transaction size limit
+-- (1232 bytes) keeps them far below that anyway.
+def encOutsFit (inputs: TxInputs): Prop :=
+  inputs.encOut0.length < 2^32 ∧ inputs.encOut1.length < 2^32
+
+-- The pool's account is not the signer, and is not paid as recipient or fee recipient.
+-- SOLANA FACT: a modelling precondition. It makes the pool's balance change by exactly
+-- `extAmt − f` (`sol_balance_correctness_step`), which G1c (every unspent note is backed by SOL
+-- in the pool) and G4 (correct public payouts) rely on: a withdrawal paid to the pool
+-- would spend notes while the SOL stays in the pool. It holds on Solana: the signer can't be
+-- the pool (a program address can't sign); if the pool is paid as recipient or fee recipient,
+-- the program reads both balances and then writes both, which would create lamports, and the
+-- runtime rejects any instruction that doesn't conserve lamports (the program itself doesn't
+-- check this). Naming the pool where it is not paid (the recipient of a deposit, the fee
+-- recipient of a zero fee) is allowed: nothing moves.
+def poolIsSeparate (inputs: TxInputs) (pool: Pubkey): Prop :=
+  inputs.s ≠ pool ∧ (inputs.extAmt < 0 → inputs.A ≠ pool) ∧ (inputs.f > 0 → inputs.t ≠ pool)
+
+-- Every balance a payment credits is below 2^64 after that payment: every account the
+-- transaction credits (`balanceDelta` positive) ends below 2^64, and so does the pool right
+-- after a deposit, before the fee is paid from it (`transactEffects` moves the deposit
+-- first). Solana balances are `u64`; a payment that would overflow is rejected.
+-- SOLANA FACT. No real transaction is affected: 2^64 lamports exceeds the total SOL
+-- supply. The pool between deposit and fee is the only intermediate balance that can exceed
+-- a final one (every other payment only adds to its payee's final balance).
+def balancesFit (inputs: TxInputs) (w: World): Prop :=
+  (∀ k, 0 < balanceDelta inputs w.state.pool w.nullifierRent k →
+    (w.balances k : ℤ) + balanceDelta inputs w.state.pool w.nullifierRent k < 2^64) ∧
+  (inputs.extAmt > 0 → (w.poolBalance : ℤ) + inputs.extAmt < 2^64)
+
+structure transactPreconditions
+  (inputs: TxInputs)
+  (oldWorld: World): Prop where
+  knownRoot: rootBytesKnown oldWorld.state.tree (inputs.pubInputBytes 0)
+  externalDataBinding: externalDataBound inputs
+  minimumFee: feeSufficient oldWorld.state.config inputs.extAmt inputs.f
+  pubAmtConsistency: pubAmtConsistent inputs.extAmt inputs.f inputs.pubAmt
+  validZKP: proofValid inputs
+  newNullifiers: nullifiersFresh oldWorld.state.nullifiers inputs.k0 inputs.k1
+  distinctNullifiers: nullifiersDistinct inputs.k0 inputs.k1
+  depositLimit: depositWithinLimit oldWorld.state.config inputs.extAmt
+  poolSolvency: poolSolvent oldWorld.poolBalance oldWorld.rentExemptMin inputs.extAmt inputs.f
+  signerSolvency: signerSolvent oldWorld.balances inputs.s inputs.extAmt oldWorld.nullifierRent
+  signerSignature: signerSigned inputs
+  -- The 2 output commitments are added to the tree; make sure there is space for both
+  treeNotFull: treeHasRoom oldWorld.state.tree
+  amountRange: amountsInRange inputs.extAmt inputs.f
+  encOutLength: encOutsFit inputs
+  poolSeparate: poolIsSeparate inputs oldWorld.state.pool
+  canonicalInputs: publicInputsEncoded inputs
+  balancesFit: balancesFit inputs oldWorld
+
+/-- `actual` agrees with `predicted` on everything, field by field: every account balance
+    (uninvolved accounts stay unchanged, the pool's included), the pool's address, the tree, the nullifiers, the config and
+    the rent amounts. Kept field by field so the code-side theorem can prove each part on
+    its own. -/
+structure AgreesOnProgramEffects (inputs : TxInputs) (predicted actual : World) : Prop where
+  tree          : actual.state.tree = predicted.state.tree
+  nullifiers    : actual.state.nullifiers = predicted.state.nullifiers
+  pool          : actual.state.pool = predicted.state.pool
+  config        : actual.state.config = predicted.state.config
+  rentExemptMin : actual.rentExemptMin = predicted.rentExemptMin
+  nullifierRent : actual.nullifierRent = predicted.nullifierRent
+  balances      : actual.balances = predicted.balances
+
+/-
+`transact` holds when a transaction from `oldWorld` to `newWorld` is allowed and has
+the effects the program is responsible for: the preconditions hold in `oldWorld`, and
+`newWorld` agrees with `transactEffects inputs oldWorld` per `AgreesOnProgramEffects`
+(see its doc comment for why this isn't exact equality).
+-/
+def transact
+  (inputs: TxInputs)
+  (oldWorld: World)
+  (newWorld: World)
+  : Prop :=
+  -- Preconditions hold AND
+  (transactPreconditions inputs oldWorld) ∧
+  -- The effects have been executed correctly, i.e. newWorld agrees with transactEffects on the parts the program controls
+  AgreesOnProgramEffects inputs (transactEffects inputs oldWorld) newWorld
+
+-- The initial state and reachability (used in the statements).
+
+def initTree : Tree := {
+  nextIndex := 0
+  subtrees := fun i => Z i.val
+  root:= Z 26
+  -- SOLANA FACT: matches `MerkleTree::initialize` (merkle_tree.rs): only slot 0 is set to the
+  -- zero-tree root; the rest are left at Solana's zero-initialized account bytes, i.e.
+  -- the field element `0`, never `Z 26`. `is_known_root` explicitly rejects `root = 0`
+  -- first, precisely because these untouched slots must not be mistaken for real roots.
+  history := fun i => if i = 0 then Z 26 else 0
+  rootIndex := 0
+}
+
+-- SOLANA FACT: the pool account is created holding exactly its rent-exempt minimum (Anchor
+-- `init` funds it).
+/-- The parameters of a freshly initialized pool. -/
+structure InitParams where
+  -- The pool's initial configuration.
+  cfg : config
+  -- Every account's balance (the pool's is overwritten below).
+  balances : Pubkey → ℕ
+  -- SOLANA FACT: two rent-exempt minimums: Solana's minimum grows with account size, and the
+  -- pool account and a nullifier account have different sizes.
+  rentExemptMin : ℕ
+  nullifierRent : ℕ
+  -- The pool's account.
+  pool : Pubkey
+  -- Who initialized the pool.
+  initializer : Pubkey
+  -- SOLANA FACT: the accounts that signed the `initialize` transaction.
+  signers : List Pubkey
+  -- SOLANA FACT: the initializer really signed it (Anchor's `Signer` check). Without this rule,
+  -- anyone could initialize the pool in the admin's name, with a config of their choosing.
+  initializer_signed : initializer ∈ signers
+  -- ADDED MANUALLY (docs silent): the deployment's admin key, if it has one (test builds have
+  -- none). Taken from the code (`ADMIN_PUBKEY`). The spec needs it to state `admin_init`.
+  admin : Option Pubkey
+  -- Fee settings authority
+  authority_init : cfg.authority = initializer
+  -- Deposit limit authority
+  limitAuthority_init : cfg.limitAuthority = initializer
+  -- ADDED MANUALLY (docs silent): the check initializer = admin, when the deployment has an
+  -- admin key. Taken from the code (`check_admin`). The spec needs it for security: whoever
+  -- initializes controls the fees and the deposit limit.
+  admin_init : ∀ a, admin = some a → initializer = a
+  -- ADDED MANUALLY (docs silent): the fee error margin limit cfg.feeErrorMargin ≤ 10000 on the
+  -- initial config. In the code it holds without a check: `initialize` sets it to 500. The spec
+  -- needs it because `feeSufficient` computes `10000 − feeErrorMargin`, which means nothing
+  -- above 100%.
+  feeErrorMargin_init : cfg.feeErrorMargin ≤ 10000
+  -- ADDED MANUALLY (docs silent): the fee rate limit, at most 10000 basis points, on the initial
+  -- config. In the code it holds without a check: `initialize` sets the rates to 0 and 25. The spec
+  -- needs it for security: with no limit, admins could set a rate that locks notes (G3b).
+  depositFeeRate_init : cfg.depositFeeRate ≤ 10000
+  withdrawalFeeRate_init : cfg.withdrawalFeeRate ≤ 10000
+
+def initWorld (params : InitParams) : World := {
+  state := {
+    tree := initTree
+    nullifiers := ∅
+    pool := params.pool
+    config := params.cfg
+  }
+  -- Function.update from Lean Mathlib
+  -- https://leanprover-community.github.io/mathlib4_docs/Mathlib/Logic/Function/Basic.html#Function.update
+  -- "Function.update f a' v a = if h : a = a' then ⋯ ▸ v else f a"
+  -- So it keeps value of params.balances everywhere, except when the input is the pool,
+  -- then it returns rentExemptMin
+  balances := Function.update params.balances params.pool params.rentExemptMin
+  rentExemptMin := params.rentExemptMin
+  nullifierRent := params.nullifierRent
+}
+
+-- What may happen between two transactions.
+
+/-- What an admin instruction can change: the fee settings (`update_global_config`) or the
+    deposit limit (`update_deposit_limit`).
+    ADDED MANUALLY (docs silent): the documentation doesn't state which settings admins can
+    change, so this is the working from the code -/
+inductive AdminAction where
+  | feeSettings (depositFeeRate withdrawalFeeRate feeErrorMargin : ℕ)
+  | depositLimit (limit : ℕ)
+
+/-- An admin instruction: what it changes, and the signers of its transaction. -/
+structure AdminChange where
+  signers : List Pubkey
+  action : AdminAction
+
+/-- The result of an admin change: accepted, with the new config, or rejected. -/
+inductive AdminResult where
+  | accepted (newConfig : config)
+  | rejected
+
+/-- `ch.apply c`: whether admin change `ch` is accepted on config `c`, and the new config if so.
+
+    - **New fee settings:** the config's authority must be among the signers, and the two fee
+      rates and the fee error margin must each be at most 10000 basis points (100%).
+      ADDED MANUALLY (docs silent): the fee error margin limit check m ≤ 10000. Taken from the
+      code (`update_global_config`). The spec needs it because `feeSufficient` computes
+      `10000 − feeErrorMargin`, which means nothing above 100%.
+      ADDED MANUALLY (docs silent): the fee rate limit checks d ≤ 10000 and w ≤ 10000. Taken from
+      the code (`update_global_config`). The spec needs them for security: with no limit, admins
+      could set a rate that locks notes (G3b).
+    - **New deposit limit:** the limit authority must be among the signers.
+
+    Nothing else changes; no admin change touches the authorities. -/
+def AdminChange.apply (ch : AdminChange) (c : config) : AdminResult :=
+  match ch.action with
+  | .feeSettings d w m =>
+    if c.authority ∈ ch.signers ∧ d ≤ 10000 ∧ w ≤ 10000 ∧ m ≤ 10000 then
+      .accepted { c with depositFeeRate := d, withdrawalFeeRate := w, feeErrorMargin := m }
+    else .rejected
+  | .depositLimit l =>
+    if c.limitAuthority ∈ ch.signers then .accepted { c with maxDepositLimit := l } else .rejected
+
+/-- `ReachableByAdminChanges chs c1 c2`: the admin changes `chs`, applied in order, are each
+    accepted and take the config from `c1` to `c2`. Built the same way as `ReachableWorld` below. -/
+inductive ReachableByAdminChanges : List AdminChange → config → config → Prop where
+  -- No admin changes; true for any config
+  | noChange (c1 : config) : ReachableByAdminChanges [] c1 c1
+  -- Given changes `chs` that take c1 to c2, and an admin change accepted on c2 that gives c3,
+  -- Then `chs` followed by that change takes c1 to c3
+  | extend {chs : List AdminChange} {c1 c2 c3 : config} (ch : AdminChange) :
+      ReachableByAdminChanges chs c1 c2 →
+      ch.apply c2 = .accepted c3 →
+      ReachableByAdminChanges (chs ++ [ch]) c1 c3
+
+/-- `UpdatedValuesBetweenTransacts`: the new balances and config after activity outside
+    `transact`.
+
+    The world doesn't stand still between two `transact`s: anyone can send SOL, account owners
+    can spend, and admins can change the config. The tree and the nullifiers stay as they are,
+    because only `transact` changes them.
+
+    This records the outcome for balances: for example, the pool's new total balance, not the
+    amount someone sent. For the config it also records the activity, because who changed it
+    matters. (`Allowed` below says which outcomes are possible.) -/
+structure UpdatedValuesBetweenTransacts where
+  balances : Pubkey → ℕ
+  config : config
+  -- The accepted admin instructions since the last transaction, in order, with the signers of
+  -- their transactions.
+  adminChanges : List AdminChange
+
+/-- `w.withUpdatedValues b`: world `w` with the balances and config of `b`; the tree, the
+    nullifiers, the pool's address and the rent stay as they are. -/
+def World.withUpdatedValues (w : World) (b : UpdatedValuesBetweenTransacts) : World :=
+  { w with state := { w.state with config := b.config }, balances := b.balances }
+
+/-- `b.Allowed w`: the updated values `b` can follow world `w`, as Solana allows it.
+
+    Allowed changes:
+    - Anyone can send SOL to any account at any time, so the pool's balance can only grow: only
+    the program can take SOL out of it, and only in a transaction. Every other account can
+    change arbitrarily (its owner can also spend from it).
+    - The config changes only by the recorded admin changes. -/
+structure UpdatedValuesBetweenTransacts.Allowed (w : World) (b : UpdatedValuesBetweenTransacts) :
+    Prop where
+  poolGains : w.poolBalance ≤ b.balances w.state.pool
+  config : ReachableByAdminChanges b.adminChanges w.state.config b.config
+
+-- A claim about a pair of worlds; can we go from w1 to w2?
+--   This lets us reason about "in any number of steps"
+inductive ReachableWorld: World → World → Prop where
+  -- No transactions; true for any world
+ | noStep(w1: World): ReachableWorld w1 w1
+ -- Given a reachable pair w1, w2, the updated values after w2 (`b`, allowed), and
+ -- a proof that transact succeeds from there to w3,
+ -- Then obtain proof that w3 is reachable from w1
+ | extend{w1 w2 w3: World}(b: UpdatedValuesBetweenTransacts)(txInputs: TxInputs):
+      ReachableWorld w1 w2 →
+      b.Allowed w2 →
+      transact txInputs (w2.withUpdatedValues b) w3 →
+       ReachableWorld w1 w3
+
+end LeanSpec
