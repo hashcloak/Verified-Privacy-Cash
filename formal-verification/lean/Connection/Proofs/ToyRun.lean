@@ -669,12 +669,17 @@ theorem toy_deposit_ok (s₁ : State) (tree : merkle_tree.MerkleTreeAccount)
 
 def toyRent : Nat → U64 := fun _ => 1#u64
 
+/-- `CircuitFacts` for one proof whose two input nullifiers differ (whether or not it verifies). -/
+theorem CircuitFacts.of_distinct {d : Deployment} {proof : zkcash_core.transact.Proof}
+    (h : proof.input_nullifiers.val[0]! ≠ proof.input_nullifiers.val[1]!) : CircuitFacts d {proof} :=
+  ⟨fun p hp _ => by rw [Set.mem_singleton_iff] at hp; subst hp; exact h⟩
+
 theorem toy_execution :
     ∃ (s : State) (s' : State) (events : List CommitmentData),
       step toyD toyS0 toyTx (.initialize toyInitA) = .ok (s, []) ∧
       Genesis toyD.programId toyS0 ∧ toyD.programId ≠ systemProgram ∧
       step toyD s toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) = .ok (s', events) ∧
-      HashesAgree toyD.crypto ∧ SolanaFacts toyD toyTx ∧ CryptoFacts toyD depProof ∧
+      HashesAgree toyD.crypto ∧ SolanaFacts toyD toyTx ∧ (CryptoFacts toyD depProof ∧ CircuitFacts toyD {depProof}) ∧
       OutsideSpecDetail toyD toyRent s toyTx depA depProof := by
   obtain ⟨s₁, tree, token, config, hinit, hT, hK, hC, hP, hO, hshape, hroots, hsubs, hT0, hTn, hTb, hTm,
     hkb, hcb, hdr, hwr, hmr⟩ := toy_init_ok
@@ -688,12 +693,11 @@ theorem toy_execution :
   have p1 : pk 3#u8 ≠ pk 1#u8 := pk_ne (by decide)
   have p2 : pk 4#u8 ≠ pk 1#u8 := pk_ne (by decide)
   refine ⟨s₁, s', events, hinitStep, toyGenesis, by unfold toyD; decide +kernel, hstep, toyHashesAgree,
-    ⟨?_⟩, ⟨?_, ?_⟩, ⟨rfl, ?_, ?_⟩⟩
+    ⟨?_⟩, ⟨⟨?_⟩, CircuitFacts.of_distinct ?_⟩, ⟨rfl, ?_, ?_⟩⟩
   · intro seeds h
     have e : toyCPA (toyD.pdaInput seeds) = pk 1#u8 := List.mem_singleton.mp h
     have := congrArg (fun p : Pubkey => p.val[0]!) e
     simp [toyCPA, pk] at this
-  · show zeros32 ≠ one32; decide +kernel
   · intro x hx y hy hxy
     simp only [Set.mem_insert_iff, Set.mem_singleton_iff] at hx hy
     rcases hx with rfl | rfl <;> rcases hy with rfl | rfl
@@ -701,6 +705,7 @@ theorem toy_execution :
     · exact absurd hxy a0n1
     · exact absurd hxy.symm a0n1
     · rfl
+  · show zeros32 ≠ one32; decide +kernel
   · refine ⟨?_, ?_⟩
     · show (s₁ nf0A).lamports.val = 0; rw [hO nf0A a01 a02 a03 a04]; unfold toyS0; decide +kernel
     · show (s₁ nf1A).lamports.val = 0; rw [hO nf1A a11 a12 a13 a14]; unfold toyS0; decide +kernel

@@ -13,8 +13,7 @@ namespace Connection
 
 /-- `WellFormed d spent s` (invariant, proved): facts about the program's own accounts. They hold in every state
     an execution reaches from genesis, with `spent` the nullifiers that execution spent
-    (proved in `Proofs/WellFormed.lean`), so no theorem in `ConnectionTheorems.lean`
-    assumes it. -/
+    (proved in `Proofs/WellFormed.lean`). -/
 structure WellFormed (d : Deployment) (spent : Finset LeanSpec.F) (s : State) : Prop where
   /-- The program is not the System Program (`DeploymentFacts.programNotSystem`, carried along
       so the invariant is self-contained). -/

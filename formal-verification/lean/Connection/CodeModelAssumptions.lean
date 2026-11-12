@@ -14,14 +14,15 @@ What links the code to the spec, and what the spec deliberately leaves out, is i
 1. `DeploymentFacts`: the program is not the System Program.
 2. `SolanaFacts` (per transaction): no program-derived address signs. Positive rent is part of
    core-model's `Run` (`TxEnv.RentPositive`).
-3. `CryptoFacts` (per transaction): the circuit makes the two nullifiers differ; SHA-256 makes the
-   two new nullifier accounts' addresses differ.
-4. `PairingLaws`, with core-model's syscall contracts `AltBn128Contracts`: the verifier bridge.
-5. `ExecutionAssumptions` (`run_connection`): the fixed addresses differ, and every `transact`
-   satisfies `SolanaFacts` and `CryptoFacts`.
-6. For completeness only: `HashesSucceed`, `SyscallsSucceed`, `KeyG2Decodes`: the primitives
-   answer at all (bundled with `HashesAgree` in `CompletenessAssumptions`, `Hypotheses.lean`).
-7. For G3a and G3b for the code only: `ProgramAccountsInPlace`, `NullifierAddressesFree`:
+3. `CircuitFacts` (per proof): an accepted proof's two input nullifiers differ (core-model's
+   `Groth16Sound`; the spec's circuit is `RelationS`, cited, not copied). Finding I1.
+4. `CryptoFacts` (per transaction): SHA-256 makes the two new nullifier accounts' addresses differ.
+5. `PairingLaws`, with core-model's syscall contracts `AltBn128Contracts`: the verifier bridge.
+6. `ExecutionAssumptions` (`run_connection`): the fixed addresses differ, and every `transact`
+   satisfies `SolanaFacts`, `CryptoFacts` and `CircuitFacts`.
+7. For completeness only: `CompletenessAssumptions` (`HashesSucceed`, `SyscallsSucceed`,
+   `KeyG2Decodes`, `usize` is 64 bits): the primitives answer at all.
+8. For G3a and G3b for the code only: `ProgramAccountsInPlace`, `NullifierAddressesFree`:
    Anchor's account constraints hold (not machine-checked).
 -/
 
@@ -43,11 +44,21 @@ structure SolanaFacts (d : Deployment) (tx : TxEnv) : Prop where
       has no private key. So the signer is neither the pool nor a new nullifier account. -/
   pdasDoNotSign : ∀ seeds, d.pda seeds ∉ tx.signers
 
-/-- `CryptoFacts d proof` (assumed, about the circuit and SHA-256, for this transaction):
-    the two input nullifiers differ, and so do the addresses of the two new nullifier
-    accounts. -/
+/-- `NullifiersDiffer xs`: a proof's public inputs 3 and 4 (its two input nullifiers) differ. -/
+def NullifiersDiffer (xs : List (Std.Array U8 32#usize)) : Prop := xs[3]! ≠ xs[4]!
+
+/-- `CircuitFacts d proofs` (assumed, about the circuit, for these proofs): what the connection
+    needs from `circuits/transaction2.circom`, stated with core-model's own circuit assumption
+    `Groth16Sound`, whose statement core-model leaves open. -/
+structure CircuitFacts (d : Deployment) (proofs : Set zkcash_core.transact.Proof) : Prop where
+  /-- A proof the program's verifier accepts has two different input nullifiers. Only the circuit
+      enforces this; neither the program nor Anchor checks it (finding I1). Spec counterpart:
+      `RelationS.noDuplicateNullifiers`, which the circuit enforces by T0. -/
+  distinctNullifiers : Groth16Sound d.crypto NullifiersDiffer proofs
+
+/-- `CryptoFacts d proof` (assumed, about SHA-256, for this transaction): the addresses of the
+    two new nullifier accounts differ. -/
 structure CryptoFacts (d : Deployment) (proof : zkcash_core.transact.Proof) : Prop where
-  distinctNullifiers : proof.input_nullifiers.val[0]! ≠ proof.input_nullifiers.val[1]!
   /-- The two new nullifier accounts (slot 0 of nullifier 0, slot 1 of nullifier 1) have
       different addresses (SHA-256 collision resistance of the PDA derivation). -/
   nullifierAddressesDiffer : PdaCollisionFree d.toAddresses
@@ -67,16 +78,18 @@ structure PairingLaws (e : G1 → G2 → GT) : Prop where
 
 end
 
-/-- `StepAssumptions d rent tx ix`: the assumptions one step of an execution needs: a
-    `transact` satisfies the per-transaction assumptions (`SolanaFacts`, `CryptoFacts`). -/
-def StepAssumptions (d : Deployment) (rent : Nat → U64) (tx : TxEnv) : Instruction → Prop
-  | .transact _ proof _ _ _ _ => SolanaFacts d tx ∧ CryptoFacts d proof
+/-- `StepAssumptions d tx ix`: the assumptions one step of an execution needs: a
+    `transact` satisfies the per-transaction assumptions (`SolanaFacts`, `CryptoFacts`,
+    `CircuitFacts`). -/
+def StepAssumptions (d : Deployment) (tx : TxEnv) : Instruction → Prop
+  | .transact _ proof _ _ _ _ => SolanaFacts d tx ∧ CryptoFacts d proof ∧ CircuitFacts d {proof}
   | _ => True
 
-/-- `ExecutionAssumptions d rent sGenesis evs` (assumed, used by `run_connection`): for the
+/-- `ExecutionAssumptions d sGenesis evs` (assumed, used by `run_connection`): for the
     execution from `sGenesis` with events `evs`, the program's three fixed accounts are different,
-    and every `transact` satisfies `SolanaFacts` and `CryptoFacts` (`StepAssumptions`). -/
-structure ExecutionAssumptions (d : Deployment) (rent : Nat → U64) (sGenesis : State) (evs : List Event) :
+    and every `transact` satisfies `SolanaFacts`, `CryptoFacts` and `CircuitFacts`
+    (`StepAssumptions`). -/
+structure ExecutionAssumptions (d : Deployment) (sGenesis : State) (evs : List Event) :
     Prop where
   /-- The program's three fixed accounts (the tree, the pool, the config) have different
       addresses (SHA-256 collision resistance of the PDA derivation, as in
@@ -87,14 +100,14 @@ structure ExecutionAssumptions (d : Deployment) (rent : Nat → U64) (sGenesis :
   /-- Every program step of the execution, from the state the execution reached before it,
       satisfies `StepAssumptions`. -/
   eachStep : ∀ pre post s tx ix em, evs = pre ++ .program tx ix em :: post → Run d sGenesis pre s →
-    StepAssumptions d rent tx ix
+    StepAssumptions d tx ix
 
-/-! ## For handler completeness only
+/-! ## For completeness only
 
 Safety ("code accepts ⟹ spec allows") needs only what a returned answer means. Completeness
 ("spec allows ⟹ code accepts") also needs the primitives to answer at all. -/
 
-/-- `HashesSucceed c` (assumed, handler completeness only): the hash functions return a
+/-- `HashesSucceed c` (assumed, completeness only): the hash functions return a
     value where the program needs one. True of the real libraries: `light-poseidon` fails only on inputs ≥ p,
     and the program's Poseidon inputs are canonical (stored subtrees, zero hashes, the
     commitments the verifier range-checked, and Poseidon's own outputs); SHA-256 always
@@ -108,11 +121,11 @@ structure HashesSucceed (c : Crypto) : Prop where
 section
 variable {G1 G2 GT : Type} [AddCommGroup G1] [CommMonoid GT] {s : AltBn128}
 
-/-- `SyscallsSucceed C` (assumed, handler completeness only): the `alt_bn128` syscalls return
+/-- `SyscallsSucceed C` (assumed, completeness only): the `alt_bn128` syscalls return
     a value on valid points, and the pairing answers 1 exactly when the product of the pairings is 1. The
     converse of core-model's `AltBn128Contracts`, which only say what a returned answer means.
-    True of Solana's syscalls, which fail only on invalid input. To be raised with the
-    core-model team (`TODO.md`): if they add it to the contracts, this bundle can go. -/
+    True of Solana's syscalls, which fail only on invalid input. If core-model's contracts
+    include it, this bundle can go. -/
 structure SyscallsSucceed (C : AltBn128Contracts s G1 G2 GT) : Prop where
   /-- Multiplication returns a value when its point (bytes 0..63) decodes. -/
   mul : ∀ input, C.decodeG1 (bytesAt input 0 64#usize (by simp)) ≠ none →
@@ -134,7 +147,7 @@ structure SyscallsSucceed (C : AltBn128Contracts s G1 G2 GT) : Prop where
     ∃ out, s.pairing input = some out ∧
       (out.val[31]! = 1#u8 ↔ C.e P₁ Q₁ * C.e P₂ Q₂ * C.e P₃ Q₃ * C.e P₄ Q₄ = 1)
 
-/-- `KeyG2Decodes C` (assumed, handler completeness only): the syscalls decode the three G2
+/-- `KeyG2Decodes C` (assumed, completeness only): the syscalls decode the three G2
     points of the program's verifying key. True: the trusted setup produced valid points, and the real
     program verifies real proofs on chain. Needed because `programKey` reads an undecodable
     key point as `0`, so without it the spec could accept a proof the code rejects. The
@@ -144,6 +157,18 @@ structure KeyG2Decodes (C : AltBn128Contracts s G1 G2 GT) : Prop where
   beta : C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_beta_g2 ≠ none
   gamma : C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_gamme_g2 ≠ none
   delta : C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_delta_g2 ≠ none
+
+/-- `CompletenessAssumptions c C` (assumed, handler completeness and G3 for the code): the
+    deployment's hash and syscall calls return a value on valid input (`HashesSucceed`,
+    `SyscallsSucceed`), the key's G2 points decode (`KeyG2Decodes`), and `usize` is 64 bits. -/
+structure CompletenessAssumptions (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT) : Prop where
+  hashesSucceed : HashesSucceed c
+  syscallsSucceed : SyscallsSucceed C
+  keyDecodes : KeyG2Decodes C
+  /-- `usize` is 64 bits. SOLANA FACT: the program runs on 64-bit SBF. In Aeneas, `Usize.max`
+      depends on the platform running Lean, so this cannot be proved; it ties the model to the
+      target. -/
+  usize64 : Usize.max = 2^64 - 1
 
 end
 
@@ -171,8 +196,8 @@ structure ProgramAccountsInPlace (d : Deployment) (s : State)
       can sign for them; anyone else can only send lamports there, which `init` handles;
     - the program creates nullifier accounts only in `transact`, for the two nullifiers it spends.
 
-    `Spec`'s `newNullifiers` says the nullifiers are unspent; proving this from it is future work
-    (`TODO.md`). Until then, G3 for the code doesn't check this logic in the program. -/
+    `Spec`'s `newNullifiers` says the nullifiers are unspent; proving this from it is future
+    work. Until then, G3 for the code doesn't check this logic in the program. -/
 structure NullifierAddressesFree (d : Deployment) (s : State)
     (proof : zkcash_core.transact.Proof) : Prop where
   new0 : Initializable s (d.pda (nullifier0Seeds proof.input_nullifiers.val[0]!))

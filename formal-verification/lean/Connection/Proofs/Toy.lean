@@ -479,7 +479,7 @@ abbrev a0Proof : transact.Proof := toyProof zeros64 one32
 /-- The toy deployment satisfies the completeness assumptions, on a 64-bit `usize` (not provable
     in Lean: `Usize.max` depends on the platform running Lean). -/
 theorem toyAssumptions (h64 : Usize.max = 2 ^ 64 - 1) : CompletenessAssumptions toyCrypto toyC :=
-  ⟨toyHashesAgree, toyHashesSucceed, toySyscalls, toyKey, h64⟩
+  ⟨toyHashesSucceed, toySyscalls, toyKey, h64⟩
 
 /-- The toy handler context holds. -/
 theorem toyContext (n : U64) :

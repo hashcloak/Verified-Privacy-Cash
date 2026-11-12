@@ -60,7 +60,7 @@ theorem toy_init_authority {s₁ : State} {tree : merkle_tree.MerkleTreeAccount}
 theorem toy_admin_change_nonvacuous :
     ∃ (s₀ s : State) (evs : List Event) (states : List State),
       Genesis toyD.programId s₀ ∧ ExecutionPath toyD s₀ evs states s ∧ DeploymentFacts toyD ∧
-      PairingLaws toyC.e ∧ HashesAgree toyD.crypto ∧ ExecutionAssumptions toyD toyRent s₀ evs ∧
+      PairingLaws toyC.e ∧ HashesAgree toyD.crypto ∧ ExecutionAssumptions toyD s₀ evs ∧
       ExecutionOutsideSpecDetail toyD toyRent s₀ evs ∧ Initialized toyD s ∧
       ∀ params r, IsRunOf toyD toyRent s₀ evs states s params r → r.adminChangesUpTo r.txs.length ≠ [] := by
   obtain ⟨s₁, tree, token, config, hinit, hT, hK, hC, hP, hO, hshape, hroots, hsubs, hT0, hTn, hTb, -,

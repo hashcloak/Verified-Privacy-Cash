@@ -83,7 +83,7 @@ theorem toy_G3_code_nonvacuous (h64 : Usize.max = 2 ^ 64 - 1) :
       (params : LeanSpec.InitParams) (r : LeanSpec.Run (LeanSpec.initWorld params))
       (wit : ℕ → LeanSpec.Witness),
       Genesis toyD.programId s₀ ∧ Run toyD s₀ evs s ∧ DeploymentFacts toyD
-      ∧ PairingLaws toyC.e ∧ CompletenessAssumptions toyD.crypto toyC
+      ∧ PairingLaws toyC.e ∧ HashesAgree toyD.crypto ∧ CompletenessAssumptions toyD.crypto toyC
       ∧ toWorld toyD toyRent (runSpent evs) s = r.final
       ∧ r.WitnessesFor wit
       ∧ ∀ payout feeAmount : ℕ, LeanSpec.Goals.WithdrawalWay r.final.state.config 2 payout feeAmount →
@@ -111,7 +111,7 @@ theorem toy_G3_code_nonvacuous (h64 : Usize.max = 2 ^ 64 - 1) :
     .program h1' toyTx_rentPositive (.program h2' toyTx_rentPositive (.nil _))
   have wf₂ := wf_reachable toyGenesis hrun₂ hpid toyHashesAgree
   -- the run after `initialize`
-  have assume₁ : ExecutionAssumptions toyD toyRent toyS0 [.program toyTx (.initialize toyInitA) []] := by
+  have assume₁ : ExecutionAssumptions toyD toyS0 [.program toyTx (.initialize toyInitA) []] := by
     refine ⟨toy_fixed_addresses, ?_⟩
     intro pre post s tx ix em hsplit _
     rcases pre with _ | ⟨x, pre⟩
@@ -141,7 +141,7 @@ theorem toy_G3_code_nonvacuous (h64 : Usize.max = 2 ^ 64 - 1) :
       (toWorld toyD toyRent (runSpent [.program toyTx (.initialize toyInitA) []] ∪
         {(toInputs toyTx.signers depA depProof 2#i64 0#u64 emptySlice emptySlice).k0,
          (toInputs toyTx.signers depA depProof 2#i64 0#u64 emptySlice emptySlice).k1}) s₂') :=
-    transact_connection_pf toyGenesis hrun₁ hpid (.program h2' toyTx_rentPositive (.nil _)) toyC toyLaws toyHashesAgree solana depCrypto depOutside
+    transact_connection_pf toyGenesis hrun₁ hpid (.program h2' toyTx_rentPositive (.nil _)) toyC toyLaws toyHashesAgree solana depCrypto.1 depCrypto.2 depOutside
   have hsp : runSpent [.program toyTx (.initialize toyInitA) []] ∪
       {(toInputs toyTx.signers depA depProof 2#i64 0#u64 emptySlice emptySlice).k0,
        (toInputs toyTx.signers depA depProof 2#i64 0#u64 emptySlice emptySlice).k1}
@@ -156,7 +156,7 @@ theorem toy_G3_code_nonvacuous (h64 : Usize.max = 2 ^ 64 - 1) :
   have hfinal : toWorld toyD toyRent (runSpent [.program toyTx (.initialize toyInitA) [],
       .program toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) e₂']) s₂' = r.final := hrf.symm
   refine ⟨toyS0, s₂', _, params, r, fun _ => depWitG3, toyGenesis, hrun₂, toyDeploymentFacts, toyLaws,
-    toyAssumptions h64, hfinal, ?_, fun payout feeAmount hway => ?_⟩
+    toyHashesAgree, toyAssumptions h64, hfinal, ?_, fun payout feeAmount hway => ?_⟩
   · intro j hj _
     rw [List.getElem_of_eq hrtx' hj]
     have hj1 : j = 0 := by rw [hrtx'] at hj; simpa using hj
@@ -180,7 +180,7 @@ theorem toy_G3_code_nonvacuous (h64 : Usize.max = 2 ^ 64 - 1) :
   have hpre0 : LeanSpec.transactPreconditions (toInputs toyTx.signers spendA spendProof ext fee emptySlice emptySlice)
       (toWorld toyD toyRent (runSpent [.program toyTx (.initialize toyInitA) [],
         .program toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) e₂']) s₂') :=
-    (transact_connection_pf toyGenesis hrun₂ hpid (.program h3 toyTx_rentPositive (.nil _)) toyC toyLaws toyHashesAgree solana crypto outside).1
+    (transact_connection_pf toyGenesis hrun₂ hpid (.program h3 toyTx_rentPositive (.nil _)) toyC toyLaws toyHashesAgree solana crypto.1 crypto.2 outside).1
   have hpre : LeanSpec.transactPreconditions (toInputs toyTx.signers spendA spendProof ext fee emptySlice emptySlice) r.final := by
     rw [← hfinal]; exact hpre0
   -- getting past Anchor

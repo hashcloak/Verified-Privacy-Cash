@@ -92,7 +92,7 @@ condition to make it provable.
 | Kind | What | Your job |
 |---|---|---|
 | Premise | the scenario: an execution from genesis, the code accepted | Check it describes the situation, not a restriction |
-| Assumed | linking: `HashesAgree`, `CompletenessAssumptions` (with code parts); about the code: `DeploymentFacts`, `SolanaFacts`, `CryptoFacts`, `PairingLaws` and the syscall contracts, `ExecutionAssumptions`, Anchor's constraints in `ReachesProgram`; core-model's own assumptions | Check each is true of the real system |
+| Assumed | linking: `HashesAgree`; about the code: `DeploymentFacts`, `SolanaFacts`, `CircuitFacts`, `CryptoFacts`, `PairingLaws` and the syscall contracts, `ExecutionAssumptions`, `CompletenessAssumptions`, Anchor's constraints in `ReachesProgram`; core-model's own assumptions | Check each is true of the real system |
 | By design | `OutsideSpecDetail`, `ExecutionOutsideSpecDetail`: Solana details the spec deliberately does not model | Check each is below the spec's level and harmless |
 
 G3 also has the owner's choices and the limits from the spec's G3. Each hypothesis is labelled

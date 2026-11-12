@@ -771,8 +771,8 @@ theorem bridge_env {d : Deployment} {rent : Nat → U64}
     exact RunMatchesView.between (chs := []) (by cases v; simp) hr hw ha
 
 /-- The program's three fixed accounts differ (from `ExecutionAssumptions.fixedAddressesDiffer`). -/
-theorem fixed_addresses_differ {d : Deployment} {rent : Nat → U64} {s₀ : State} {evs : List Event}
-    (assume : ExecutionAssumptions d rent s₀ evs) :
+theorem fixed_addresses_differ {d : Deployment} {s₀ : State} {evs : List Event}
+    (assume : ExecutionAssumptions d s₀ evs) :
     treeAddr d ≠ poolAddr d ∧ treeAddr d ≠ configAddr d ∧ poolAddr d ≠ configAddr d :=
   singleton_pdas_distinct _ _ _ assume.fixedAddressesDiffer
 
@@ -786,7 +786,7 @@ theorem bridge_step {d : Deployment} {rent : Nat → U64}
     (hinv : BridgeInv d rent C v spent txs s)
     (hpid : d.programId ≠ systemProgram) (hashes : HashesAgree d.crypto)
     (hdist : treeAddr d ≠ poolAddr d ∧ treeAddr d ≠ configAddr d ∧ poolAddr d ≠ configAddr d)
-    (hstepA : StepAssumptions d rent tx ix) (hrentA : StepRentFixed rent tx ix)
+    (hstepA : StepAssumptions d tx ix) (hrentA : StepRentFixed rent tx ix)
     (h : step d s tx ix = .ok (s', em)) (hrentPos : tx.RentPositive) :
     BridgeInv d rent C (v.afterEvent d rent s (.program tx ix em) s')
       (spent ∪ stepSpent ix) (txs ++ stepTxs tx ix) s' := by
@@ -828,10 +828,10 @@ theorem bridge_step {d : Deployment} {rent : Nat → U64}
       simp only [stepSpent, Finset.union_empty, stepTxs, List.append_nil] at wf' ⊢
       exact ⟨wf', rfl, Or.inr ⟨hi', RunMatchesView.between rfl hr hw ha⟩⟩
     | transact a proof ext fee out1 out2 =>
-      obtain ⟨solana, crypto⟩ := hstepA
+      obtain ⟨solana, crypto, circuit⟩ := hstepA
       have hrent : tx.minimumBalance = some rent := hrentA
       obtain ⟨b₁, hb₁, b₂, htx, hb₂, wf', hb₁nil, hb₁pool, hb₂cfg, hb₂pool⟩ :=
-        transact_refines_between_verified C laws h hashes wf solana hrentPos crypto hrent
+        transact_refines_between_verified C laws h hashes wf solana hrentPos crypto circuit hrent
       have hi' := transact_initialized wf hi h
       obtain ⟨params, r, hp1, hp2, hp3, hp4, hinit, htxs, hpl, hpb, hal, hafter, hgl, hgaps, b, hb, hgap, heq⟩ := hr
       rw [heq] at htx hb₁
@@ -913,7 +913,7 @@ theorem Run.toExecutionPath {d : Deployment} {s s' : State} {evs : List Event}
 theorem bridge_run {d : Deployment} {rent : Nat → U64}
     {C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT} {laws : PairingLaws C.e} {s₀ : State}
     {all : List Event} (hpid : d.programId ≠ systemProgram)
-    (hashes : HashesAgree d.crypto) (assume : ExecutionAssumptions d rent s₀ all)
+    (hashes : HashesAgree d.crypto) (assume : ExecutionAssumptions d s₀ all)
     (outside : ExecutionOutsideSpecDetail d rent s₀ all) :
     ∀ {s s' : State} {evs pre : List Event} {states : List State} {v : ExecutionView}
       {spent : Finset LeanSpec.F} {txs : List LeanSpec.TxInputs},
@@ -944,7 +944,7 @@ theorem execution_is_spec_run_pf {d : Deployment} {rent : Nat → U64} {s₀ s :
     (hgen : Genesis d.programId s₀) (hrun : ExecutionPath d s₀ evs states s)
     (hpid : d.programId ≠ systemProgram)
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
-    (hashes : HashesAgree d.crypto) (assume : ExecutionAssumptions d rent s₀ evs)
+    (hashes : HashesAgree d.crypto) (assume : ExecutionAssumptions d s₀ evs)
     (outside : ExecutionOutsideSpecDetail d rent s₀ evs) :
     (NoProgramAccounts d s ∧ runTxs evs = []) ∨
       (letI : LeanSpec.Groups := syscallGroups C
@@ -960,9 +960,9 @@ theorem execution_is_spec_run_pf {d : Deployment} {rent : Nat → U64} {s₀ s :
   · exact Or.inr hr
 
 /-- Assumptions for an execution hold for any prefix of it. -/
-theorem ExecutionAssumptions.prefix {d : Deployment} {rent : Nat → U64} {s₀ : State}
-    {evs more : List Event} (h : ExecutionAssumptions d rent s₀ (evs ++ more)) :
-    ExecutionAssumptions d rent s₀ evs :=
+theorem ExecutionAssumptions.prefix {d : Deployment} {s₀ : State}
+    {evs more : List Event} (h : ExecutionAssumptions d s₀ (evs ++ more)) :
+    ExecutionAssumptions d s₀ evs :=
   ⟨h.fixedAddressesDiffer, fun pre post s tx ix em he hr =>
     h.eachStep pre (post ++ more) s tx ix em (by rw [he]; simp) hr⟩
 
@@ -972,7 +972,7 @@ theorem code_spec_run {d : Deployment} {rent : Nat → U64} {s₀ s : State} {ev
     (hgen : Genesis d.programId s₀) (hrun : ExecutionPath d s₀ evs states s)
     (hpid : d.programId ≠ systemProgram)
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
-    (hashes : HashesAgree d.crypto) (assume : ExecutionAssumptions d rent s₀ evs)
+    (hashes : HashesAgree d.crypto) (assume : ExecutionAssumptions d s₀ evs)
     (outside : ExecutionOutsideSpecDetail d rent s₀ evs) (hi : Initialized d s) :
     letI : LeanSpec.Groups := syscallGroups C
     letI : LeanSpec.Pairing := syscallPairing C
@@ -988,7 +988,7 @@ theorem run_satisfies {d : Deployment} {rent : Nat → U64} {s₀ s : State} {ev
     (hgen : Genesis d.programId s₀) (hrun : ExecutionPath d s₀ evs states s)
     (hpid : d.programId ≠ systemProgram)
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
-    (hashes : HashesAgree d.crypto) (assume : ExecutionAssumptions d rent s₀ evs)
+    (hashes : HashesAgree d.crypto) (assume : ExecutionAssumptions d s₀ evs)
     (outside : ExecutionOutsideSpecDetail d rent s₀ evs) (hi : Initialized d s) :
     letI : LeanSpec.Groups := syscallGroups C
     letI : LeanSpec.Pairing := syscallPairing C
@@ -1012,7 +1012,7 @@ theorem transact_connection_pf {d : Deployment} {rent : Nat → U64} {s₀ s s' 
     (hstep : Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s')
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
     (hashes : HashesAgree d.crypto) (solana : SolanaFacts d tx)
-    (crypto : CryptoFacts d proof) (outside : OutsideSpecDetail d rent s tx a proof) :
+    (crypto : CryptoFacts d proof) (circuit : CircuitFacts d {proof}) (outside : OutsideSpecDetail d rent s tx a proof) :
     letI : LeanSpec.Groups := syscallGroups C
     letI : LeanSpec.Pairing := syscallPairing C
     letI : LeanSpec.Deployment := ⟨programKey C⟩
@@ -1020,7 +1020,7 @@ theorem transact_connection_pf {d : Deployment} {rent : Nat → U64} {s₀ s s' 
     LeanSpec.transact inputs (toWorld d rent (runSpent evs) s)
       (toWorld d rent (runSpent evs ∪ {inputs.k0, inputs.k1}) s') :=
   have ⟨hs, hrentPos⟩ := Run.single_inv hstep
-  (transact_refines_verified C laws hs hashes (wf_reachable hgen hrun hpid hashes) solana hrentPos crypto
+  (transact_refines_verified C laws hs hashes (wf_reachable hgen hrun hpid hashes) solana hrentPos crypto circuit
     outside).1
 
 end

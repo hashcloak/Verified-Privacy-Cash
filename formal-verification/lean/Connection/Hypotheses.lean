@@ -19,9 +19,8 @@ REVIEW SURFACE. Besides "the code model accepted the transaction", the connectio
    defect of the code or the spec. `run_connection` takes only its rent part
    (`ExecutionOutsideSpecDetail`): there the other details are changes the spec allows between
    transactions.
-3. For handler completeness only: `CompletenessAssumptions` (`HashesAgree` with the code-model
-   assumptions that the primitives answer at all, `CodeModelAssumptions.lean`), and
-   `HandlerContext` (invariants and a premise at the handler's start).
+3. For handler completeness only: `HandlerContext` (invariants and a premise at the handler's
+   start).
 4. For G3a and G3b for the code only: `ReachesProgram`, bundling `AccountsCorrect` (the owner's
    choice), the code-model assumptions `ProgramAccountsInPlace`, `NullifierAddressesFree`,
    positive rent and `SolanaFacts`, the rent being fixed (by design), and `SignerCreditFits`
@@ -101,25 +100,6 @@ structure ExecutionOutsideSpecDetail (d : Deployment) (rent : Nat → U64) (sGen
     StepRentFixed rent tx ix
 
 /-! ## For handler completeness only -/
-
-section
-variable {G1 G2 GT : Type} [AddCommGroup G1] [CommMonoid GT] {s : AltBn128}
-
-/-- `CompletenessAssumptions c C` (assumed, handler completeness and G3 for the code): the deployment's
-    hashes are the spec's (`HashesAgree`), its hash and syscall calls return a value on valid
-    input (`HashesSucceed`, `SyscallsSucceed`), the key's G2 points decode (`KeyG2Decodes`),
-    and `usize` is 64 bits. -/
-structure CompletenessAssumptions (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT) : Prop where
-  hashesAgree : HashesAgree c
-  hashesSucceed : HashesSucceed c
-  syscallsSucceed : SyscallsSucceed C
-  keyDecodes : KeyG2Decodes C
-  /-- `usize` is 64 bits. SOLANA FACT: the program runs on 64-bit SBF. In Aeneas, `Usize.max`
-      depends on the platform running Lean, so this cannot be proved; it ties the model to the
-      target. -/
-  usize64 : Usize.max = 2^64 - 1
-
-end
 
 /-- `HandlerContext a s₁ tree config` (handler completeness only): what holds when
     the handler starts, in the state `s₁` after Anchor's checks and `init`s, for the tree and

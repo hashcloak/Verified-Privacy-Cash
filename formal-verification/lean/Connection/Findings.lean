@@ -41,13 +41,13 @@ attribute [local instance] Toy.toyPoseidon Toy.toySpecSha
     handler rejects it (`check_public_amount`). -/
 theorem handler_rejects_internal_transfer
     (h64 : Usize.max = 2 ^ 64 - 1) :                      -- `usize` is 64 bits, as on Solana
-    CompletenessAssumptions Toy.toyCrypto Toy.toyC ∧
+    HashesAgree Toy.toyCrypto ∧ CompletenessAssumptions Toy.toyCrypto Toy.toyC ∧
     HandlerContext Toy.toyAccounts (Toy.toyState 0#u64) Toy.toyTree Toy.toyConfig ∧
     HandlerSpecAllows Toy.toySigners Toy.toyCrypto Toy.toyC Toy.toyAccounts (Toy.toyState 0#u64) 0#u64
       Toy.toyTree Toy.toyConfig ∅ Toy.l1Proof 0#i64 0#u64 Toy.emptySlice Toy.emptySlice ∧
     ¬ HandlerMatchesSpec Toy.toySigners Toy.toyCrypto Toy.toyC Toy.toyAccounts (Toy.toyState 0#u64) 0#u64
       Toy.toyTree Toy.toyConfig ∅ Toy.l1Proof 0#i64 0#u64 Toy.emptySlice Toy.emptySlice :=
-  ⟨Toy.toyAssumptions h64, Toy.toyContext _, Toy.toy_pre_L1, fun ⟨ap, e, t, h, _⟩ => Toy.toy_L1_rejects ap e t h⟩
+  ⟨Toy.toyHashesAgree, Toy.toyAssumptions h64, Toy.toyContext _, Toy.toy_pre_L1, fun ⟨ap, e, t, h, _⟩ => Toy.toy_L1_rejects ap e t h⟩
 
 /-- **FINDING A0, counterexample: the handler rejects an identity `proof_a`.** Excluding L1
     is not enough. In the same toy deployment, the spec allows a deposit (amount 1, so not
@@ -57,13 +57,13 @@ theorem handler_rejects_internal_transfer
 theorem handler_rejects_zero_proof_a
     (h64 : Usize.max = 2 ^ 64 - 1) :                      -- `usize` is 64 bits, as on Solana
     (1#i64 : I64).val ≠ 0 ∧
-    CompletenessAssumptions Toy.toyCrypto Toy.toyC ∧
+    HashesAgree Toy.toyCrypto ∧ CompletenessAssumptions Toy.toyCrypto Toy.toyC ∧
     HandlerContext Toy.toyAccounts (Toy.toyState 1#u64) Toy.toyTree Toy.toyConfig ∧
     HandlerSpecAllows Toy.toySigners Toy.toyCrypto Toy.toyC Toy.toyAccounts (Toy.toyState 1#u64) 0#u64
       Toy.toyTree Toy.toyConfig ∅ Toy.a0Proof 1#i64 0#u64 Toy.emptySlice Toy.emptySlice ∧
     ¬ HandlerMatchesSpec Toy.toySigners Toy.toyCrypto Toy.toyC Toy.toyAccounts (Toy.toyState 1#u64) 0#u64
       Toy.toyTree Toy.toyConfig ∅ Toy.a0Proof 1#i64 0#u64 Toy.emptySlice Toy.emptySlice :=
-  ⟨by simp, Toy.toyAssumptions h64, Toy.toyContext _, Toy.toy_pre_A0,
+  ⟨by simp, Toy.toyHashesAgree, Toy.toyAssumptions h64, Toy.toyContext _, Toy.toy_pre_A0,
     fun ⟨ap, e, t, h, _⟩ => Toy.toy_A0_rejects ap e t h⟩
 
 end

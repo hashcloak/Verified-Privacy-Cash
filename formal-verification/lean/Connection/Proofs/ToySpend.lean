@@ -397,7 +397,7 @@ theorem toy_spend_execution {ext : I64} {fee : U64} (hsplit : ToySplit ext fee) 
       step toyD toyS0 toyTx (.initialize toyInitA) = .ok (s₁, []) ∧
       step toyD s₁ toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) = .ok (s₂, e₂) ∧
       step toyD s₂ toyTx (.transact spendA spendProof ext fee emptySlice emptySlice) = .ok (s₃, e₃) ∧
-      Initialized toyD s₁ ∧ CryptoFacts toyD spendProof ∧
+      Initialized toyD s₁ ∧ (CryptoFacts toyD spendProof ∧ CircuitFacts toyD {spendProof}) ∧
       OutsideSpecDetail toyD toyRent s₂ toyTx spendA spendProof := by
   obtain ⟨s₁, tree, token, config, hinit, hT, hK, hC, hP, hO, hshape, hroots, hsubs, hT0, hTn, hTb, hTm,
     hkb, hcb, hdr, hwr, hmr⟩ := toy_init_ok
@@ -429,8 +429,7 @@ theorem toy_spend_execution {ext : I64} {fee : U64} (hsplit : ToySplit ext fee) 
     ⟨⟨tree, by unfold HoldsTree; rw [show treeAddr toyD = treeA from rfl, hT]; exact ⟨rfl, rfl⟩⟩,
      ⟨token, by unfold HoldsTreeToken; rw [show poolAddr toyD = tokenA from rfl, hK]; exact ⟨rfl, rfl⟩⟩,
      ⟨config, by unfold HoldsGlobalConfig; rw [show configAddr toyD = configA from rfl, hC]; exact ⟨rfl, rfl⟩⟩⟩,
-    ⟨?_, ?_⟩, ⟨rfl, ?_, ?_⟩⟩
-  · show two32 ≠ three32; decide +kernel
+    ⟨⟨?_⟩, CircuitFacts.of_distinct ?_⟩, ⟨rfl, ?_, ?_⟩⟩
   · intro x hx y hy hxy
     simp only [Set.mem_insert_iff, Set.mem_singleton_iff] at hx hy
     rcases hx with rfl | rfl <;> rcases hy with rfl | rfl
@@ -438,6 +437,7 @@ theorem toy_spend_execution {ext : I64} {fee : U64} (hsplit : ToySplit ext fee) 
     · exact absurd hxy w0n1
     · exact absurd hxy.symm w0n1
     · rfl
+  · show two32 ≠ three32; decide +kernel
   · refine ⟨?_, ?_⟩
     · show (s₂ nf0W).lamports.val = 0
       rw [hO2 nf0W w01 w02 w03 w04 w05 w06]; unfold toyS0; decide +kernel
@@ -468,21 +468,21 @@ theorem toy_transact_nonvacuous :
       PairingLaws C.e ∧ Genesis d.programId s₀ ∧ DeploymentFacts d ∧ HashesAgree d.crypto ∧
       (∃ (evs : List Event) (s s' : State) (tx : TxEnv) (a : TransactAccounts) (proof : transact.Proof)
           (extAmount : I64) (fee : U64) (out1 out2 : Slice U8) (events : List CommitmentData),
-        Run d s₀ evs s ∧ step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events) ∧
-        extAmount.val > 0 ∧ SolanaFacts d tx ∧ CryptoFacts d proof ∧
+        Run d s₀ evs s ∧ Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s' ∧
+        extAmount.val > 0 ∧ SolanaFacts d tx ∧ CryptoFacts d proof ∧ CircuitFacts d {proof} ∧
         OutsideSpecDetail d rent s tx a proof) ∧
       (∃ (evs : List Event) (s s' : State) (tx : TxEnv) (a : TransactAccounts) (proof : transact.Proof)
           (extAmount : I64) (fee : U64) (out1 out2 : Slice U8) (events : List CommitmentData),
-        Run d s₀ evs s ∧ step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events) ∧
-        extAmount.val < 0 ∧ SolanaFacts d tx ∧ CryptoFacts d proof ∧
+        Run d s₀ evs s ∧ Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s' ∧
+        extAmount.val < 0 ∧ SolanaFacts d tx ∧ CryptoFacts d proof ∧ CircuitFacts d {proof} ∧
         OutsideSpecDetail d rent s tx a proof) := by
   obtain ⟨s₁, s₂, s₃, e₂, e₃, h1, h2, h3, -, crypto, outside⟩ := toy_spend_execution toySplit_one
   obtain ⟨s₁', s₂', e₂', h1', -, hpid, h2', -, solana, depCrypto, depOutside⟩ := toy_execution
   exact ⟨toyD, toyRent, toyS0, toyC, toyLaws, toyGenesis, toyDeploymentFacts, toyHashesAgree,
     ⟨_, s₁', s₂', toyTx, depA, depProof, 2#i64, 0#u64, emptySlice, emptySlice, e₂',
-      .program h1' toyTx_rentPositive (.nil _), h2', by simp, solana, depCrypto, depOutside⟩,
+      .program h1' toyTx_rentPositive (.nil _), .program h2' toyTx_rentPositive (.nil _), by simp, solana, depCrypto.1, depCrypto.2, depOutside⟩,
     ⟨_, s₂, s₃, toyTx, spendA, spendProof, wdExt, 1#u64, emptySlice, emptySlice, e₃,
-      .program h1 toyTx_rentPositive (.program h2 toyTx_rentPositive (.nil _)), h3, by rw [wdExt_val]; decide, solana, crypto, outside⟩⟩
+      .program h1 toyTx_rentPositive (.program h2 toyTx_rentPositive (.nil _)), .program h3 toyTx_rentPositive (.nil _), by rw [wdExt_val]; decide, solana, crypto.1, crypto.2, outside⟩⟩
 
 /-- **The hypotheses of `run_connection` and of the goals about runs hold together, with a real
     spend.** The execution `initialize`, deposit, withdrawal satisfies every hypothesis of
@@ -495,7 +495,7 @@ theorem toy_spend_nonvacuous :
       (C : AltBn128Contracts d.crypto.altBn128 Unit Unit Unit),
       PairingLaws C.e ∧ Genesis d.programId s₀ ∧ ExecutionPath d s₀ evs states s ∧
       DeploymentFacts d ∧
-      HashesAgree d.crypto ∧ ExecutionAssumptions d toyRent s₀ evs ∧
+      HashesAgree d.crypto ∧ ExecutionAssumptions d s₀ evs ∧
       ExecutionOutsideSpecDetail d toyRent s₀ evs ∧ Initialized d s ∧
       (runTxs evs).length = 2 ∧
       ∃ wit : ℕ → LeanSpec.Witness,

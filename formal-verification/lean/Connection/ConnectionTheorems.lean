@@ -93,7 +93,8 @@ theorem transact_connection
     (laws : PairingLaws C.e)                               -- [assumed] the pairing laws
     (hashes : HashesAgree d.crypto)                        -- [assumed] the hashes are the spec's
     (solana : SolanaFacts d tx)                            -- [assumed] Solana runtime facts
-    (crypto : CryptoFacts d proof)                         -- [assumed] circuit and SHA-256 facts
+    (crypto : CryptoFacts d proof)                         -- [assumed] SHA-256 facts
+    (circuit : CircuitFacts d {proof})                     -- [assumed] the circuit keeps the nullifiers distinct (I1)
     (outside : OutsideSpecDetail d rent s tx a proof)      -- [by design] details the spec omits
     (hgen : Genesis d.programId sGenesis)                  -- [premise] an execution from genesis
     (hrun : Run d sGenesis evs s)                          --   ...that reached `s`
@@ -105,7 +106,7 @@ theorem transact_connection
     let inputs := toInputs tx.signers a proof extAmount fee out1 out2
     LeanSpec.transact inputs (toWorld d rent (runSpent evs) s)
       (toWorld d rent (runSpent evs ∪ {inputs.k0, inputs.k1}) s') :=
-  transact_connection_pf hgen hrun deploy.programNotSystem hstep C laws hashes solana crypto outside
+  transact_connection_pf hgen hrun deploy.programNotSystem hstep C laws hashes solana crypto circuit outside
 
 /-- **An execution path is core-model's execution, with its states.** `ExecutionPath`
     (`Mapping.lean`), which `run_connection` takes, has exactly the executions of core-model's
@@ -131,7 +132,7 @@ theorem run_connection {d : Deployment} {rent : Nat → U64} {sGenesis s : State
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT)     -- [assumed] the syscall contracts
     (laws : PairingLaws C.e)                               -- [assumed] the pairing laws
     (hashes : HashesAgree d.crypto)                        -- [assumed] the hashes are the spec's
-    (assume : ExecutionAssumptions d rent sGenesis evs)    -- [assumed] every `transact`'s
+    (assume : ExecutionAssumptions d sGenesis evs)    -- [assumed] every `transact`'s
                                                            --   `SolanaFacts`, `CryptoFacts`;
                                                            --   the fixed addresses differ
     (outside : ExecutionOutsideSpecDetail d rent sGenesis evs)
@@ -196,6 +197,7 @@ theorem handler_complete_except_L1_A0 (c : Crypto) (C : AltBn128Contracts c.altB
     {tree : zkcash_core.merkle_tree.MerkleTreeAccount} {config : zkcash_core.admin.GlobalConfig}
     {spent : Finset LeanSpec.F} {proof : zkcash_core.transact.Proof} {ext : I64} {fee : U64}
     {out1 out2 : Slice U8}
+    (hashes : HashesAgree c)                               -- [assumed] the hashes are the spec's
     (assume : CompletenessAssumptions c C)                 -- [assumed] see the structure
     (ctx : HandlerContext a s₁ tree config)      -- [invariant], [premise]: see the structure
     (notL1 : ext.val ≠ 0)                                  -- [finding L1] excluded
@@ -203,7 +205,7 @@ theorem handler_complete_except_L1_A0 (c : Crypto) (C : AltBn128Contracts c.altB
     (allows : HandlerSpecAllows signers c C a s₁ v tree config spent proof ext fee out1 out2) :
                                                            -- [premise] the spec allows it
     HandlerMatchesSpec signers c C a s₁ v tree config spent proof ext fee out1 out2 :=
-  handler_complete_exact' c C laws assume.1 assume.2 assume.3 assume.4 a s₁ v tree config spent proof ext
+  handler_complete_exact' c C laws hashes assume.1 assume.2 assume.3 a s₁ v tree config spent proof ext
     fee out1 out2 ctx.1 ctx.2 ctx.3 ctx.4 ctx.5 ctx.6 ctx.7 assume.usize64 notL1 notA0 allows
 
 end
@@ -255,7 +257,7 @@ theorem connection_nonvacuous :
       (C : AltBn128Contracts d.crypto.altBn128 Unit Unit Unit),
       -- every hypothesis of `run_connection`
       PairingLaws C.e ∧ Genesis d.programId sGenesis ∧ ExecutionPath d sGenesis evs states s
-      ∧ DeploymentFacts d ∧ HashesAgree d.crypto ∧ ExecutionAssumptions d Toy.toyRent sGenesis evs
+      ∧ DeploymentFacts d ∧ HashesAgree d.crypto ∧ ExecutionAssumptions d sGenesis evs
       ∧ ExecutionOutsideSpecDetail d Toy.toyRent sGenesis evs
       -- the pool is initialized, and the execution has two transactions
       ∧ Initialized d s ∧ (runTxs evs).length = 2
@@ -284,7 +286,7 @@ theorem donation_nonvacuous :
       -- every hypothesis of `run_connection`, for the toy deployment
       Genesis Toy.toyD.programId sGenesis ∧ ExecutionPath Toy.toyD sGenesis evs states s
       ∧ DeploymentFacts Toy.toyD ∧ PairingLaws Toy.toyC.e ∧ HashesAgree Toy.toyD.crypto
-      ∧ ExecutionAssumptions Toy.toyD Toy.toyRent sGenesis evs
+      ∧ ExecutionAssumptions Toy.toyD sGenesis evs
       ∧ ExecutionOutsideSpecDetail Toy.toyD Toy.toyRent sGenesis evs
       -- the execution contains an outside action
       ∧ Event.env ∈ evs
@@ -298,7 +300,7 @@ end
     deployment satisfying the deployment-level hypotheses (`PairingLaws`, genesis,
     `DeploymentFacts`, `HashesAgree`), the code accepts a deposit (`extAmount > 0`) and
     a withdrawal (`extAmount < 0`), each in an execution from genesis and each satisfying the
-    per-transaction hypotheses (`SolanaFacts`, `CryptoFacts`, `OutsideSpecDetail`). The two
+    per-transaction hypotheses (`SolanaFacts`, `CryptoFacts`, `CircuitFacts`, `OutsideSpecDetail`). The two
     cover both payment paths: the signer pays the pool, and the pool pays the recipient. -/
 theorem transact_connection_nonvacuous :
     ∃ (d : Deployment) (rent : Nat → U64) (sGenesis : State)
@@ -309,16 +311,16 @@ theorem transact_connection_nonvacuous :
       ∧ (∃ (evs : List Event) (s s' : State) (tx : TxEnv) (a : TransactAccounts)
           (proof : zkcash_core.transact.Proof) (extAmount : I64) (fee : U64) (out1 out2 : Slice U8)
           (events : List CommitmentData),
-        Run d sGenesis evs s ∧ step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events)
+        Run d sGenesis evs s ∧ Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s'
         ∧ extAmount.val > 0
-        ∧ SolanaFacts d tx ∧ CryptoFacts d proof ∧ OutsideSpecDetail d rent s tx a proof)
+        ∧ SolanaFacts d tx ∧ CryptoFacts d proof ∧ CircuitFacts d {proof} ∧ OutsideSpecDetail d rent s tx a proof)
       -- and a withdrawal the code accepts, with the per-transaction hypotheses
       ∧ (∃ (evs : List Event) (s s' : State) (tx : TxEnv) (a : TransactAccounts)
           (proof : zkcash_core.transact.Proof) (extAmount : I64) (fee : U64) (out1 out2 : Slice U8)
           (events : List CommitmentData),
-        Run d sGenesis evs s ∧ step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events)
+        Run d sGenesis evs s ∧ Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s'
         ∧ extAmount.val < 0
-        ∧ SolanaFacts d tx ∧ CryptoFacts d proof ∧ OutsideSpecDetail d rent s tx a proof) :=
+        ∧ SolanaFacts d tx ∧ CryptoFacts d proof ∧ CircuitFacts d {proof} ∧ OutsideSpecDetail d rent s tx a proof) :=
   Toy.toy_transact_nonvacuous
 
 /-- **`handler_complete_except_L1_A0` is not vacuous**: in the toy deployment, a deposit of 1
@@ -333,10 +335,10 @@ theorem handler_complete_nonvacuous
       (spent : Finset LeanSpec.F) (proof : zkcash_core.transact.Proof) (ext : I64) (fee : U64)
       (out1 out2 : Slice U8),
       -- every hypothesis of `handler_complete_except_L1_A0`
-      CompletenessAssumptions c C ∧ HandlerContext a s₁ tree config
+      HashesAgree c ∧ CompletenessAssumptions c C ∧ HandlerContext a s₁ tree config
       ∧ ext.val ≠ 0 ∧ proof.proof_a.val ≠ List.replicate 64 0#u8
       ∧ HandlerSpecAllows signers c C a s₁ v tree config spent proof ext fee out1 out2 :=
-  ⟨_, _, Toy.toyLaws, _, _, _, _, _, _, _, _, _, _, _, _, Toy.toyAssumptions h64, Toy.toyContext 1#u64, by simp,
+  ⟨_, _, Toy.toyLaws, _, _, _, _, _, _, _, _, _, _, _, _, Toy.toyHashesAgree, Toy.toyAssumptions h64, Toy.toyContext 1#u64, by simp,
     Toy.okProof_notA0, Toy.toy_pre_ok⟩
 
 end

@@ -1,12 +1,12 @@
 import Connection.Proofs.ToySpend
 open Aeneas Aeneas.Std Result PrivacyCash.Model
 
-/-! # Finding I1: `transact_connection` fails without `distinctNullifiers`
+/-! # Finding I1: `transact_connection` fails without `CircuitFacts`
 
-`TransactConnectionWithoutDistinct` is `transact_connection`
-(`Connection/ConnectionTheorems.lean`) with the hypothesis `CryptoFacts.distinctNullifiers`
-removed; every other hypothesis and the conclusion are unchanged. It is false
-(`transact_connection_fails_without_distinct`): in the toy deployment, after `initialize` and
+`TransactConnectionWithoutCircuit` is `transact_connection`
+(`Connection/ConnectionTheorems.lean`) with the hypothesis `CircuitFacts` (the circuit keeps an
+accepted proof's two input nullifiers distinct) removed; every other hypothesis and the conclusion are unchanged. It is false
+(`transact_connection_fails_without_circuit`): in the toy deployment, after `initialize` and
 the toy deposit of 2 lamports, `step` accepts a withdrawal of those 2 lamports whose two input
 nullifiers are equal (both `2`), every remaining hypothesis holds, and the spec's `transact` does
 not (its precondition `nullifiersDistinct` fails). Neither the program nor Anchor checks that the
@@ -33,9 +33,8 @@ def SpecTransactHolds (d : Deployment) (rent : Nat → U64) (C : AltBn128Contrac
 
 end
 
-/-- `transact_connection` without `CryptoFacts.distinctNullifiers`: the other field of
-    `CryptoFacts` (`nullifierAddressesDiffer`) is kept, as are all other hypotheses. -/
-def TransactConnectionWithoutDistinct : Prop :=
+/-- `transact_connection` without `CircuitFacts`; all other hypotheses are kept. -/
+def TransactConnectionWithoutCircuit : Prop :=
   ∀ (G1 G2 GT : Type) [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGroup G2]
     [Module LeanSpec.F G2] [CommGroup GT] [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
     (d : Deployment) (rent : Nat → U64) (s₀ s s' : State) (evs : List Event) (tx : TxEnv)
@@ -48,9 +47,7 @@ def TransactConnectionWithoutDistinct : Prop :=
     Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s' →
     HashesAgree d.crypto →
     SolanaFacts d tx →
-    PdaCollisionFree d.toAddresses
-      {d.pdaInput (nullifier0Seeds proof.input_nullifiers.val[0]!),
-       d.pdaInput (nullifier1Seeds proof.input_nullifiers.val[1]!)} →
+    CryptoFacts d proof →
     OutsideSpecDetail d rent s tx a proof →
     SpecTransactHolds d rent C laws evs s s' tx a proof extAmount fee out1 out2
 
@@ -276,7 +273,7 @@ theorem toy_dup_ok (s₂ : State) (tree₂ t1 : merkle_tree.MerkleTreeAccount) (
 
 /-- The execution `initialize`, deposit, withdrawal with equal nullifiers: every step is
     accepted, and the withdrawal satisfies every hypothesis of
-    `TransactConnectionWithoutDistinct` that is not about the execution. -/
+    `TransactConnectionWithoutCircuit` that is not about the execution. -/
 theorem toy_dup_execution :
     ∃ (s₁ s₂ s₃ : State) (e₂ e₃ : List CommitmentData),
       step toyD toyS0 toyTx (.initialize toyInitA) = .ok (s₁, []) ∧
@@ -334,17 +331,17 @@ theorem toy_dup_execution :
 end Toy
 
 attribute [local instance] Toy.toyPoseidon Toy.toySpecSha in
-/-- **Finding I1: `transact_connection` cannot be proved without `distinctNullifiers`.** The
+/-- **Finding I1: `transact_connection` cannot be proved without `CircuitFacts`.** The
     code model accepts a withdrawal whose two input nullifiers are equal, every other
     hypothesis of `transact_connection` holds for it, and the spec's `transact` does not. -/
-theorem transact_connection_fails_without_distinct : ¬ TransactConnectionWithoutDistinct := by
+theorem transact_connection_fails_without_circuit : ¬ TransactConnectionWithoutCircuit := by
   intro h
   obtain ⟨s₁, s₂, s₃, e₂, e₃, h1, h2, h3, hdiff, outside⟩ := Toy.toy_dup_execution
   obtain ⟨-, -, -, -, -, hpid, -, hashes, solana, -, -⟩ := Toy.toy_execution
   have hspec := h Unit Unit Unit Toy.toyD Toy.toyRent Toy.toyS0
     s₂ s₃ _ Toy.toyTx Toy.dupA Toy.dupProof Toy.dupExt 0#u64 Toy.emptySlice Toy.emptySlice e₃ Toy.toyC
     Toy.toyLaws Toy.toyGenesis (.program h1 Toy.toyTx_rentPositive (.program h2 Toy.toyTx_rentPositive (.nil _))) Toy.toyDeploymentFacts
-    (.program h3 Toy.toyTx_rentPositive (.nil _)) hashes solana hdiff outside
+    (.program h3 Toy.toyTx_rentPositive (.nil _)) hashes solana ⟨hdiff⟩ outside
   unfold SpecTransactHolds at hspec
   obtain ⟨⟨-, -, -, -, -, -, hdistinct, -⟩, -⟩ := hspec
   exact hdistinct rfl

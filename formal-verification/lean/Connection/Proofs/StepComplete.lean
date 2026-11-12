@@ -416,7 +416,7 @@ theorem execTransact_complete
     {out1 out2 : Slice U8} {tree : zkcash_core.merkle_tree.MerkleTreeAccount}
     {tt : zkcash_core.admin.TreeTokenAccount} {config : zkcash_core.admin.GlobalConfig}
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
-    (assume : CompletenessAssumptions d.crypto C)
+    (hashes : HashesAgree d.crypto) (assume : CompletenessAssumptions d.crypto C)
     (wf : WellFormed d spent s)
     (hnr : 0 < (rent nullifierAccountSpace).val)
     (hvalid : TransactAccountsValid d.toAddresses s tx.toTxContext a proof.input_nullifiers.val[0]!
@@ -459,7 +459,7 @@ theorem execTransact_complete
   obtain ⟨_, hshape⟩ := wf.tree _ _ hvalid.treeAccount.1
   obtain ⟨_, hdr, hwr, hmr⟩ := wf.config _ _ hvalid.globalConfig.1
   obtain ⟨ap, env', tree', hrun, hbal, -⟩ :=
-    handler_complete_exact' d.crypto C laws assume.hashesAgree assume.hashesSucceed assume.syscallsSucceed
+    handler_complete_exact' d.crypto C laws hashes assume.hashesSucceed assume.syscallsSucceed
       assume.keyDecodes a s₁ (rent treeTokenAccountSpace) tree config spent proof ext fee out1 out2 hshape
       (wf.storedRoots _ _ hvalid.treeAccount.1) (wf.storedSubtrees _ _ hvalid.treeAccount.1) hdr hwr hmr
       ⟨ho.trans owner.signerSystem.1, by rw [hd]; exact owner.signerSystem.2⟩ assume.usize64 notL1 notA0 allows
@@ -536,7 +536,7 @@ theorem step_accepts_of_spec
     {out1 out2 : Slice U8} {tree : zkcash_core.merkle_tree.MerkleTreeAccount}
     {tt : zkcash_core.admin.TreeTokenAccount} {config : zkcash_core.admin.GlobalConfig}
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
-    (assume : CompletenessAssumptions d.crypto C) (wf : WellFormed d spent s)
+    (hashes : HashesAgree d.crypto) (assume : CompletenessAssumptions d.crypto C) (wf : WellFormed d spent s)
     (reach : ReachesProgram d rent s tx a proof ext fee out1 out2 tree tt config)
     (notL1 : ext.val ≠ 0) (notA0 : proof.proof_a.val ≠ List.replicate 64 0#u8) :
     letI : LeanSpec.Groups := syscallGroups C
@@ -560,7 +560,7 @@ theorem step_accepts_of_spec
   -- the signer is not a nullifier account: a PDA does not sign
   have hs0 : a.signer ≠ a.nullifier0 := fun e => reach.solana.pdasDoNotSign _ (by rw [← hA.nullifier0, ← e]; exact hsigned)
   have hs1 : a.signer ≠ a.nullifier1 := fun e => reach.solana.pdasDoNotSign _ (by rw [← hA.nullifier1, ← e]; exact hsigned)
-  exact execTransact_complete C laws assume wf (reach.rentPositive rent reach.rentFixed _)
+  exact execTransact_complete C laws hashes assume wf (reach.rentPositive rent reach.rentFixed _)
     (reach.valid hsigned) reach.rentFixed owner hs0 hs1 notL1 notA0 reach.signerCredit pre
 
 end

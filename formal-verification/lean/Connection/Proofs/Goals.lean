@@ -19,7 +19,7 @@ variable {d : Deployment} {rent : Nat → U64} {s₀ s : State} {evs : List Even
   (hgen : Genesis d.programId s₀) (hrun : ExecutionPath d s₀ evs states s)
   (hpid : d.programId ≠ systemProgram) (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT)
   (laws : PairingLaws C.e) (hashes : HashesAgree d.crypto)
-  (assume : ExecutionAssumptions d rent s₀ evs) (outside : ExecutionOutsideSpecDetail d rent s₀ evs)
+  (assume : ExecutionAssumptions d s₀ evs) (outside : ExecutionOutsideSpecDetail d rent s₀ evs)
   (hi : Initialized d s)
 include hgen hrun hpid C laws hashes assume outside hi
 
@@ -97,8 +97,8 @@ variable {d : Deployment} {rent : Nat → U64} {s₀ s s' : State} {evs : List E
   (hstep : Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s')
   (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
   (hashes : HashesAgree d.crypto) (solana : SolanaFacts d tx)
-  (crypto : CryptoFacts d proof) (outside : OutsideSpecDetail d rent s tx a proof)
-include hgen hrun hpid hstep C laws hashes solana crypto outside
+  (crypto : CryptoFacts d proof) (circuit : CircuitFacts d {proof}) (outside : OutsideSpecDetail d rent s tx a proof)
+include hgen hrun hpid hstep C laws hashes solana crypto circuit outside
 
 theorem same_payout_pf :
     letI : LeanSpec.Groups := syscallGroups C
@@ -109,7 +109,7 @@ theorem same_payout_pf :
       LeanSpec.Goals.SamePayout T inputs :=
   letI := syscallGroups C; letI := syscallPairing C; letI : LeanSpec.Deployment := ⟨programKey C⟩
   fun T hT hSame => LeanSpec.Goals.same_public_inputs_same_external_data T hT _ _ _ hSame
-    (transact_connection_pf hgen hrun hpid hstep C laws hashes solana crypto outside)
+    (transact_connection_pf hgen hrun hpid hstep C laws hashes solana crypto circuit outside)
 
 theorem only_signers_pay_pf :
     letI : LeanSpec.Groups := syscallGroups C
@@ -120,7 +120,7 @@ theorem only_signers_pay_pf :
       (toWorld d rent (runSpent evs ∪ {inputs.k0, inputs.k1}) s') :=
   letI := syscallGroups C; letI := syscallPairing C; letI : LeanSpec.Deployment := ⟨programKey C⟩
   LeanSpec.Goals.only_signers_pay _ _ _
-    (transact_connection_pf hgen hrun hpid hstep C laws hashes solana crypto outside)
+    (transact_connection_pf hgen hrun hpid hstep C laws hashes solana crypto circuit outside)
 
 theorem exact_payouts_pf :
     letI : LeanSpec.Groups := syscallGroups C
@@ -131,7 +131,7 @@ theorem exact_payouts_pf :
       (toWorld d rent (runSpent evs ∪ {inputs.k0, inputs.k1}) s') :=
   letI := syscallGroups C; letI := syscallPairing C; letI : LeanSpec.Deployment := ⟨programKey C⟩
   LeanSpec.Goals.exact_payouts _ _ _
-    (transact_connection_pf hgen hrun hpid hstep C laws hashes solana crypto outside)
+    (transact_connection_pf hgen hrun hpid hstep C laws hashes solana crypto circuit outside)
 
 end
 
@@ -143,8 +143,8 @@ variable {G1 G2 GT : Type} [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGrou
 variable {d : Deployment} {rent : Nat → U64} {s₀ s : State} {evs : List Event}
   (hgen : Genesis d.programId s₀) (hrun : Run d s₀ evs s) (hpid : d.programId ≠ systemProgram)
   (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
-  (assume : CompletenessAssumptions d.crypto C)
-include hgen hrun hpid C laws assume
+  (hashes : HashesAgree d.crypto) (assume : CompletenessAssumptions d.crypto C)
+include hgen hrun hpid C laws hashes assume
 
 theorem honest_spend_is_accepted_pf
     {tx : TxEnv} {a : TransactAccounts} {proof : zkcash_core.transact.Proof} {ext : I64} {fee : U64}
@@ -167,7 +167,7 @@ theorem honest_spend_is_accepted_pf
   letI := syscallGroups C; letI := syscallPairing C; letI : LeanSpec.Deployment := ⟨programKey C⟩
   fun params r wit witness k hfinal hwit hH hL =>
     (LeanSpec.Goals.honest_spend_is_accepted params r wit hwit _ witness k hH hL).imp_left
-      (step_accepts_of_spec C laws assume (wf_reachable hgen hrun hpid assume.hashesAgree) reach notL1
+      (step_accepts_of_spec C laws hashes assume (wf_reachable hgen hrun hpid hashes) reach notL1
         notA0 _ hfinal)
 
 theorem admins_cannot_lock_withdrawals_pf :
@@ -203,7 +203,7 @@ theorem admins_cannot_lock_withdrawals_pf :
       LeanSpec.Goals.admins_cannot_lock_withdrawals params r wit hwit spentAmt hSpentAmt
     ⟨payout, feeAmount, hway, hhalf, fun _ _ _ ext _ _ _ _ _ _ witness k reach notA0 hH hV hA hF hW hR hB =>
       (haccept _ witness k hH hV hA hF hW hR hB).imp_left
-        (step_accepts_of_spec C laws assume (wf_reachable hgen hrun hpid assume.hashesAgree) reach
+        (step_accepts_of_spec C laws hashes assume (wf_reachable hgen hrun hpid hashes) reach
           (fun h0 => by
             have h1 := hway.1
             have h2 : (ext.val : ℤ) = -(payout : ℤ) := hA

@@ -47,7 +47,7 @@ variable {d : Deployment} {rent : Nat → U64} {sGenesis s : State} {evs : List 
   (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT)       -- [assumed] the syscall contracts
   (laws : PairingLaws C.e)                                 -- [assumed] the pairing laws
   (hashes : HashesAgree d.crypto)                          -- [assumed] the hashes are the spec's
-  (assume : ExecutionAssumptions d rent sGenesis evs)      -- [assumed] as in `run_connection`
+  (assume : ExecutionAssumptions d sGenesis evs)      -- [assumed] as in `run_connection`
   (outside : ExecutionOutsideSpecDetail d rent sGenesis evs) -- [by design] the rent is fixed
   (hgen : Genesis d.programId sGenesis)                    -- [premise] an execution from genesis
   (hrun : ExecutionPath d sGenesis evs states s)           --   ...that reached `s` through `states`
@@ -136,13 +136,14 @@ variable {d : Deployment} {rent : Nat → U64} {sGenesis s s' : State} {evs : Li
   (laws : PairingLaws C.e)                                 -- [assumed] the pairing laws
   (hashes : HashesAgree d.crypto)                          -- [assumed] the hashes are the spec's
   (solana : SolanaFacts d tx)               -- [assumed] Solana runtime facts
-  (crypto : CryptoFacts d proof)                           -- [assumed] circuit and SHA-256 facts
+  (crypto : CryptoFacts d proof)                           -- [assumed] SHA-256 facts
+  (circuit : CircuitFacts d {proof})                     -- [assumed] the circuit keeps the nullifiers distinct (I1)
   (outside : OutsideSpecDetail d rent s tx a proof)        -- [by design] details the spec omits
   (hgen : Genesis d.programId sGenesis)                    -- [premise] an execution from genesis
   (hrun : Run d sGenesis evs s)                            --   ...that reached `s`
   (hstep : Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s')
                                                            -- [premise] ...then accepted a transact (one more step)
-include deploy C laws hashes solana crypto outside hgen hrun hstep
+include deploy C laws hashes solana crypto circuit outside hgen hrun hstep
 
 /-! #### G2. Non-malleability
 
@@ -163,7 +164,7 @@ theorem samePayout_code :
       (_hSame : T.pubInputs = inputs.pubInputs),           -- [attacker] the accepted transaction
                                                            --   has its public inputs
       LeanSpec.Goals.SamePayout T inputs :=
-  same_payout_pf hgen hrun deploy.programNotSystem hstep C laws hashes solana crypto outside
+  same_payout_pf hgen hrun deploy.programNotSystem hstep C laws hashes solana crypto circuit outside
 
 /-! #### G4. Correct public payouts -/
 
@@ -178,7 +179,7 @@ theorem onlySignersPay_code :
     let inputs := toInputs tx.signers a proof extAmount fee out1 out2
     LeanSpec.Goals.OnlySignersPay inputs (toWorld d rent (runSpent evs) s)
       (toWorld d rent (runSpent evs ∪ {inputs.k0, inputs.k1}) s') :=
-  only_signers_pay_pf hgen hrun deploy.programNotSystem hstep C laws hashes solana crypto outside
+  only_signers_pay_pf hgen hrun deploy.programNotSystem hstep C laws hashes solana crypto circuit outside
 
 /-- **G4b for the code**: in the accepted transaction, every account changes by exactly what
     it should receive minus what it should pay (`ExactPayouts`). Like `transact_connection`, it
@@ -191,7 +192,7 @@ theorem exactPayouts_code :
     let inputs := toInputs tx.signers a proof extAmount fee out1 out2
     LeanSpec.Goals.ExactPayouts inputs (toWorld d rent (runSpent evs) s)
       (toWorld d rent (runSpent evs ∪ {inputs.k0, inputs.k1}) s') :=
-  exact_payouts_pf hgen hrun deploy.programNotSystem hstep C laws hashes solana crypto outside
+  exact_payouts_pf hgen hrun deploy.programNotSystem hstep C laws hashes solana crypto circuit outside
 
 end
 
@@ -213,10 +214,11 @@ variable {d : Deployment} {rent : Nat → U64} {sGenesis s : State} {evs : List 
   (deploy : DeploymentFacts d)                             -- [assumed] see the structure
   (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT)       -- [assumed] the syscall contracts
   (laws : PairingLaws C.e)                                 -- [assumed] the pairing laws
+  (hashes : HashesAgree d.crypto)                          -- [assumed] the hashes are the spec's
   (assume : CompletenessAssumptions d.crypto C)            -- [assumed] the primitives answer
   (hgen : Genesis d.programId sGenesis)                    -- [premise] an execution from genesis
   (hrun : Run d sGenesis evs s)                            --   ...that reached `s`
-include deploy C laws assume hgen hrun
+include deploy C laws hashes assume hgen hrun
 
 /-- **G3a for the code.** An honest spend with no limit hit is accepted by `step`, or a hash break
     occurs. Assumes it gets past Anchor (`ReachesProgram`).
@@ -245,7 +247,7 @@ theorem honestSpendIsAccepted_code
       LeanSpec.LimitsNotHit r.final inputs →               -- [limit]
       (∃ s' events, step d s tx (.transact a proof ext fee out1 out2) = .ok (s', events))
         ∨ LeanSpec.SpendBlockedByBreak r wit witness k :=
-  honest_spend_is_accepted_pf hgen hrun deploy.programNotSystem C laws assume reach notL1 notA0
+  honest_spend_is_accepted_pf hgen hrun deploy.programNotSystem C laws hashes assume reach notL1 notA0
 
 /-- **G3b for the code.** A way to withdraw notes worth `spentAmt` lamports exists, at least half
     of `spentAmt` reaches the recipient, and an honest transaction using that way is accepted by `step`, or a
@@ -283,7 +285,7 @@ theorem adminsCannotLockWithdrawals_code :
           LeanSpec.balancesFit inputs r.final →            -- [limit] no credited balance overflows
           (∃ s' events, step d s tx (.transact a proof ext fee out1 out2) = .ok (s', events))
             ∨ LeanSpec.SpendBlockedByBreak r wit witness k :=
-  admins_cannot_lock_withdrawals_pf hgen hrun deploy.programNotSystem C laws assume
+  admins_cannot_lock_withdrawals_pf hgen hrun deploy.programNotSystem C laws hashes assume
 
 end
 
@@ -317,7 +319,7 @@ theorem admin_change_nonvacuous :
       -- every hypothesis of `run_connection`, for the toy deployment
       Genesis Toy.toyD.programId sGenesis ∧ ExecutionPath Toy.toyD sGenesis evs states s
       ∧ DeploymentFacts Toy.toyD ∧ PairingLaws Toy.toyC.e ∧ HashesAgree Toy.toyD.crypto
-      ∧ ExecutionAssumptions Toy.toyD Toy.toyRent sGenesis evs
+      ∧ ExecutionAssumptions Toy.toyD sGenesis evs
       ∧ ExecutionOutsideSpecDetail Toy.toyD Toy.toyRent sGenesis evs
       -- the pool is initialized
       ∧ Initialized Toy.toyD s
@@ -339,7 +341,7 @@ theorem liveness_code_nonvacuous
       (wit : ℕ → LeanSpec.Witness),
       -- the hypotheses of the section, for the toy deployment
       Genesis Toy.toyD.programId sGenesis ∧ Run Toy.toyD sGenesis evs s ∧ DeploymentFacts Toy.toyD
-      ∧ PairingLaws Toy.toyC.e ∧ CompletenessAssumptions Toy.toyD.crypto Toy.toyC
+      ∧ PairingLaws Toy.toyC.e ∧ HashesAgree Toy.toyD.crypto ∧ CompletenessAssumptions Toy.toyD.crypto Toy.toyC
       -- the hypotheses of G3a and G3b for the code about the run
       ∧ toWorld Toy.toyD Toy.toyRent (runSpent evs) s = r.final
       ∧ r.WitnessesFor wit
