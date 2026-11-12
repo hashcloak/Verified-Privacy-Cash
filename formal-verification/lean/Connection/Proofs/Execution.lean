@@ -787,7 +787,7 @@ theorem bridge_step {d : Deployment} {rent : Nat → U64}
     (hpid : d.programId ≠ systemProgram) (hashes : HashesAgree d.crypto)
     (hdist : treeAddr d ≠ poolAddr d ∧ treeAddr d ≠ configAddr d ∧ poolAddr d ≠ configAddr d)
     (hstepA : StepAssumptions d rent tx ix) (hrentA : StepRentFixed rent tx ix)
-    (h : step d s tx ix = .ok (s', em)) :
+    (h : step d s tx ix = .ok (s', em)) (hrentPos : tx.RentPositive) :
     BridgeInv d rent C (v.afterEvent d rent s (.program tx ix em) s')
       (spent ∪ stepSpent ix) (txs ++ stepTxs tx ix) s' := by
   letI : LeanSpec.Groups := syscallGroups C
@@ -831,7 +831,7 @@ theorem bridge_step {d : Deployment} {rent : Nat → U64}
       obtain ⟨solana, crypto⟩ := hstepA
       have hrent : tx.minimumBalance = some rent := hrentA
       obtain ⟨b₁, hb₁, b₂, htx, hb₂, wf', hb₁nil, hb₁pool, hb₂cfg, hb₂pool⟩ :=
-        transact_refines_between_verified C laws h hashes wf solana crypto hrent
+        transact_refines_between_verified C laws h hashes wf solana hrentPos crypto hrent
       have hi' := transact_initialized wf hi h
       obtain ⟨params, r, hp1, hp2, hp3, hp4, hinit, htxs, hpl, hpb, hal, hafter, hgl, hgaps, b, hb, hgap, heq⟩ := hr
       rw [heq] at htx hb₁
@@ -891,8 +891,23 @@ theorem ExecutionPath.toRun {d : Deployment} {s s' : State} {evs : List Event} {
     (h : ExecutionPath d s evs states s') : Run d s evs s' := by
   induction h with
   | nil => exact .nil _
-  | program hs _ ih => exact .program hs ih
+  | program hs hr _ ih => exact .program hs hr ih
   | env he _ ih => exact .env he ih
+
+/-- A one-step execution is an accepted step with positive rent. -/
+theorem Run.single_inv {d : Deployment} {s s' : State} {tx : TxEnv} {ix : Instruction}
+    {em : List CommitmentData} (h : Run d s [.program tx ix em] s') :
+    step d s tx ix = .ok (s', em) ∧ tx.RentPositive := by
+  cases h with
+  | program hs hr hnil => cases hnil; exact ⟨hs, hr⟩
+
+/-- An execution is an execution path, through some states. -/
+theorem Run.toExecutionPath {d : Deployment} {s s' : State} {evs : List Event}
+    (h : Run d s evs s') : ∃ states, ExecutionPath d s evs states s' := by
+  induction h with
+  | nil s => exact ⟨[], .nil s⟩
+  | program hs hr _ ih => obtain ⟨st, h⟩ := ih; exact ⟨_, .program hs hr h⟩
+  | env he _ ih => obtain ⟨st, h⟩ := ih; exact ⟨_, .env he h⟩
 
 /-- **The invariant holds along any execution path**, from any state where it holds. -/
 theorem bridge_run {d : Deployment} {rent : Nat → U64}
@@ -909,12 +924,12 @@ theorem bridge_run {d : Deployment} {rent : Nat → U64}
   intro s s' evs pre states v spent txs hall hpre hinv hrun
   induction hrun generalizing pre v spent txs with
   | nil => simpa [runSpent, runTxs, ExecutionView.afterEvents] using hinv
-  | @program s₁ s₂ s₃ tx ix emitted events states hstep hrest ih =>
+  | @program s₁ s₂ s₃ tx ix emitted events states hstep hrentPos hrest ih =>
     have hA := assume.eachStep pre events s₁ tx ix emitted hall hpre
     have hR := outside.rentFixed pre events s₁ tx ix emitted hall hpre
-    have hinv' := bridge_step (laws := laws) hinv hpid hashes (fixed_addresses_differ assume) hA hR hstep
+    have hinv' := bridge_step (laws := laws) hinv hpid hashes (fixed_addresses_differ assume) hA hR hstep hrentPos
     have := ih (pre := pre ++ [.program tx ix emitted]) (by rw [hall]; simp)
-      (hpre.append (.program hstep (.nil _))) hinv'
+      (hpre.append (.program hstep hrentPos (.nil _))) hinv'
     simpa [runSpent, runTxs, ExecutionView.afterEvents, Finset.union_assoc, List.append_assoc] using this
   | @env s₁ s₂ s₃ events states henv hrest ih =>
     have := ih (pre := pre ++ [.env]) (by rw [hall]; simp) (hpre.append (.env henv (.nil _)))
@@ -994,9 +1009,9 @@ theorem transact_connection_pf {d : Deployment} {rent : Nat → U64} {s₀ s s' 
     {evs : List Event} {tx : TxEnv} {a : TransactAccounts} {proof : zkcash_core.transact.Proof}
     {extAmount : I64} {fee : U64} {out1 out2 : Slice U8} {events : List CommitmentData}
     (hgen : Genesis d.programId s₀) (hrun : Run d s₀ evs s) (hpid : d.programId ≠ systemProgram)
-    (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
+    (hstep : Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s')
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
-    (hashes : HashesAgree d.crypto) (solana : SolanaFacts d rent tx)
+    (hashes : HashesAgree d.crypto) (solana : SolanaFacts d tx)
     (crypto : CryptoFacts d proof) (outside : OutsideSpecDetail d rent s tx a proof) :
     letI : LeanSpec.Groups := syscallGroups C
     letI : LeanSpec.Pairing := syscallPairing C
@@ -1004,7 +1019,8 @@ theorem transact_connection_pf {d : Deployment} {rent : Nat → U64} {s₀ s s' 
     let inputs := toInputs tx.signers a proof extAmount fee out1 out2
     LeanSpec.transact inputs (toWorld d rent (runSpent evs) s)
       (toWorld d rent (runSpent evs ∪ {inputs.k0, inputs.k1}) s') :=
-  (transact_refines_verified C laws hstep hashes (wf_reachable hgen hrun hpid hashes) solana crypto
+  have ⟨hs, hrentPos⟩ := Run.single_inv hstep
+  (transact_refines_verified C laws hs hashes (wf_reachable hgen hrun hpid hashes) solana hrentPos crypto
     outside).1
 
 end

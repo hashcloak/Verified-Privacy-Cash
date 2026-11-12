@@ -86,8 +86,8 @@ theorem toy_admin_change_nonvacuous :
   -- the facts the deposit needs, from the toy deposit after `initialize`
   obtain ⟨-, -, -, -, -, -, -, -, solana, depCrypto, -⟩ := toy_execution
   -- the pool stays initialized
-  have wf₁ := wf_reachable toyGenesis (.program h1 (.nil _)) hpid toyHashesAgree
-  have wf₂ := wf_reachable toyGenesis (.program h1 (.program h2 (.nil _))) hpid toyHashesAgree
+  have wf₁ := wf_reachable toyGenesis (.program h1 toyTx_rentPositive (.nil _)) hpid toyHashesAgree
+  have wf₂ := wf_reachable toyGenesis (.program h1 toyTx_rentPositive (.program h2 toyTx_rentPositive (.nil _))) hpid toyHashesAgree
   obtain ⟨hi₁, -⟩ := init_between (rent := toyRent) (singleton_pdas_distinct _ _ _ toy_fixed_addresses)
     hpid rfl toyHashesAgree.zeroBytes hinit
   obtain ⟨s₂', h2', h2e⟩ := PrivacyCash.Model.Except.bind_ok h2
@@ -95,7 +95,7 @@ theorem toy_admin_change_nonvacuous :
   obtain ⟨hi₂, -, -⟩ := udl_between (rent := toyRent) wf₁ hi₁ h2'
   have hi₃ := transact_initialized wf₂ hi₂ h3
   refine ⟨toyS0, s₃, _, _, toyGenesis,
-    .program h1 (.program h2 (.program h3 (.nil _))), toyDeploymentFacts, toyLaws, toyHashesAgree,
+    .program h1 toyTx_rentPositive (.program h2 toyTx_rentPositive (.program h3 toyTx_rentPositive (.nil _))), toyDeploymentFacts, toyLaws, toyHashesAgree,
     ⟨toy_fixed_addresses, ?_⟩, ⟨?_⟩, hi₃, ?_⟩
   · intro pre post s tx ix em hsplit _
     rcases toy_split3 hsplit with hev | hev | hev <;> cases hev

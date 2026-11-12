@@ -109,7 +109,7 @@ theorem transact_refines_verified [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
     (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
     (hashes : HashesAgree d.crypto)
     (wf : WellFormed d spent s)
-    (solana : SolanaFacts d rent tx)
+    (solana : SolanaFacts d tx) (hrentPos : tx.RentPositive)
     (crypto : CryptoFacts d proof)
     (outside : OutsideSpecDetail d rent s tx a proof) :
     letI : LeanSpec.Groups := syscallGroups C
@@ -122,7 +122,7 @@ theorem transact_refines_verified [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
   letI : LeanSpec.Groups := syscallGroups C
   letI : LeanSpec.Pairing := syscallPairing C
   letI : LeanSpec.Deployment := ⟨programKey C⟩
-  exact transact_refines hstep hashes wf solana crypto outside
+  exact transact_refines hstep hashes wf solana hrentPos crypto outside
     (fun hv => verifier_bridge d.crypto C laws proof hv a extAmount fee out1 out2)
 
 /-- `transact_refines_between` with the verifier bridge in place of `hProofValid`. -/
@@ -134,7 +134,7 @@ theorem transact_refines_between_verified [LeanSpec.PoseidonHashes] [LeanSpec.Sh
     (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
     (hashes : HashesAgree d.crypto)
     (wf : WellFormed d spent s)
-    (solana : SolanaFacts d rent tx)
+    (solana : SolanaFacts d tx) (hrentPos : tx.RentPositive)
     (crypto : CryptoFacts d proof)
     (rentFixed : tx.minimumBalance = some rent) :
     letI : LeanSpec.Groups := syscallGroups C
@@ -155,7 +155,7 @@ theorem transact_refines_between_verified [LeanSpec.PoseidonHashes] [LeanSpec.Sh
   letI : LeanSpec.Groups := syscallGroups C
   letI : LeanSpec.Pairing := syscallPairing C
   letI : LeanSpec.Deployment := ⟨programKey C⟩
-  exact transact_refines_between hstep hashes wf solana crypto rentFixed
+  exact transact_refines_between hstep hashes wf solana hrentPos crypto rentFixed
     (fun hv => verifier_bridge d.crypto C laws proof hv a extAmount fee out1 out2)
 
 end

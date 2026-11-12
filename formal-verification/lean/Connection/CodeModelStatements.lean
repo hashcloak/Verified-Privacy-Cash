@@ -135,13 +135,13 @@ variable {d : Deployment} {rent : Nat → U64} {sGenesis s s' : State} {evs : Li
   (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT)       -- [assumed] the syscall contracts
   (laws : PairingLaws C.e)                                 -- [assumed] the pairing laws
   (hashes : HashesAgree d.crypto)                          -- [assumed] the hashes are the spec's
-  (solana : SolanaFacts d rent tx)               -- [assumed] Solana runtime facts
+  (solana : SolanaFacts d tx)               -- [assumed] Solana runtime facts
   (crypto : CryptoFacts d proof)                           -- [assumed] circuit and SHA-256 facts
   (outside : OutsideSpecDetail d rent s tx a proof)        -- [by design] details the spec omits
   (hgen : Genesis d.programId sGenesis)                    -- [premise] an execution from genesis
   (hrun : Run d sGenesis evs s)                            --   ...that reached `s`
-  (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
-                                                           -- [premise] the code accepts a transact
+  (hstep : Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s')
+                                                           -- [premise] ...then accepted a transact (one more step)
 include deploy C laws hashes solana crypto outside hgen hrun hstep
 
 /-! #### G2. Non-malleability

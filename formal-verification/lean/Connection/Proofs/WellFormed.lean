@@ -622,7 +622,7 @@ theorem wf_run {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State} {evs 
     (hrun : Run d s evs s') (wf : WellFormed d spent s) : WellFormed d (spent ∪ runSpent evs) s' := by
   induction hrun generalizing spent with
   | nil => simpa [runSpent] using wf
-  | program hstep _ ih =>
+  | program hstep _ _ ih =>
     have := ih (wf_step hpc hzc wf hstep)
     simpa [runSpent, Finset.union_assoc] using this
   | env henv _ ih =>

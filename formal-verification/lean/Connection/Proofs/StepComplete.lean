@@ -560,7 +560,7 @@ theorem step_accepts_of_spec
   -- the signer is not a nullifier account: a PDA does not sign
   have hs0 : a.signer ≠ a.nullifier0 := fun e => reach.solana.pdasDoNotSign _ (by rw [← hA.nullifier0, ← e]; exact hsigned)
   have hs1 : a.signer ≠ a.nullifier1 := fun e => reach.solana.pdasDoNotSign _ (by rw [← hA.nullifier1, ← e]; exact hsigned)
-  exact execTransact_complete C laws assume wf reach.solana.nullifierRentPositive
+  exact execTransact_complete C laws assume wf (reach.rentPositive rent reach.rentFixed _)
     (reach.valid hsigned) reach.rentFixed owner hs0 hs1 notL1 notA0 reach.signerCredit pre
 
 end

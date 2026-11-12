@@ -72,6 +72,12 @@ def toyS0 : State := fun k =>
 
 def toyTx : TxEnv := { signers := [pk 1#u8], minimumBalance := some (fun _ => 1#u64) }
 
+/-- The toy transaction's rent is positive (core-model's `Run` requires it). -/
+theorem toyTx_rentPositive : toyTx.RentPositive := by
+  intro mb h n
+  simp only [toyTx, Option.some.injEq] at h
+  subst h; show 0 < (1#u64 : U64).val; decide
+
 def toyInitA : InitializeAccounts :=
   { treeAccount := toyD.pda merkleTreeSeeds, treeTokenAccount := toyD.pda treeTokenSeeds,
     globalConfig := toyD.pda globalConfigSeeds, authority := pk 1#u8, systemProgram := systemProgram }
@@ -668,7 +674,7 @@ theorem toy_execution :
       step toyD toyS0 toyTx (.initialize toyInitA) = .ok (s, []) ∧
       Genesis toyD.programId toyS0 ∧ toyD.programId ≠ systemProgram ∧
       step toyD s toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) = .ok (s', events) ∧
-      HashesAgree toyD.crypto ∧ SolanaFacts toyD toyRent toyTx ∧ CryptoFacts toyD depProof ∧
+      HashesAgree toyD.crypto ∧ SolanaFacts toyD toyTx ∧ CryptoFacts toyD depProof ∧
       OutsideSpecDetail toyD toyRent s toyTx depA depProof := by
   obtain ⟨s₁, tree, token, config, hinit, hT, hK, hC, hP, hO, hshape, hroots, hsubs, hT0, hTn, hTb, hTm,
     hkb, hcb, hdr, hwr, hmr⟩ := toy_init_ok
@@ -682,7 +688,7 @@ theorem toy_execution :
   have p1 : pk 3#u8 ≠ pk 1#u8 := pk_ne (by decide)
   have p2 : pk 4#u8 ≠ pk 1#u8 := pk_ne (by decide)
   refine ⟨s₁, s', events, hinitStep, toyGenesis, by unfold toyD; decide +kernel, hstep, toyHashesAgree,
-    ⟨by simp [toyRent], ?_⟩, ⟨?_, ?_⟩, ⟨rfl, ?_, ?_⟩⟩
+    ⟨?_⟩, ⟨?_, ?_⟩, ⟨rfl, ?_, ?_⟩⟩
   · intro seeds h
     have e : toyCPA (toyD.pdaInput seeds) = pk 1#u8 := List.mem_singleton.mp h
     have := congrArg (fun p : Pubkey => p.val[0]!) e

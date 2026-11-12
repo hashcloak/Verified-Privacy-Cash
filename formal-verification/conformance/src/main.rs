@@ -542,6 +542,10 @@ struct Fixture {
     fee: String,
     encrypted_output1: String,
     encrypted_output2: String,
+    /// The ext data's recipient and fee recipient (hex), when not the
+    /// harness's fixed ones.
+    recipient: Option<String>,
+    fee_recipient: Option<String>,
 }
 
 fn unhex(s: &str) -> Vec<u8> {
@@ -577,8 +581,8 @@ fn tx(a: &Addrs, name: &str) -> Tx {
         n3: pda(&[b"nullifier1", &n0]).0,
         token: a.token,
         config: a.config,
-        recipient: a.recipient,
-        fee_recipient: a.fee_recipient,
+        recipient: f.recipient.as_deref().map_or(a.recipient, key_of_hex),
+        fee_recipient: f.fee_recipient.as_deref().map_or(a.fee_recipient, key_of_hex),
         signer: a.user,
         system: SYSTEM_PROGRAM,
         signs: true,
@@ -588,6 +592,10 @@ fn tx(a: &Addrs, name: &str) -> Tx {
         out1: unhex(&f.encrypted_output1),
         out2: unhex(&f.encrypted_output2),
     }
+}
+
+fn key_of_hex(s: &str) -> Pubkey {
+    Pubkey::new_from_array(unhex(s).try_into().expect("a 32-byte key"))
 }
 
 fn tx_ix(a: &Addrs, name: &str) -> Ix {
@@ -684,6 +692,21 @@ fn funded_initialized(w: &mut World, a: &Addrs) {
     w.fund(&a.user, 10 * SOL);
 }
 
+/// Sets the pool's (tree token account's) lamports.
+fn set_pool(w: &mut World, a: &Addrs, lamports: u64) {
+    let mut acc = w.svm.get_account(&a.token).unwrap();
+    acc.lamports = lamports;
+    w.svm.set_account(a.token, acc).unwrap();
+}
+
+/// Rewrites fields of the stored tree.
+fn edit_tree(w: &mut World, a: &Addrs, f: impl FnOnce(&mut Tree)) {
+    let (lamports, mut d) = read(w, &a.tree);
+    let Data::Tree(t) = &mut d else { panic!("no tree") };
+    f(t);
+    put(w, a.tree, program_id(), &d, lamports);
+}
+
 fn transact_scenarios() -> Vec<Scenario> {
     vec![
         // the protocol's paths
@@ -738,6 +761,72 @@ fn transact_scenarios() -> Vec<Scenario> {
         }),
         s("transact: config passed as the tree", funded_initialized, |a| with(a, "deposit", |t| t.tree = a.config)),
         s("transact: tree passed as the pool", funded_initialized, |a| with(a, "deposit", |t| t.token = a.tree)),
+        // the deposit limit, at the boundary
+        s(
+            "transact: deposit at exactly the limit",
+            |w, a| {
+                funded_initialized(w, a);
+                w.send(&Ix::UpdateDepositLimit { tree: a.tree, authority: a.admin, signs: true, new_limit: 1_000_000 })
+                    .expect("setup limit");
+            },
+            |a| tx_ix(a, "deposit"),
+        ),
+        // deposit fees
+        s("transact: deposit with a fee", funded_initialized, |a| tx_ix(a, "deposit_fee")),
+        // The fee needs the pool to hold fee + rent(41) after the deposit. A
+        // rent-exempt pool always does (the deposit exceeds the fee), so only a
+        // pool below the rent-exempt minimum reaches InsufficientFundsForFee,
+        // and the runtime only lets the deposit credit it if that makes it rent
+        // exempt: pool + 1_000_000 lands at fee + rent(41) - 1.
+        s(
+            "transact: pool one lamport short of the deposit fee",
+            |w, a| {
+                funded_initialized(w, a);
+                set_pool(w, a, w.svm.minimum_balance_for_rent_exemption(41) + 5_000 - 1_000_000 - 1);
+            },
+            |a| tx_ix(a, "deposit_fee"),
+        ),
+        // the withdrawal solvency threshold: withdraw + fee + rent(41); the
+        // deposit leaves the pool exactly there (`transact: withdrawal`)
+        s(
+            "transact: pool one lamport short of the withdrawal",
+            |w, a| {
+                deposited(w, a);
+                set_pool(w, a, 1_000_000 + w.svm.minimum_balance_for_rent_exemption(41) - 1);
+            },
+            |a| tx_ix(a, "withdraw"),
+        ),
+        s(
+            "transact: pool between withdraw + fee + rent(0) and + rent(41)",
+            |w, a| {
+                deposited(w, a);
+                let (r0, r41) = (w.svm.minimum_balance_for_rent_exemption(0), w.svm.minimum_balance_for_rent_exemption(41));
+                set_pool(w, a, 1_000_000 + (r0 + r41) / 2);
+            },
+            |a| tx_ix(a, "withdraw"),
+        ),
+        // accounts the instruction pays that alias each other
+        s("transact: withdrawal to the fee recipient", deposited, |a| tx_ix(a, "withdraw_to_fee_recipient")),
+        s("transact: withdrawal to the signer", deposited, |a| tx_ix(a, "withdraw_to_signer")),
+        s("transact: withdrawal to the pool itself", deposited, |a| tx_ix(a, "withdraw_to_pool")),
+        s("transact: withdrawal fee paid to the pool itself", deposited, |a| tx_ix(a, "withdraw_fee_to_pool")),
+        // the tree filling up, and the root history wrapping around
+        s(
+            "transact: deposit with one leaf left (tree full at the second append)",
+            |w, a| {
+                funded_initialized(w, a);
+                edit_tree(w, a, |t| t.next_index = (1 << 26) - 1);
+            },
+            |a| tx_ix(a, "deposit"),
+        ),
+        s(
+            "transact: deposit wrapping the root history",
+            |w, a| {
+                funded_initialized(w, a);
+                edit_tree(w, a, |t| t.root_index = 99);
+            },
+            |a| tx_ix(a, "deposit"),
+        ),
     ]
 }
 

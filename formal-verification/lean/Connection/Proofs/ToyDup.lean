@@ -45,9 +45,9 @@ def TransactConnectionWithoutDistinct : Prop :=
     Genesis d.programId s₀ →
     Run d s₀ evs s →
     DeploymentFacts d →
-    step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events) →
+    Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s' →
     HashesAgree d.crypto →
-    SolanaFacts d rent tx →
+    SolanaFacts d tx →
     PdaCollisionFree d.toAddresses
       {d.pdaInput (nullifier0Seeds proof.input_nullifiers.val[0]!),
        d.pdaInput (nullifier1Seeds proof.input_nullifiers.val[1]!)} →
@@ -298,7 +298,7 @@ theorem toy_dup_execution :
   obtain ⟨htree, hsh2, -, hn2, -, -, hb2⟩ := append_ok' toyCrypto toyHashesAgree _ t1 tree₂ p2 hsh1 hap2
   have hrun₂ : Run toyD toyS0 [.program toyTx (.initialize toyInitA) [],
       .program toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) e₂] s₂ :=
-    .program hinitStep (.program hstep₂ (.nil _))
+    .program hinitStep toyTx_rentPositive (.program hstep₂ toyTx_rentPositive (.nil _))
   have hpid : toyD.programId ≠ systemProgram := by unfold toyD; decide +kernel
   have wf₂ := wf_reachable toyGenesis hrun₂ hpid toyHashesAgree
   have hold₂ : HoldsTree toyD.programId s₂ treeA tree₂ := by unfold HoldsTree; rw [hT2]; exact ⟨rfl, rfl⟩
@@ -343,7 +343,8 @@ theorem transact_connection_fails_without_distinct : ¬ TransactConnectionWithou
   obtain ⟨-, -, -, -, -, hpid, -, hashes, solana, -, -⟩ := Toy.toy_execution
   have hspec := h Unit Unit Unit Toy.toyD Toy.toyRent Toy.toyS0
     s₂ s₃ _ Toy.toyTx Toy.dupA Toy.dupProof Toy.dupExt 0#u64 Toy.emptySlice Toy.emptySlice e₃ Toy.toyC
-    Toy.toyLaws Toy.toyGenesis (.program h1 (.program h2 (.nil _))) Toy.toyDeploymentFacts h3 hashes solana hdiff outside
+    Toy.toyLaws Toy.toyGenesis (.program h1 Toy.toyTx_rentPositive (.program h2 Toy.toyTx_rentPositive (.nil _))) Toy.toyDeploymentFacts
+    (.program h3 Toy.toyTx_rentPositive (.nil _)) hashes solana hdiff outside
   unfold SpecTransactHolds at hspec
   obtain ⟨⟨-, -, -, -, -, -, hdistinct, -⟩, -⟩ := hspec
   exact hdistinct rfl

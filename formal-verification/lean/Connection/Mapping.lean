@@ -170,13 +170,14 @@ def runSpent : List Event → Finset LeanSpec.F
   | .env :: es => runSpent es
 
 /-- `ExecutionPath d s evs states s'`: the execution `evs` from `s` to `s'`, with the state after
-    each event (`states`). The same steps as core-model's `Run`, which is a `Prop` and so can't
-    tell a theorem which states it went through. -/
+    each event (`states`). Core-model's `Run` with the states recorded: `Run` is a `Prop` and so
+    can't tell a theorem which states it went through. The steps and their premises are `Run`'s
+    (`execution_path_iff_run`, `ConnectionTheorems.lean`). -/
 inductive ExecutionPath (d : Deployment) : State → List Event → List State → State → Prop where
   | nil (s : State) : ExecutionPath d s [] [] s
   | program {s s' s'' : State} {tx : TxEnv} {ix : Instruction} {emitted : List CommitmentData}
       {events : List Event} {states : List State} :
-      step d s tx ix = .ok (s', emitted) → ExecutionPath d s' events states s'' →
+      step d s tx ix = .ok (s', emitted) → tx.RentPositive → ExecutionPath d s' events states s'' →
         ExecutionPath d s (.program tx ix emitted :: events) (s' :: states) s''
   | env {s s' s'' : State} {events : List Event} {states : List State} :
       EnvStep d.programId s s' → ExecutionPath d s' events states s'' →

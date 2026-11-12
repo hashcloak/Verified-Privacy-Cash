@@ -16,8 +16,8 @@ and should be read differently:
 3. `WellFormed` (INVARIANT, PROVED): facts about the program's own accounts. Proved for
    every state an execution reaches from genesis, so no theorem in
    `ConnectionTheorems.lean` takes it as a hypothesis.
-4. `SolanaFacts` (ASSUMED, about the Solana runtime): the rent is positive, and no
-   program-derived address signs.
+4. `SolanaFacts` (ASSUMED, about the Solana runtime): no program-derived address signs.
+   (Positive rent is part of core-model's `Run`: `TxEnv.RentPositive`.)
 5. `CryptoFacts` (ASSUMED, about the circuit and SHA-256, for this transaction): the circuit
    makes the two nullifiers differ; SHA-256 makes the two new nullifier accounts' addresses
    differ.
@@ -113,13 +113,9 @@ structure WellFormed (d : Deployment) (spent : Finset LeanSpec.F) (s : State) : 
       handler completeness (Poseidon answers only on canonical inputs). -/
   storedSubtrees : ∀ k t, HoldsTree d.programId s k t → ∀ j : Fin 26, Canonical t.subtrees.val[j.val]!
 
-/-- `SolanaFacts d rent tx` (assumed, about the Solana runtime, for this transaction): the
-    nullifier rent is positive, and no program-derived address signs. -/
-structure SolanaFacts (d : Deployment) (rent : Nat → U64) (tx : TxEnv) : Prop where
-  /-- A nullifier account's rent-exempt minimum is not zero (true on Solana). Then creating a
-      nullifier account at an empty address takes lamports from the signer, so the signer is a
-      plain system account and holds no nullifier data. -/
-  nullifierRentPositive : 0 < (rent nullifierAccountSpace).val
+/-- `SolanaFacts d tx` (assumed, about the Solana runtime, for this transaction): no
+    program-derived address signs. (That the rent is positive is part of core-model's `Run`.) -/
+structure SolanaFacts (d : Deployment) (tx : TxEnv) : Prop where
   /-- No program-derived address signs the transaction: a PDA is off the ed25519 curve, so it
       has no private key. So the signer is neither the pool nor a new nullifier account. -/
   pdasDoNotSign : ∀ seeds, d.pda seeds ∉ tx.signers
@@ -352,15 +348,18 @@ structure ReachesProgram (d : Deployment) (rent : Nat → U64) (s : State) (tx :
   nullifiers : NullifierAddressesFree d s proof
   /-- [by design] The transaction sees the rent (as `OutsideSpecDetail.rentFixed`). -/
   rentFixed : tx.minimumBalance = some rent
+  /-- [assumed] The rent is positive, as core-model's `Run` requires of every program step
+      (`TxEnv.RentPositive`). Taken here because the step is the conclusion, not part of a run. -/
+  rentPositive : tx.RentPositive
   /-- [assumed] The Solana facts. -/
-  solana : SolanaFacts d rent tx
+  solana : SolanaFacts d tx
   /-- [limit] The signer's credit fits. -/
   signerCredit : SignerCreditFits d s a (toInputs tx.signers a proof ext fee out1 out2)
 
 /-- `StepAssumptions d rent tx ix`: the assumptions one step of an execution needs: a
     `transact` satisfies the per-transaction assumptions (`SolanaFacts`, `CryptoFacts`). -/
 def StepAssumptions (d : Deployment) (rent : Nat → U64) (tx : TxEnv) : Instruction → Prop
-  | .transact _ proof _ _ _ _ => SolanaFacts d rent tx ∧ CryptoFacts d proof
+  | .transact _ proof _ _ _ _ => SolanaFacts d tx ∧ CryptoFacts d proof
   | _ => True
 
 /-- `StepRentFixed rent tx ix` (by design): `initialize` and `transact` see the rent `rent`, as

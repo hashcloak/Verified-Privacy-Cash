@@ -70,7 +70,7 @@ theorem toy_donation_nonvacuous :
     hshape hroots hsubs hT0 hTn hTb (hTm ▸ default_limit_ge2) hkb hcb hdr hwr hmr
   -- the facts the deposit needs, from the toy deposit after `initialize`
   obtain ⟨-, -, -, -, -, -, -, -, solana, depCrypto, -⟩ := toy_execution
-  refine ⟨toyS0, s₂, _, _, toyGenesis, .program h1 (.env henv (.program h2 (.nil _))), toyDeploymentFacts, toyLaws,
+  refine ⟨toyS0, s₂, _, _, toyGenesis, .program h1 toyTx_rentPositive (.env henv (.program h2 toyTx_rentPositive (.nil _))), toyDeploymentFacts, toyLaws,
     toyHashesAgree, ⟨toy_fixed_addresses, ?_⟩, ⟨?_⟩, by simp, ?_⟩
   · intro pre post s tx ix em hsplit _
     rcases toy_split3 hsplit with hev | hev | hev <;> cases hev

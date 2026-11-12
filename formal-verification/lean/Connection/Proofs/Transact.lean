@@ -338,7 +338,7 @@ theorem transact_refines_core
     (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
     (hashes : HashesAgree d.crypto)
     (wf : WellFormed d spent s)
-    (solana : SolanaFacts d rent tx)
+    (solana : SolanaFacts d tx) (hrentPos : tx.RentPositive)
     (crypto : CryptoFacts d proof)
     (rentFixed : tx.minimumBalance = some rent)
     (hProofValid : d.crypto.proofVerifier.verify proof = ok true →
@@ -370,7 +370,7 @@ theorem transact_refines_core
   have hnf1 : a.nullifier1 = d.pda (nullifier1Seeds n1) := hvalid.nullifier1.1
   have hnf01 : a.nullifier0 ≠ a.nullifier1 := by
     rw [hnf0, hnf1]; exact nullifier0_ne_nullifier1 crypto.nullifierAddressesDiffer
-  have hnr := solana.nullifierRentPositive
+  have hnr : 0 < (rent nullifierAccountSpace).val := hrentPos rent rentFixed _
   set nr := (rent nullifierAccountSpace).val with hnrdef
   -- the two `init`s: the signer tops each nullifier address up (by `top0`, `top1`)
   obtain ⟨sA, hA1, hA2⟩ := Option.bind_eq_some_iff.mp hs₁
@@ -976,7 +976,7 @@ theorem transact_refines
     (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
     (hashes : HashesAgree d.crypto)
     (wf : WellFormed d spent s)
-    (solana : SolanaFacts d rent tx)
+    (solana : SolanaFacts d tx) (hrentPos : tx.RentPositive)
     (crypto : CryptoFacts d proof)
     (outside : OutsideSpecDetail d rent s tx a proof)
     (hProofValid : d.crypto.proofVerifier.verify proof = ok true →
@@ -986,7 +986,7 @@ theorem transact_refines
     LeanSpec.transact inputs (toWorld d rent spent s) (toWorld d rent spent' s') ∧
       WellFormed d spent' s' := by
   obtain ⟨B, E, htx, -, -, hex, wf'⟩ :=
-    transact_refines_core hstep hashes wf solana crypto outside.rentFixed hProofValid
+    transact_refines_core hstep hashes wf solana hrentPos crypto outside.rentFixed hProofValid
   obtain ⟨rfl, rfl⟩ := hex outside
   refine ⟨?_, wf'⟩
   have h1 := LeanSpec.World.withUpdatedValues_self (toWorld d rent spent s)
@@ -1006,7 +1006,7 @@ theorem transact_refines_between
     (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
     (hashes : HashesAgree d.crypto)
     (wf : WellFormed d spent s)
-    (solana : SolanaFacts d rent tx)
+    (solana : SolanaFacts d tx) (hrentPos : tx.RentPositive)
     (crypto : CryptoFacts d proof)
     (rentFixed : tx.minimumBalance = some rent)
     (hProofValid : d.crypto.proofVerifier.verify proof = ok true →
@@ -1024,7 +1024,7 @@ theorem transact_refines_between
       b₂.config = (toWorld d rent spent' s').state.config ∧
       b₂.balances (toPubkey (poolAddr d)) = publicBalance s' (poolAddr d) := by
   obtain ⟨B, E, htx, hB, hE, -, wf'⟩ :=
-    transact_refines_core hstep hashes wf solana crypto rentFixed hProofValid
+    transact_refines_core hstep hashes wf solana hrentPos crypto rentFixed hProofValid
   refine ⟨_, ⟨?_, .noChange _⟩, _, htx, ⟨?_, .noChange _⟩, wf', rfl, ?_, rfl, ?_⟩
   · show publicBalance s (fromPubkey (toPubkey (poolAddr d))) ≤ B (fromPubkey (toPubkey (poolAddr d)))
     rw [fromPubkey_toPubkey, hB]

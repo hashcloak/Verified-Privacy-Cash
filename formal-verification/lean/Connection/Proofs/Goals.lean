@@ -94,9 +94,9 @@ variable {d : Deployment} {rent : Nat → U64} {s₀ s s' : State} {evs : List E
   {a : TransactAccounts} {proof : zkcash_core.transact.Proof} {extAmount : I64} {fee : U64}
   {out1 out2 : Slice U8} {events : List CommitmentData}
   (hgen : Genesis d.programId s₀) (hrun : Run d s₀ evs s) (hpid : d.programId ≠ systemProgram)
-  (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
+  (hstep : Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s')
   (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
-  (hashes : HashesAgree d.crypto) (solana : SolanaFacts d rent tx)
+  (hashes : HashesAgree d.crypto) (solana : SolanaFacts d tx)
   (crypto : CryptoFacts d proof) (outside : OutsideSpecDetail d rent s tx a proof)
 include hgen hrun hpid hstep C laws hashes solana crypto outside
 

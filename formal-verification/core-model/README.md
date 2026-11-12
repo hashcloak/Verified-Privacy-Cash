@@ -40,14 +40,14 @@ planting bugs.
 | `Model/IdlCheck.lean` (theorems) | each instruction's accounts: order, signers, fixed addresses, PDA seeds, `has_one`; the event's fields | `lake build` |
 | `Model/InterfaceCheck.lean` (build-time meta-program) | instruction arguments, account data layouts, `Proof`, error codes: read from the model's own definitions | `lake build` |
 | `scripts/check_idl.sh` | the fork's IDL is byte-identical to upstream's; `Model/Idl.lean` is generated from it and current | script |
-| `Tests/Conformance.lean` | **the model's `step` against the compiled program** (mainnet build, in LiteSVM): 209 scenarios: each Anchor check of each admin account, argument boundaries, `init` funding paths, 150 random admin scenarios, and `transact` deposits, withdrawals and double spends with real Groth16 proofs | `lake build`; traces from `scripts/check_conformance.sh` |
+| `Tests/Conformance.lean` (traces: `Tests/ConformanceTraces.lean`, generated) | **the model's `step` against the compiled program** (mainnet build, in LiteSVM): 220 scenarios: each Anchor check of each admin account, argument boundaries, `init` funding paths, 150 random admin scenarios, and `transact` with real Groth16 proofs: deposits (with and without a fee, at the deposit limit), withdrawals, double spends, the solvency thresholds of withdrawals and of deposit fees (including a pool between withdraw + fee + rent(0) and + rent(41)), recipients that alias the fee recipient, the signer or the pool, a full tree and a wrapping root history. This is the only check of the handler's wiring (which accounts `transact` is given, in which order): the model's `step` writes that call by hand | `lake build`; traces from `scripts/check_conformance.sh` |
 | `Tests/FieldVectors.lean`, `Tests/Bn254Vectors.lean` | the field (`ZMod r`) and G1 negation against arkworks, on edge-case and random inputs | `lake build`; vectors from `scripts/check_vectors.sh` |
 | `Tests/G1DecodeVectors.lean` | how the syscalls read a G1 point (`syscallDecodeG1`) against solana-bn254 | same |
 | `scripts/check_vk_circuit.sh` | the program's verifying key is the key of the circuit's proving key (`artifacts/circuits/transaction2.zkey`), byte for byte | script (snarkjs) |
 | `Tests/AccountSpaces.lean` | the account sizes used for rent against `8 + size_of::<T>()` | same |
 | `Tests/Executable.lean` | the model runs (toy deployment) | `lake build` |
 | `Tests/Axioms.lean` | no theorem relies on an axiom beyond Lean's standard three | `lake build` |
-| the fork's Rust tests | `zkcash_core` against upstream's code, copied verbatim as oracles (differential property tests), the verifying key, `zero_bytes` | `cargo test -p zkcash -p zkcash_core` |
+| the fork's Rust tests | `zkcash_core` against upstream's code, copied verbatim as oracles (differential property tests, including the withdrawal-solvency and deposit-limit thresholds), the program's `SolTransactRuntime` over hand-built accounts (which account each lamport read and write uses; rent measured on the tree token account), the verifying key, `zero_bytes`. They do not run the `transact` handler itself, so its argument wiring is covered by the conformance traces only | `cargo test -p zkcash -p zkcash_core` |
 
 CI (`.github/workflows/formal-verification.yml`) runs all of the above.
 Re-extraction (`scripts/extract.sh`, then `git diff PrivacyCash/Extracted`)
@@ -67,6 +67,19 @@ rent-exemption rule for changed accounts, compute or transaction-size limits,
 or the runtime's "only the owner may debit" rule. That is sound for safety
 properties (anything Solana allows, the model allows) but not for liveness ones.
 Which Anchor check rejects an account is not modelled (`.accounts`).
+
+**Positive rent.** Solana deletes accounts left with 0 lamports; the model
+keeps them. The two agree when the rent-exempt minimum is positive, so a run's
+program steps must have positive rent (`TxEnv.RentPositive` in `Run`), as on
+every Solana cluster. The program's accounts are always rent-exempt (`init`
+funds each with its rent-exempt minimum, at least 1 lamport; the pool always
+keeps at least the minimum; nothing else debits them), so with positive rent
+they never reach 0 lamports, and the only accounts a step can leave at 0 are
+system-owned accounts with no data, which are what deletion would leave
+anyway. Accounts below their rent-exempt minimum but above 0 are not deleted
+(rent collection is disabled on mainnet), so they need no special treatment. Without it, the model would keep a
+0-lamport nullifier account that Solana deletes, re-opening its note
+(`Model/Execution.lean`).
 
 **Cryptography** (hypotheses a theorem takes, never axioms; see
 `Model/Crypto.lean`, `Model/Bn254.lean`, `Model/Pda.lean`):

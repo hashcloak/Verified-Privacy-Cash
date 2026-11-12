@@ -13,8 +13,9 @@ invariant is a hypothesis: `WellFormed` is proved for every reachable state.
 
 | Theorem | Says | Hypotheses (kind) |
 |---|---|---|
-| `transact_connection` | every `transact` the code accepts satisfies the spec's `transact` (all preconditions, exact effects) | execution, step (premise); `DeploymentFacts`, `HashesAgree`, `SolanaFacts`, `CryptoFacts`, syscall contracts, `PairingLaws` (asm); `OutsideSpecDetail` (design) |
+| `transact_connection` | every `transact` the code accepts satisfies the spec's `transact` (all preconditions, exact effects) | execution, then the transaction as one more step (core-model `Run`) (premise); `DeploymentFacts`, `HashesAgree`, `SolanaFacts`, `CryptoFacts`, syscall contracts, `PairingLaws` (asm); `OutsideSpecDetail` (design) |
 | `run_connection` | every execution is a run of the spec (`IsSpecRun`), or has not initialized the pool | execution (premise); `DeploymentFacts`, `HashesAgree`, syscall contracts, `PairingLaws` (asm); `ExecutionAssumptions` (asm); `ExecutionOutsideSpecDetail`: rent fixed (design) |
+| `execution_path_iff_run` | `ExecutionPath` (which `run_connection` takes) has exactly the executions of core-model's `Run` | none |
 | `handler_complete_except_L1_A0` | completeness at the handler: every transaction the spec allows, the handler accepts with the spec's effects | `HandlerContext`, `HandlerSpecAllows` (premise); `CompletenessAssumptions`, syscall contracts, `PairingLaws` (asm); not L1, not A0 (finding) |
 | `spendsAreGenuine_code`, `noDoubleSpend_code`, `poolBacksNotes_code`, `onlyOwnerSpends_code`, `onlyAuthoritiesChangeConfig_code`, `adminPowersLimited_code` | G1a, G1b, G1c, G1d, G5a, G5b (the spec's named properties) hold of the execution's run | as `run_connection`; initialized (premise) |
 | `samePayout_code`, `onlySignersPay_code`, `exactPayouts_code` | G2a, G4a, G4b hold of every transaction the code accepts | as `transact_connection` |
@@ -28,7 +29,7 @@ invariant is a hypothesis: `WellFormed` is proved for every reachable state.
 | `transact_connection_nonvacuous` | every hypothesis of `transact_connection` (so of G2a, G4a, G4b for the code) holds for an accepted deposit and an accepted withdrawal in one toy deployment | none |
 
 `ReachesProgram`: `AccountsCorrect` (owner); `ProgramAccountsInPlace`, `NullifierAddressesFree`,
-`SolanaFacts` (asm); rent fixed (design); `SignerCreditFits` (limit).
+`SolanaFacts`, positive rent (`TxEnv.RentPositive`, as core-model's `Run`) (asm); rent fixed (design); `SignerCreditFits` (limit).
 
 Not carried over: G2b (about circuit witnesses only). The build has no `sorry`. Axioms are machine-checked for the spec only (`Spec/Axioms.lean`); for the connection, check with `#print axioms` (`REVIEWING.md`).
 
@@ -52,7 +53,7 @@ What each says is in its docstring in `Hypotheses.lean`.
 
 - `DeploymentFacts`: the program is not the System Program, so an account the program owns is never mistaken for a free one.
 - `HashesAgree`: the deployment's hashes are the spec's.
-- `SolanaFacts`: facts about the Solana runtime, per transaction.
+- `SolanaFacts`: no program-derived address signs, per transaction. (Positive rent is part of core-model's `Run`.)
 - `CryptoFacts`: circuit and SHA-256 facts, per transaction (includes I1).
 - `ExecutionAssumptions` (`run_connection`): `SolanaFacts` and `CryptoFacts` for every `transact`; the fixed addresses differ.
 - `CompletenessAssumptions` (`handler_complete_except_L1_A0`, G3a, G3b): the hashes and syscalls return a value on valid input; `usize` is 64 bits (SOLANA FACT, unprovable in Lean).

@@ -77,7 +77,8 @@ variable {G1 G2 GT : Type} [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGrou
 ### 1a. Soundness: what the code accepts, the spec allows -/
 
 /-- **Every `transact` the code accepts satisfies the spec's `transact`.** In any execution of
-    the code model from genesis, if `step` accepts a `transact`, then between the worlds before
+    the code model from genesis, if the execution's next step is an accepted `transact` (a
+    one-step `Run`: `step` accepts it, with core-model's positive rent), then between the worlds before
     and after (mapped by `toWorld`) the spec's `transact` holds for the mapped transaction
     (`toInputs`): every spec precondition held, the proof check included, and the new world is
     exactly the spec's `transactEffects`. The spec's nullifier set is taken from the
@@ -91,13 +92,13 @@ theorem transact_connection
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT)     -- [assumed] the syscall contracts
     (laws : PairingLaws C.e)                               -- [assumed] the pairing laws
     (hashes : HashesAgree d.crypto)                        -- [assumed] the hashes are the spec's
-    (solana : SolanaFacts d rent tx)             -- [assumed] Solana runtime facts
+    (solana : SolanaFacts d tx)                            -- [assumed] Solana runtime facts
     (crypto : CryptoFacts d proof)                         -- [assumed] circuit and SHA-256 facts
     (outside : OutsideSpecDetail d rent s tx a proof)      -- [by design] details the spec omits
     (hgen : Genesis d.programId sGenesis)                  -- [premise] an execution from genesis
     (hrun : Run d sGenesis evs s)                          --   ...that reached `s`
-    (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events)) :
-                                                           -- [premise] the code accepts a transact
+    (hstep : Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s') :
+                                                           -- [premise] ...then accepted a transact (one more step)
     letI : LeanSpec.Groups := syscallGroups C
     letI : LeanSpec.Pairing := syscallPairing C
     letI : LeanSpec.Deployment := ⟨programKey C⟩
@@ -105,6 +106,13 @@ theorem transact_connection
     LeanSpec.transact inputs (toWorld d rent (runSpent evs) s)
       (toWorld d rent (runSpent evs ∪ {inputs.k0, inputs.k1}) s') :=
   transact_connection_pf hgen hrun deploy.programNotSystem hstep C laws hashes solana crypto outside
+
+/-- **An execution path is core-model's execution, with its states.** `ExecutionPath`
+    (`Mapping.lean`), which `run_connection` takes, has exactly the executions of core-model's
+    `Run`. -/
+theorem execution_path_iff_run {d : Deployment} {s s' : State} {evs : List Event} :
+    (∃ states, ExecutionPath d s evs states s') ↔ Run d s evs s' :=
+  ⟨fun ⟨_, h⟩ => h.toRun, Run.toExecutionPath⟩
 
 /-- **Every execution of the code model is a run of the spec.** Either the pool has not been
     initialized (and no transaction was accepted), or the final state is the end of a spec run
@@ -303,14 +311,14 @@ theorem transact_connection_nonvacuous :
           (events : List CommitmentData),
         Run d sGenesis evs s ∧ step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events)
         ∧ extAmount.val > 0
-        ∧ SolanaFacts d rent tx ∧ CryptoFacts d proof ∧ OutsideSpecDetail d rent s tx a proof)
+        ∧ SolanaFacts d tx ∧ CryptoFacts d proof ∧ OutsideSpecDetail d rent s tx a proof)
       -- and a withdrawal the code accepts, with the per-transaction hypotheses
       ∧ (∃ (evs : List Event) (s s' : State) (tx : TxEnv) (a : TransactAccounts)
           (proof : zkcash_core.transact.Proof) (extAmount : I64) (fee : U64) (out1 out2 : Slice U8)
           (events : List CommitmentData),
         Run d sGenesis evs s ∧ step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events)
         ∧ extAmount.val < 0
-        ∧ SolanaFacts d rent tx ∧ CryptoFacts d proof ∧ OutsideSpecDetail d rent s tx a proof) :=
+        ∧ SolanaFacts d tx ∧ CryptoFacts d proof ∧ OutsideSpecDetail d rent s tx a proof) :=
   Toy.toy_transact_nonvacuous
 
 /-- **`handler_complete_except_L1_A0` is not vacuous**: in the toy deployment, a deposit of 1

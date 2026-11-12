@@ -412,7 +412,7 @@ theorem toy_spend_execution {ext : I64} {fee : U64} (hsplit : ToySplit ext fee) 
   -- the tree after the deposit stores canonical roots and subtrees (`WellFormed`)
   have hrun₂ : Run toyD toyS0 [.program toyTx (.initialize toyInitA) [],
       .program toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) e₂] s₂ :=
-    .program hinitStep (.program hstep₂ (.nil _))
+    .program hinitStep toyTx_rentPositive (.program hstep₂ toyTx_rentPositive (.nil _))
   have hpid : toyD.programId ≠ systemProgram := by unfold toyD; decide +kernel
   have wf₂ := wf_reachable toyGenesis hrun₂ hpid toyHashesAgree
   have hold₂ : HoldsTree toyD.programId s₂ treeA tree₂ := by unfold HoldsTree; rw [hT2]; exact ⟨rfl, rfl⟩
@@ -469,20 +469,20 @@ theorem toy_transact_nonvacuous :
       (∃ (evs : List Event) (s s' : State) (tx : TxEnv) (a : TransactAccounts) (proof : transact.Proof)
           (extAmount : I64) (fee : U64) (out1 out2 : Slice U8) (events : List CommitmentData),
         Run d s₀ evs s ∧ step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events) ∧
-        extAmount.val > 0 ∧ SolanaFacts d rent tx ∧ CryptoFacts d proof ∧
+        extAmount.val > 0 ∧ SolanaFacts d tx ∧ CryptoFacts d proof ∧
         OutsideSpecDetail d rent s tx a proof) ∧
       (∃ (evs : List Event) (s s' : State) (tx : TxEnv) (a : TransactAccounts) (proof : transact.Proof)
           (extAmount : I64) (fee : U64) (out1 out2 : Slice U8) (events : List CommitmentData),
         Run d s₀ evs s ∧ step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events) ∧
-        extAmount.val < 0 ∧ SolanaFacts d rent tx ∧ CryptoFacts d proof ∧
+        extAmount.val < 0 ∧ SolanaFacts d tx ∧ CryptoFacts d proof ∧
         OutsideSpecDetail d rent s tx a proof) := by
   obtain ⟨s₁, s₂, s₃, e₂, e₃, h1, h2, h3, -, crypto, outside⟩ := toy_spend_execution toySplit_one
   obtain ⟨s₁', s₂', e₂', h1', -, hpid, h2', -, solana, depCrypto, depOutside⟩ := toy_execution
   exact ⟨toyD, toyRent, toyS0, toyC, toyLaws, toyGenesis, toyDeploymentFacts, toyHashesAgree,
     ⟨_, s₁', s₂', toyTx, depA, depProof, 2#i64, 0#u64, emptySlice, emptySlice, e₂',
-      .program h1' (.nil _), h2', by simp, solana, depCrypto, depOutside⟩,
+      .program h1' toyTx_rentPositive (.nil _), h2', by simp, solana, depCrypto, depOutside⟩,
     ⟨_, s₂, s₃, toyTx, spendA, spendProof, wdExt, 1#u64, emptySlice, emptySlice, e₃,
-      .program h1 (.program h2 (.nil _)), h3, by rw [wdExt_val]; decide, solana, crypto, outside⟩⟩
+      .program h1 toyTx_rentPositive (.program h2 toyTx_rentPositive (.nil _)), h3, by rw [wdExt_val]; decide, solana, crypto, outside⟩⟩
 
 /-- **The hypotheses of `run_connection` and of the goals about runs hold together, with a real
     spend.** The execution `initialize`, deposit, withdrawal satisfies every hypothesis of
@@ -505,8 +505,8 @@ theorem toy_spend_nonvacuous :
   obtain ⟨s₁, s₂, s₃, e₂, e₃, h1, h2, h3, hi₁, crypto, -⟩ := toy_spend_execution toySplit_one
   obtain ⟨-, -, -, -, -, -, -, -, solana, depCrypto, -⟩ := toy_execution
   have hpid : toyD.programId ≠ systemProgram := by unfold toyD; decide +kernel
-  have wf₁ := wf_reachable toyGenesis (.program h1 (.nil _)) hpid toyHashesAgree
-  have wf₂ := wf_reachable toyGenesis (.program h1 (.program h2 (.nil _))) hpid toyHashesAgree
+  have wf₁ := wf_reachable toyGenesis (.program h1 toyTx_rentPositive (.nil _)) hpid toyHashesAgree
+  have wf₂ := wf_reachable toyGenesis (.program h1 toyTx_rentPositive (.program h2 toyTx_rentPositive (.nil _))) hpid toyHashesAgree
   have hi₃ := transact_initialized wf₂ (transact_initialized wf₁ hi₁ h2) h3
   have htxs : runTxs [Event.program toyTx (.initialize toyInitA) [],
       .program toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) e₂,
@@ -514,7 +514,7 @@ theorem toy_spend_nonvacuous :
       [toInputs toyTx.signers depA depProof 2#i64 0#u64 emptySlice emptySlice,
         toInputs toyTx.signers spendA spendProof wdExt 1#u64 emptySlice emptySlice] := by
     simp [runTxs, stepTxs]
-  refine ⟨toyD, toyS0, s₃, _, _, toyC, toyLaws, toyGenesis, .program h1 (.program h2 (.program h3 (.nil _))),
+  refine ⟨toyD, toyS0, s₃, _, _, toyC, toyLaws, toyGenesis, .program h1 toyTx_rentPositive (.program h2 toyTx_rentPositive (.program h3 toyTx_rentPositive (.nil _))),
     toyDeploymentFacts, toyHashesAgree, ⟨toy_fixed_addresses, ?_⟩, ⟨?_⟩, hi₃, by rw [htxs]; rfl,
     fun j => if j = 0 then depWit else spendWit, ?_, ?_, rfl, rfl⟩
   · intro pre post s tx ix em hsplit _
