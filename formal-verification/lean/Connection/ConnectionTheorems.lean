@@ -122,10 +122,10 @@ theorem execution_path_iff_run {d : Deployment} {s s' : State} {evs : List Event
     admin instructions with the signers of their transactions, up to what happened after the last
     transaction. `initialize` gives the start world; each accepted `transact` is a spec
     transaction; outside actions and the admin instructions are changes the spec allows between
-    transactions. By design, the rent is fixed (`ExecutionOutsideSpecDetail`, as
-    `OutsideSpecDetail.rentFixed` for `transact_connection`). The other details `OutsideSpecDetail`
-    rules out need no exclusion here: a pre-funded nullifier address, or a payee that is a
-    nullifier account, is an allowed change before or after the spec transaction. -/
+    transactions. It assumes the code and the spec use the same rent (`SameRent`, for every
+    program instruction; for `transact_connection` it is `OutsideSpecDetail.sameRent`). The other
+    details `OutsideSpecDetail` rules out need no exclusion here: a pre-funded nullifier address,
+    or a payee that is a nullifier account, is an allowed change before or after the spec transaction. -/
 theorem run_connection {d : Deployment} {rent : Nat → U64} {sGenesis s : State} {evs : List Event}
     {states : List State}
     (deploy : DeploymentFacts d)                           -- [assumed] see the structure
@@ -135,8 +135,8 @@ theorem run_connection {d : Deployment} {rent : Nat → U64} {sGenesis s : State
     (assume : ExecutionAssumptions d sGenesis evs)    -- [assumed] every `transact`'s
                                                            --   `SolanaFacts`, `CryptoFacts`;
                                                            --   the fixed addresses differ
-    (outside : ExecutionOutsideSpecDetail d rent sGenesis evs)
-                                                           -- [by design] the rent is fixed
+    (sameRent : ∀ tx ix em, .program tx ix em ∈ evs → SameRent rent tx)
+                                                           -- [assumed] same rent as the spec
     (hgen : Genesis d.programId sGenesis)                  -- [premise] an execution from genesis
     (hrun : ExecutionPath d sGenesis evs states s) :       --   ...that reached `s` through `states`
     (NoProgramAccounts d s ∧ runTxs evs = []) ∨
@@ -144,7 +144,7 @@ theorem run_connection {d : Deployment} {rent : Nat → U64} {sGenesis s : State
        letI : LeanSpec.Pairing := syscallPairing C
        letI : LeanSpec.Deployment := ⟨programKey C⟩
        IsSpecRun d rent sGenesis evs states s) :=
-  execution_is_spec_run_pf hgen hrun deploy.programNotSystem C laws hashes assume outside
+  execution_is_spec_run_pf hgen hrun deploy.programNotSystem C laws hashes assume sameRent
 
 /-! ### 1b. Completeness: what the spec allows, the handler accepts
 
@@ -258,7 +258,7 @@ theorem connection_nonvacuous :
       -- every hypothesis of `run_connection`
       PairingLaws C.e ∧ Genesis d.programId sGenesis ∧ ExecutionPath d sGenesis evs states s
       ∧ DeploymentFacts d ∧ HashesAgree d.crypto ∧ ExecutionAssumptions d sGenesis evs
-      ∧ ExecutionOutsideSpecDetail d Toy.toyRent sGenesis evs
+      ∧ (∀ tx ix em, .program tx ix em ∈ evs → SameRent Toy.toyRent tx)
       -- the pool is initialized, and the execution has two transactions
       ∧ Initialized d s ∧ (runTxs evs).length = 2
       -- with circuit witnesses for both transactions
@@ -287,7 +287,7 @@ theorem donation_nonvacuous :
       Genesis Toy.toyD.programId sGenesis ∧ ExecutionPath Toy.toyD sGenesis evs states s
       ∧ DeploymentFacts Toy.toyD ∧ PairingLaws Toy.toyC.e ∧ HashesAgree Toy.toyD.crypto
       ∧ ExecutionAssumptions Toy.toyD sGenesis evs
-      ∧ ExecutionOutsideSpecDetail Toy.toyD Toy.toyRent sGenesis evs
+      ∧ (∀ tx ix em, .program tx ix em ∈ evs → SameRent Toy.toyRent tx)
       -- the execution contains an outside action
       ∧ Event.env ∈ evs
       -- and every spec run of it counts 1 lamport as donated

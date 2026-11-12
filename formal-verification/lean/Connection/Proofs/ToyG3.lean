@@ -120,16 +120,12 @@ theorem toy_G3_code_nonvacuous (h64 : Usize.max = 2 ^ 64 - 1) :
       cases h
       trivial
     · simp at hsplit
-  have outside₁ : ExecutionOutsideSpecDetail toyD toyRent toyS0
-      [.program toyTx (.initialize toyInitA) []] := by
-    refine ⟨?_⟩
-    intro pre post s tx ix em hsplit _
-    rcases pre with _ | ⟨x, pre⟩
-    · simp only [List.nil_append, List.cons.injEq] at hsplit
-      obtain ⟨h, -⟩ := hsplit
-      cases h
-      rfl
-    · simp at hsplit
+  have outside₁ : ∀ tx ix em, Event.program tx ix em ∈ [Event.program toyTx (.initialize toyInitA) []] →
+      SameRent toyRent tx := by
+    intro tx ix em hm
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
+    cases hm
+    rfl
   have hspec := execution_is_spec_run_pf toyGenesis hpath₁ hpid toyC toyLaws toyHashesAgree assume₁
     outside₁
   rcases hspec with ⟨hno, -⟩ | ⟨params, r₀, -, -, -, -, -, htx₀, -, -, -, -, -, -, b₀, hb₀, -, hw₀⟩
@@ -246,7 +242,7 @@ theorem toy_G3_code_nonvacuous (h64 : Usize.max = 2 ^ 64 - 1) :
       new1 := by rw [← hnf1]; exact hvalid.nullifier1.2
       other0 := by rw [← hnf2]; exact hvalid.nullifier2.2
       other1 := by rw [← hnf3]; exact hvalid.nullifier3.2 }
-    rentFixed := hmb
+    sameRent := hmb
     rentPositive := toyTx_rentPositive
     solana := solana
     signerCredit := hcredit }

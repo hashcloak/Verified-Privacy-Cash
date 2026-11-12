@@ -786,7 +786,7 @@ theorem bridge_step {d : Deployment} {rent : Nat → U64}
     (hinv : BridgeInv d rent C v spent txs s)
     (hpid : d.programId ≠ systemProgram) (hashes : HashesAgree d.crypto)
     (hdist : treeAddr d ≠ poolAddr d ∧ treeAddr d ≠ configAddr d ∧ poolAddr d ≠ configAddr d)
-    (hstepA : StepAssumptions d tx ix) (hrentA : StepRentFixed rent tx ix)
+    (hstepA : StepAssumptions d tx ix) (hrentA : SameRent rent tx)
     (h : step d s tx ix = .ok (s', em)) (hrentPos : tx.RentPositive) :
     BridgeInv d rent C (v.afterEvent d rent s (.program tx ix em) s')
       (spent ∪ stepSpent ix) (txs ++ stepTxs tx ix) s' := by
@@ -914,7 +914,7 @@ theorem bridge_run {d : Deployment} {rent : Nat → U64}
     {C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT} {laws : PairingLaws C.e} {s₀ : State}
     {all : List Event} (hpid : d.programId ≠ systemProgram)
     (hashes : HashesAgree d.crypto) (assume : ExecutionAssumptions d s₀ all)
-    (outside : ExecutionOutsideSpecDetail d rent s₀ all) :
+    (sameRent : ∀ tx ix em, .program tx ix em ∈ all → SameRent rent tx) :
     ∀ {s s' : State} {evs pre : List Event} {states : List State} {v : ExecutionView}
       {spent : Finset LeanSpec.F} {txs : List LeanSpec.TxInputs},
       all = pre ++ evs → Run d s₀ pre s → BridgeInv d rent C v spent txs s →
@@ -926,7 +926,7 @@ theorem bridge_run {d : Deployment} {rent : Nat → U64}
   | nil => simpa [runSpent, runTxs, ExecutionView.afterEvents] using hinv
   | @program s₁ s₂ s₃ tx ix emitted events states hstep hrentPos hrest ih =>
     have hA := assume.eachStep pre events s₁ tx ix emitted hall hpre
-    have hR := outside.rentFixed pre events s₁ tx ix emitted hall hpre
+    have hR := sameRent tx ix emitted (by rw [hall]; simp)
     have hinv' := bridge_step (laws := laws) hinv hpid hashes (fixed_addresses_differ assume) hA hR hstep hrentPos
     have := ih (pre := pre ++ [.program tx ix emitted]) (by rw [hall]; simp)
       (hpre.append (.program hstep hrentPos (.nil _))) hinv'
@@ -945,7 +945,7 @@ theorem execution_is_spec_run_pf {d : Deployment} {rent : Nat → U64} {s₀ s :
     (hpid : d.programId ≠ systemProgram)
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
     (hashes : HashesAgree d.crypto) (assume : ExecutionAssumptions d s₀ evs)
-    (outside : ExecutionOutsideSpecDetail d rent s₀ evs) :
+    (sameRent : ∀ tx ix em, .program tx ix em ∈ evs → SameRent rent tx) :
     (NoProgramAccounts d s ∧ runTxs evs = []) ∨
       (letI : LeanSpec.Groups := syscallGroups C
        letI : LeanSpec.Pairing := syscallPairing C
@@ -953,7 +953,7 @@ theorem execution_is_spec_run_pf {d : Deployment} {rent : Nat → U64} {s₀ s :
        IsSpecRun d rent s₀ evs states s) := by
   have h0 : BridgeInv d rent C {} ∅ [] s₀ :=
     ⟨wf_genesis hgen hpid, rfl, Or.inl ⟨genesis_noProgramAccounts hgen, rfl, rfl, rfl⟩⟩
-  have := bridge_run (C := C) (laws := laws) hpid hashes assume outside (pre := []) (by simp) (.nil _) h0 hrun
+  have := bridge_run (C := C) (laws := laws) hpid hashes assume sameRent (pre := []) (by simp) (.nil _) h0 hrun
   simp only [Finset.empty_union, List.nil_append] at this
   rcases this.2.2 with ⟨hn, ht, -⟩ | ⟨-, hr⟩
   · exact Or.inl ⟨hn, ht⟩
@@ -973,12 +973,12 @@ theorem code_spec_run {d : Deployment} {rent : Nat → U64} {s₀ s : State} {ev
     (hpid : d.programId ≠ systemProgram)
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
     (hashes : HashesAgree d.crypto) (assume : ExecutionAssumptions d s₀ evs)
-    (outside : ExecutionOutsideSpecDetail d rent s₀ evs) (hi : Initialized d s) :
+    (sameRent : ∀ tx ix em, .program tx ix em ∈ evs → SameRent rent tx) (hi : Initialized d s) :
     letI : LeanSpec.Groups := syscallGroups C
     letI : LeanSpec.Pairing := syscallPairing C
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     IsSpecRun d rent s₀ evs states s := by
-  rcases execution_is_spec_run_pf hgen hrun hpid C laws hashes assume outside with ⟨hn, -⟩ | hr
+  rcases execution_is_spec_run_pf hgen hrun hpid C laws hashes assume sameRent with ⟨hn, -⟩ | hr
   · obtain ⟨⟨t, ht⟩, -, -⟩ := hi; exact (hn.1 _ _ ht).elim
   · exact hr
 
@@ -989,7 +989,7 @@ theorem run_satisfies {d : Deployment} {rent : Nat → U64} {s₀ s : State} {ev
     (hpid : d.programId ≠ systemProgram)
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
     (hashes : HashesAgree d.crypto) (assume : ExecutionAssumptions d s₀ evs)
-    (outside : ExecutionOutsideSpecDetail d rent s₀ evs) (hi : Initialized d s) :
+    (sameRent : ∀ tx ix em, .program tx ix em ∈ evs → SameRent rent tx) (hi : Initialized d s) :
     letI : LeanSpec.Groups := syscallGroups C
     letI : LeanSpec.Pairing := syscallPairing C
     letI : LeanSpec.Deployment := ⟨programKey C⟩
@@ -1001,7 +1001,7 @@ theorem run_satisfies {d : Deployment} {rent : Nat → U64} {s₀ s : State} {ev
   letI : LeanSpec.Pairing := syscallPairing C
   letI : LeanSpec.Deployment := ⟨programKey C⟩
   intro P hP
-  obtain ⟨params, r, h⟩ := code_spec_run hgen hrun hpid C laws hashes assume outside hi
+  obtain ⟨params, r, h⟩ := code_spec_run hgen hrun hpid C laws hashes assume sameRent hi
   exact ⟨params, r, h, hP params r⟩
 
 /-- The per-transaction connection, for a `transact` in an execution from genesis. -/

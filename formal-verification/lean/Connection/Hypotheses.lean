@@ -13,18 +13,20 @@ REVIEW SURFACE. Besides "the code model accepted the transaction", the connectio
    Poseidon and SHA-256 wherever the code returns a hash; the code's zero hashes are the spec's
    `Z` (computed from `H2`); Poseidon's outputs and the zero hashes are canonical bytes (below
    the field modulus).
-2. `OutsideSpecDetail` (BY DESIGN): Solana details the spec deliberately does not model, as
+2. `SameRent` (ASSUMED, links the models): the code and the spec use the same rent.
+   `run_connection` takes it for every program instruction of the execution.
+3. `OutsideSpecDetail` (BY DESIGN): Solana details the spec deliberately does not model, as
    it is written at the level of the documentation. Each field rules one out;
    `transact_connection` does not cover transactions where such a detail matters. Not a
-   defect of the code or the spec. `run_connection` takes only its rent part
-   (`ExecutionOutsideSpecDetail`): there the other details are changes the spec allows between
-   transactions.
-3. For handler completeness only: `HandlerContext` (invariants and a premise at the handler's
+   defect of the code or the spec. It also carries `SameRent` for the transaction.
+   `run_connection` does not take it: there the other details are changes the spec allows
+   between transactions.
+4. For handler completeness only: `HandlerContext` (invariants and a premise at the handler's
    start).
-4. For G3a and G3b for the code only: `ReachesProgram`, bundling `AccountsCorrect` (the owner's
+5. For G3a and G3b for the code only: `ReachesProgram`, bundling `AccountsCorrect` (the owner's
    choice), the code-model assumptions `ProgramAccountsInPlace`, `NullifierAddressesFree`,
-   positive rent and `SolanaFacts`, the rent being fixed (by design), and `SignerCreditFits`
-   (a limit).
+   positive rent and `SolanaFacts`, the same rent on both sides (`SameRent`, assumed), and
+   `SignerCreditFits` (a limit).
 
 No code/spec difference is currently excluded by `transact_connection` or `run_connection`. G3a
 for the code excludes L1 and A0 by name, and G3b A0: see `Findings.lean`.
@@ -60,13 +62,18 @@ structure HashesAgree (c : Crypto) : Prop where
       (checked by the fork's `zero_bytes_are_empty_subtree_roots` test), and entry 0 is zero. -/
   zeroBytesCanonical : ∃ z, c.hasher.zero_bytes = ok z ∧ ∀ i, i ≤ 26 → Canonical (z.val[i]!)
 
-/-- `OutsideSpecDetail d rent s tx a proof` (by design): Solana details the spec deliberately
+/-- `SameRent rent tx` (assumed): the code and the spec use the same rent. The spec takes its
+    two rent amounts as given (`toWorld` reads them from `rent`); the code reads them from
+    Solana's `Rent` sysvar (`tx.minimumBalance`). Assumed equal. Ruled out: a transaction that
+    sees a different rent, or none. -/
+def SameRent (rent : Nat → U64) (tx : TxEnv) : Prop := tx.minimumBalance = some rent
+
+/-- `OutsideSpecDetail d rent s tx a proof` (by design): Solana details the Lean Spec
     does not model. Each field rules one out; transactions where it matters are not covered. -/
 structure OutsideSpecDetail (d : Deployment) (rent : Nat → U64) (s : State) (tx : TxEnv)
     (a : TransactAccounts) (proof : zkcash_core.transact.Proof) : Prop where
-  /-- The rent is fixed. The spec fixes the two rent amounts; the code reads Solana's `Rent`
-      sysvar each time. Ruled out: the transaction sees a different rent rate. -/
-  rentFixed : tx.minimumBalance = some rent
+  /-- The code and the spec use the same rent (`SameRent`). -/
+  sameRent : SameRent rent tx
   /-- Pre-funded nullifier addresses. Anyone can send lamports to the address of a nullifier
       account before it exists; Anchor then only tops it up, so the signer pays less than the
       spec's `2 * nullifierRent`. Ruled out: both addresses hold nothing beforehand. -/
@@ -82,22 +89,6 @@ structure OutsideSpecDetail (d : Deployment) (rent : Nat → U64) (s : State) (t
     a.recipient ≠ d.pda (nullifier1Seeds proof.input_nullifiers.val[1]!) ∧
     a.feeRecipientAccount ≠ d.pda (nullifier0Seeds proof.input_nullifiers.val[0]!) ∧
     a.feeRecipientAccount ≠ d.pda (nullifier1Seeds proof.input_nullifiers.val[1]!)
-
-/-- `StepRentFixed rent tx ix` (by design): `initialize` and `transact` see the rent `rent`, as
-    `OutsideSpecDetail.rentFixed`. -/
-def StepRentFixed (rent : Nat → U64) (tx : TxEnv) : Instruction → Prop
-  | .initialize _ => tx.minimumBalance = some rent
-  | .transact .. => tx.minimumBalance = some rent
-  | _ => True
-
-/-- `ExecutionOutsideSpecDetail d rent sGenesis evs` (by design, used by `run_connection`): the Solana
-    detail the spec deliberately does not model, for a whole execution. -/
-structure ExecutionOutsideSpecDetail (d : Deployment) (rent : Nat → U64) (sGenesis : State)
-    (evs : List Event) : Prop where
-  /-- The rent is fixed, as `OutsideSpecDetail.rentFixed`: every `initialize` and `transact` of
-      the execution sees the rent `rent`. Ruled out: an execution in which the rent changes. -/
-  rentFixed : ∀ pre post s tx ix em, evs = pre ++ .program tx ix em :: post → Run d sGenesis pre s →
-    StepRentFixed rent tx ix
 
 /-! ## For handler completeness only -/
 
@@ -170,8 +161,8 @@ structure ReachesProgram (d : Deployment) (rent : Nat → U64) (s : State) (tx :
   program : ProgramAccountsInPlace d s tree tt config
   /-- [assumed] Anchor's constraints on the nullifier addresses hold. -/
   nullifiers : NullifierAddressesFree d s proof
-  /-- [by design] The transaction sees the rent (as `OutsideSpecDetail.rentFixed`). -/
-  rentFixed : tx.minimumBalance = some rent
+  /-- [assumed] The code and the spec use the same rent (`SameRent`). -/
+  sameRent : SameRent rent tx
   /-- [assumed] The rent is positive, as core-model's `Run` requires of every program step
       (`TxEnv.RentPositive`). Taken here because the step is the conclusion, not part of a run. -/
   rentPositive : tx.RentPositive

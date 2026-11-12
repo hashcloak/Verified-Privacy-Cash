@@ -61,7 +61,7 @@ theorem toy_admin_change_nonvacuous :
     ∃ (s₀ s : State) (evs : List Event) (states : List State),
       Genesis toyD.programId s₀ ∧ ExecutionPath toyD s₀ evs states s ∧ DeploymentFacts toyD ∧
       PairingLaws toyC.e ∧ HashesAgree toyD.crypto ∧ ExecutionAssumptions toyD s₀ evs ∧
-      ExecutionOutsideSpecDetail toyD toyRent s₀ evs ∧ Initialized toyD s ∧
+      (∀ tx ix em, .program tx ix em ∈ evs → SameRent toyRent tx) ∧ Initialized toyD s ∧
       ∀ params r, IsRunOf toyD toyRent s₀ evs states s params r → r.adminChangesUpTo r.txs.length ≠ [] := by
   obtain ⟨s₁, tree, token, config, hinit, hT, hK, hC, hP, hO, hshape, hroots, hsubs, hT0, hTn, hTb, -,
     hkb, hcb, hdr, hwr, hmr⟩ := toy_init_ok
@@ -96,17 +96,15 @@ theorem toy_admin_change_nonvacuous :
   have hi₃ := transact_initialized wf₂ hi₂ h3
   refine ⟨toyS0, s₃, _, _, toyGenesis,
     .program h1 toyTx_rentPositive (.program h2 toyTx_rentPositive (.program h3 toyTx_rentPositive (.nil _))), toyDeploymentFacts, toyLaws, toyHashesAgree,
-    ⟨toy_fixed_addresses, ?_⟩, ⟨?_⟩, hi₃, ?_⟩
+    ⟨toy_fixed_addresses, ?_⟩, ?_, hi₃, ?_⟩
   · intro pre post s tx ix em hsplit _
     rcases toy_split3 hsplit with hev | hev | hev <;> cases hev
     · trivial
     · trivial
     · exact ⟨solana, depCrypto⟩
-  · intro pre post s tx ix em hsplit _
-    rcases toy_split3 hsplit with hev | hev | hev <;> cases hev
-    · rfl
-    · trivial
-    · rfl
+  · intro tx ix em hm
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
+    rcases hm with h | h | h <;> cases h <;> rfl
   · intro params r hr
     obtain ⟨-, -, -, -, -, -, -, -, -, -, hgl, hgaps, -⟩ := hr
     have hv : (executionView toyD toyRent toyS0 [.program toyTx (.initialize toyInitA) [],

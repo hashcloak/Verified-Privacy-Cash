@@ -36,7 +36,7 @@ theorem toy_donation_nonvacuous :
     ∃ (s₀ s : State) (evs : List Event) (states : List State),
       Genesis toyD.programId s₀ ∧ ExecutionPath toyD s₀ evs states s ∧ DeploymentFacts toyD ∧
       PairingLaws toyC.e ∧ HashesAgree toyD.crypto ∧ ExecutionAssumptions toyD s₀ evs ∧
-      ExecutionOutsideSpecDetail toyD toyRent s₀ evs ∧ Event.env ∈ evs ∧
+      (∀ tx ix em, .program tx ix em ∈ evs → SameRent toyRent tx) ∧ Event.env ∈ evs ∧
       ∀ params r, IsRunOf toyD toyRent s₀ evs states s params r → r.donated = 1 := by
   obtain ⟨s₁, tree, token, config, hinit, hT, hK, hC, hP, hO, hshape, hroots, hsubs, hT0, hTn, hTb, hTm,
     hkb, hcb, hdr, hwr, hmr⟩ := toy_init_ok
@@ -71,13 +71,14 @@ theorem toy_donation_nonvacuous :
   -- the facts the deposit needs, from the toy deposit after `initialize`
   obtain ⟨-, -, -, -, -, -, -, -, solana, depCrypto, -⟩ := toy_execution
   refine ⟨toyS0, s₂, _, _, toyGenesis, .program h1 toyTx_rentPositive (.env henv (.program h2 toyTx_rentPositive (.nil _))), toyDeploymentFacts, toyLaws,
-    toyHashesAgree, ⟨toy_fixed_addresses, ?_⟩, ⟨?_⟩, by simp, ?_⟩
+    toyHashesAgree, ⟨toy_fixed_addresses, ?_⟩, ?_, by simp, ?_⟩
   · intro pre post s tx ix em hsplit _
     rcases toy_split3 hsplit with hev | hev | hev <;> cases hev
     · trivial
     · exact ⟨solana, depCrypto⟩
-  · intro pre post s tx ix em hsplit _
-    rcases toy_split3 hsplit with hev | hev | hev <;> cases hev <;> rfl
+  · intro tx ix em hm
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
+    rcases hm with h | h | h <;> cases h <;> rfl
   · intro params r hr
     obtain ⟨hpool, hrent, -, -, -, -, hpl, hpb, -⟩ := hr
     -- the spec sees the pool's balance before the deposit: 2 lamports

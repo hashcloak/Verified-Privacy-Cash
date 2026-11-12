@@ -496,7 +496,7 @@ theorem toy_spend_nonvacuous :
       PairingLaws C.e ∧ Genesis d.programId s₀ ∧ ExecutionPath d s₀ evs states s ∧
       DeploymentFacts d ∧
       HashesAgree d.crypto ∧ ExecutionAssumptions d s₀ evs ∧
-      ExecutionOutsideSpecDetail d toyRent s₀ evs ∧ Initialized d s ∧
+      (∀ tx ix em, .program tx ix em ∈ evs → SameRent toyRent tx) ∧ Initialized d s ∧
       (runTxs evs).length = 2 ∧
       ∃ wit : ℕ → LeanSpec.Witness,
         (∀ j (h : j < (runTxs evs).length), LeanSpec.RelationS (runTxs evs)[j].pubInputs (wit j)) ∧
@@ -515,15 +515,16 @@ theorem toy_spend_nonvacuous :
         toInputs toyTx.signers spendA spendProof wdExt 1#u64 emptySlice emptySlice] := by
     simp [runTxs, stepTxs]
   refine ⟨toyD, toyS0, s₃, _, _, toyC, toyLaws, toyGenesis, .program h1 toyTx_rentPositive (.program h2 toyTx_rentPositive (.program h3 toyTx_rentPositive (.nil _))),
-    toyDeploymentFacts, toyHashesAgree, ⟨toy_fixed_addresses, ?_⟩, ⟨?_⟩, hi₃, by rw [htxs]; rfl,
+    toyDeploymentFacts, toyHashesAgree, ⟨toy_fixed_addresses, ?_⟩, ?_, hi₃, by rw [htxs]; rfl,
     fun j => if j = 0 then depWit else spendWit, ?_, ?_, rfl, rfl⟩
   · intro pre post s tx ix em hsplit _
     rcases toy_split3 hsplit with hev | hev | hev <;> cases hev
     · trivial
     · exact ⟨solana, depCrypto⟩
     · exact ⟨solana, crypto⟩
-  · intro pre post s tx ix em hsplit _
-    rcases toy_split3 hsplit with hev | hev | hev <;> cases hev <;> rfl
+  · intro tx ix em hm
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
+    rcases hm with h | h | h <;> cases h <;> rfl
   · intro j hj
     rw [List.getElem_of_eq htxs hj]
     have hj2 : j < 2 := by rw [htxs] at hj; simpa using hj

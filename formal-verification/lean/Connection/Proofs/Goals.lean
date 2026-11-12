@@ -19,9 +19,9 @@ variable {d : Deployment} {rent : Nat → U64} {s₀ s : State} {evs : List Even
   (hgen : Genesis d.programId s₀) (hrun : ExecutionPath d s₀ evs states s)
   (hpid : d.programId ≠ systemProgram) (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT)
   (laws : PairingLaws C.e) (hashes : HashesAgree d.crypto)
-  (assume : ExecutionAssumptions d s₀ evs) (outside : ExecutionOutsideSpecDetail d rent s₀ evs)
+  (assume : ExecutionAssumptions d s₀ evs) (sameRent : ∀ tx ix em, .program tx ix em ∈ evs → SameRent rent tx)
   (hi : Initialized d s)
-include hgen hrun hpid C laws hashes assume outside hi
+include hgen hrun hpid C laws hashes assume sameRent hi
 
 theorem spends_are_genuine_pf :
     letI : LeanSpec.Groups := syscallGroups C
@@ -30,7 +30,7 @@ theorem spends_are_genuine_pf :
     ∃ params r, IsRunOf d rent s₀ evs states s params r ∧
       ∀ wit, r.WitnessesFor wit → LeanSpec.Goals.SpendsAreGenuine r wit :=
   letI := syscallGroups C; letI := syscallPairing C; letI : LeanSpec.Deployment := ⟨programKey C⟩
-  run_satisfies hgen hrun hpid C laws hashes assume outside hi _
+  run_satisfies hgen hrun hpid C laws hashes assume sameRent hi _
     fun params r => LeanSpec.Goals.spends_are_genuine params r
 
 theorem no_double_spend_pf :
@@ -40,7 +40,7 @@ theorem no_double_spend_pf :
     ∃ params r, IsRunOf d rent s₀ evs states s params r ∧
       ∀ wit, r.WitnessesFor wit → LeanSpec.Goals.NoDoubleSpend r wit :=
   letI := syscallGroups C; letI := syscallPairing C; letI : LeanSpec.Deployment := ⟨programKey C⟩
-  run_satisfies hgen hrun hpid C laws hashes assume outside hi _
+  run_satisfies hgen hrun hpid C laws hashes assume sameRent hi _
     fun params r => LeanSpec.Goals.no_double_spend params r
 
 theorem pool_backs_notes_pf :
@@ -50,7 +50,7 @@ theorem pool_backs_notes_pf :
     ∃ params r, IsRunOf d rent s₀ evs states s params r ∧
       ∀ wit, r.WitnessesFor wit → LeanSpec.Goals.PoolBacksNotes params r wit :=
   letI := syscallGroups C; letI := syscallPairing C; letI : LeanSpec.Deployment := ⟨programKey C⟩
-  run_satisfies hgen hrun hpid C laws hashes assume outside hi _
+  run_satisfies hgen hrun hpid C laws hashes assume sameRent hi _
     fun params r => LeanSpec.Goals.balance params r
 
 theorem only_owner_spends_pf :
@@ -60,7 +60,7 @@ theorem only_owner_spends_pf :
     ∃ params r, IsRunOf d rent s₀ evs states s params r ∧
       ∀ wit, r.WitnessesFor wit → LeanSpec.Goals.OnlyOwnerSpends r wit :=
   letI := syscallGroups C; letI := syscallPairing C; letI : LeanSpec.Deployment := ⟨programKey C⟩
-  run_satisfies hgen hrun hpid C laws hashes assume outside hi _
+  run_satisfies hgen hrun hpid C laws hashes assume sameRent hi _
     fun params r => LeanSpec.Goals.honest_note_spent_only_with_owner_key params r
 
 theorem only_authorities_change_config_pf :
@@ -70,7 +70,7 @@ theorem only_authorities_change_config_pf :
     ∃ params r, IsRunOf d rent s₀ evs states s params r ∧
       LeanSpec.Goals.OnlyAuthoritiesChangeConfig params r :=
   letI := syscallGroups C; letI := syscallPairing C; letI : LeanSpec.Deployment := ⟨programKey C⟩
-  run_satisfies hgen hrun hpid C laws hashes assume outside hi _
+  run_satisfies hgen hrun hpid C laws hashes assume sameRent hi _
     fun params r => LeanSpec.Goals.only_authorities_change_config params r
 
 theorem admin_powers_limited_pf :
@@ -80,7 +80,7 @@ theorem admin_powers_limited_pf :
     ∃ params r, IsRunOf d rent s₀ evs states s params r ∧
       LeanSpec.Goals.AdminPowersLimited params r :=
   letI := syscallGroups C; letI := syscallPairing C; letI : LeanSpec.Deployment := ⟨programKey C⟩
-  run_satisfies hgen hrun hpid C laws hashes assume outside hi _
+  run_satisfies hgen hrun hpid C laws hashes assume sameRent hi _
     fun params r => LeanSpec.Goals.admin_powers_limited params r
 
 end

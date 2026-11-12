@@ -101,7 +101,7 @@ def publicBalance (s : State) (k : Pubkey) : ℕ :=
 
 /-- `toWorld d rent spent s`: the spec world the chain state `s` stands for.
     - **`rent`:** Solana's rent-exempt minimum for an account of a given size. The spec fixes
-      the two amounts it uses; `OutsideSpecDetail.rentFixed` says each transaction sees this.
+      the two amounts it uses; `SameRent` assumes each transaction sees this.
     - **`spent`:** the spent nullifiers, tracked alongside the chain. On-chain a nullifier is
       spent when its nullifier account exists; `WellFormed.spentRecorded` links the two. -/
 def toWorld (d : Deployment) (rent : Nat → U64) (spent : Finset LeanSpec.F) (s : State) :

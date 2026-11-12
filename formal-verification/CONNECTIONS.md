@@ -14,7 +14,7 @@ invariant is a hypothesis: `WellFormed` is proved for every reachable state.
 | Theorem | Says | Hypotheses (kind) |
 |---|---|---|
 | `transact_connection` | every `transact` the code accepts satisfies the spec's `transact` (all preconditions, exact effects) | execution, then the transaction as one more step (core-model `Run`) (premise); `DeploymentFacts`, `HashesAgree`, `SolanaFacts`, `CryptoFacts`, `CircuitFacts`, syscall contracts, `PairingLaws` (asm); `OutsideSpecDetail` (design) |
-| `run_connection` | every execution is a run of the spec (`IsSpecRun`), or has not initialized the pool | execution (premise); `DeploymentFacts`, `HashesAgree`, syscall contracts, `PairingLaws` (asm); `ExecutionAssumptions` (asm); `ExecutionOutsideSpecDetail`: rent fixed (design) |
+| `run_connection` | every execution is a run of the spec (`IsSpecRun`), or has not initialized the pool | execution (premise); `DeploymentFacts`, `HashesAgree`, syscall contracts, `PairingLaws` (asm); `ExecutionAssumptions` (asm); `SameRent` for every program instruction (asm) |
 | `execution_path_iff_run` | `ExecutionPath` (which `run_connection` takes) has exactly the executions of core-model's `Run` | none |
 | `handler_complete_except_L1_A0` | completeness at the handler: every transaction the spec allows, the handler accepts with the spec's effects | `HandlerContext`, `HandlerSpecAllows` (premise); `HashesAgree`, `CompletenessAssumptions`, syscall contracts, `PairingLaws` (asm); not L1, not A0 (finding) |
 | `spendsAreGenuine_code`, `noDoubleSpend_code`, `poolBacksNotes_code`, `onlyOwnerSpends_code`, `onlyAuthoritiesChangeConfig_code`, `adminPowersLimited_code` | G1a, G1b, G1c, G1d, G5a, G5b (the spec's named properties) hold of the execution's run | as `run_connection`; initialized (premise) |
@@ -52,7 +52,7 @@ Documentation notes (the spec includes the rule, marked ADDED MANUALLY (docs sil
 What each says is in its docstring. Linking the code to the spec (`Hypotheses.lean`):
 
 - `HashesAgree`: the deployment's hashes are the spec's.
-- By design: `OutsideSpecDetail`, `ExecutionOutsideSpecDetail` (Solana details the spec does not model).
+- By design: `OutsideSpecDetail` (Solana details the spec does not model). Assumed: `SameRent` (code and spec use the same rent).
 
 About the code alone (`CodeModelAssumptions.lean`; core-model does not state them):
 

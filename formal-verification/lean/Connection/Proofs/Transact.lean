@@ -987,7 +987,7 @@ theorem transact_refines
     LeanSpec.transact inputs (toWorld d rent spent s) (toWorld d rent spent' s') ∧
       WellFormed d spent' s' := by
   obtain ⟨B, E, htx, -, -, hex, wf'⟩ :=
-    transact_refines_core hstep hashes wf solana hrentPos crypto circuit outside.rentFixed hProofValid
+    transact_refines_core hstep hashes wf solana hrentPos crypto circuit outside.sameRent hProofValid
   obtain ⟨rfl, rfl⟩ := hex outside
   refine ⟨?_, wf'⟩
   have h1 := LeanSpec.World.withUpdatedValues_self (toWorld d rent spent s)

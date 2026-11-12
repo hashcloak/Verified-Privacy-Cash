@@ -48,11 +48,11 @@ variable {d : Deployment} {rent : Nat → U64} {sGenesis s : State} {evs : List 
   (laws : PairingLaws C.e)                                 -- [assumed] the pairing laws
   (hashes : HashesAgree d.crypto)                          -- [assumed] the hashes are the spec's
   (assume : ExecutionAssumptions d sGenesis evs)      -- [assumed] as in `run_connection`
-  (outside : ExecutionOutsideSpecDetail d rent sGenesis evs) -- [by design] the rent is fixed
+  (sameRent : ∀ tx ix em, .program tx ix em ∈ evs → SameRent rent tx) -- [assumed] same rent as the spec
   (hgen : Genesis d.programId sGenesis)                    -- [premise] an execution from genesis
   (hrun : ExecutionPath d sGenesis evs states s)           --   ...that reached `s` through `states`
   (hi : Initialized d s)                                   -- [premise] the pool is initialized
-include deploy C laws hashes assume outside hgen hrun hi
+include deploy C laws hashes assume sameRent hgen hrun hi
 
 /-! #### G1. Balance -/
 
@@ -64,7 +64,7 @@ theorem spendsAreGenuine_code :
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     ∃ params r, IsRunOf d rent sGenesis evs states s params r ∧
       ∀ wit, r.WitnessesFor wit → LeanSpec.Goals.SpendsAreGenuine r wit :=
-  spends_are_genuine_pf hgen hrun deploy.programNotSystem C laws hashes assume outside hi
+  spends_are_genuine_pf hgen hrun deploy.programNotSystem C laws hashes assume sameRent hi
 
 /-- **G1b for the code**: no note is spent twice in the execution (`NoDoubleSpend`). -/
 theorem noDoubleSpend_code :
@@ -73,7 +73,7 @@ theorem noDoubleSpend_code :
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     ∃ params r, IsRunOf d rent sGenesis evs states s params r ∧
       ∀ wit, r.WitnessesFor wit → LeanSpec.Goals.NoDoubleSpend r wit :=
-  no_double_spend_pf hgen hrun deploy.programNotSystem C laws hashes assume outside hi
+  no_double_spend_pf hgen hrun deploy.programNotSystem C laws hashes assume sameRent hi
 
 /-- **G1c for the code**: at the end of the execution, the pool's SOL exactly backs the
     unspent notes (`PoolBacksNotes`). -/
@@ -83,7 +83,7 @@ theorem poolBacksNotes_code :
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     ∃ params r, IsRunOf d rent sGenesis evs states s params r ∧
       ∀ wit, r.WitnessesFor wit → LeanSpec.Goals.PoolBacksNotes params r wit :=
-  pool_backs_notes_pf hgen hrun deploy.programNotSystem C laws hashes assume outside hi
+  pool_backs_notes_pf hgen hrun deploy.programNotSystem C laws hashes assume sameRent hi
 
 /-- **G1d for the code**: every spend in the execution uses the owner's secret key
     (`OnlyOwnerSpends`). -/
@@ -93,7 +93,7 @@ theorem onlyOwnerSpends_code :
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     ∃ params r, IsRunOf d rent sGenesis evs states s params r ∧
       ∀ wit, r.WitnessesFor wit → LeanSpec.Goals.OnlyOwnerSpends r wit :=
-  only_owner_spends_pf hgen hrun deploy.programNotSystem C laws hashes assume outside hi
+  only_owner_spends_pf hgen hrun deploy.programNotSystem C laws hashes assume sameRent hi
 
 /-! #### G5. Admin control -/
 
@@ -106,7 +106,7 @@ theorem onlyAuthoritiesChangeConfig_code :
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     ∃ params r, IsRunOf d rent sGenesis evs states s params r ∧
       LeanSpec.Goals.OnlyAuthoritiesChangeConfig params r :=
-  only_authorities_change_config_pf hgen hrun deploy.programNotSystem C laws hashes assume outside hi
+  only_authorities_change_config_pf hgen hrun deploy.programNotSystem C laws hashes assume sameRent hi
 
 /-- **G5b for the code**: the execution's run satisfies `AdminPowersLimited`: the authorities stay
     whoever initialized the pool, and the fee rates and fee error margin stay at most 100%. -/
@@ -116,7 +116,7 @@ theorem adminPowersLimited_code :
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     ∃ params r, IsRunOf d rent sGenesis evs states s params r ∧
       LeanSpec.Goals.AdminPowersLimited params r :=
-  admin_powers_limited_pf hgen hrun deploy.programNotSystem C laws hashes assume outside hi
+  admin_powers_limited_pf hgen hrun deploy.programNotSystem C laws hashes assume sameRent hi
 
 end
 
@@ -320,7 +320,7 @@ theorem admin_change_nonvacuous :
       Genesis Toy.toyD.programId sGenesis ∧ ExecutionPath Toy.toyD sGenesis evs states s
       ∧ DeploymentFacts Toy.toyD ∧ PairingLaws Toy.toyC.e ∧ HashesAgree Toy.toyD.crypto
       ∧ ExecutionAssumptions Toy.toyD sGenesis evs
-      ∧ ExecutionOutsideSpecDetail Toy.toyD Toy.toyRent sGenesis evs
+      ∧ (∀ tx ix em, .program tx ix em ∈ evs → SameRent Toy.toyRent tx)
       -- the pool is initialized
       ∧ Initialized Toy.toyD s
       -- every run of the execution records an admin change
