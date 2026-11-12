@@ -1,4 +1,5 @@
 import Connection.Hypotheses
+import Connection.Proofs.Invariant
 import Connection.Proofs.Handler
 import Connection.Proofs.ExtData
 open Aeneas Aeneas.Std Result PrivacyCash.Model

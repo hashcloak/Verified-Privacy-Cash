@@ -87,12 +87,12 @@ Not carried over: G2b (about circuit witnesses only).
 statement false, with a counterexample (`Findings.lean`). No statement gets an extra
 condition to make it provable.
 
-**What the theorems rely on** (`Hypotheses.lean`):
+**What the theorems rely on** (`Hypotheses.lean`: what links the code to the spec; `CodeModelAssumptions.lean`: about the code alone):
 
 | Kind | What | Your job |
 |---|---|---|
 | Premise | the scenario: an execution from genesis, the code accepted | Check it describes the situation, not a restriction |
-| Assumed | `DeploymentFacts`, `HashesAgree`, `SolanaFacts`, `CryptoFacts`, `PairingLaws` and the syscall contracts, `ExecutionAssumptions`; `CompletenessAssumptions`; core-model's own assumptions | Check each is true of the real system |
+| Assumed | linking: `HashesAgree`, `CompletenessAssumptions` (with code parts); about the code: `DeploymentFacts`, `SolanaFacts`, `CryptoFacts`, `PairingLaws` and the syscall contracts, `ExecutionAssumptions`, Anchor's constraints in `ReachesProgram`; core-model's own assumptions | Check each is true of the real system |
 | By design | `OutsideSpecDetail`, `ExecutionOutsideSpecDetail`: Solana details the spec deliberately does not model | Check each is below the spec's level and harmless |
 
 G3 also has the owner's choices and the limits from the spec's G3. Each hypothesis is labelled
@@ -130,7 +130,7 @@ says?
 **`Findings.lean`**
 - Each counterexample: does the spec allow the transaction, while the code rejects it?
 
-**`Hypotheses.lean`**
+**`Hypotheses.lean`, `CodeModelAssumptions.lean`**
 - *Assumed* fields: true of the real system, for the reason the docstring gives? A false
   assumption voids every theorem that uses it.
 - Could any field exclude a case an attacker can reach? That would hide a bug.

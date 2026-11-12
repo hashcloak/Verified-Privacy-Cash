@@ -49,14 +49,18 @@ Documentation notes (the spec includes the rule, marked ADDED MANUALLY (docs sil
 
 ## Assumed, not derived
 
-What each says is in its docstring in `Hypotheses.lean`.
+What each says is in its docstring. Linking the code to the spec (`Hypotheses.lean`):
+
+- `HashesAgree`: the deployment's hashes are the spec's.
+- By design: `OutsideSpecDetail`, `ExecutionOutsideSpecDetail` (Solana details the spec does not model).
+
+About the code alone (`CodeModelAssumptions.lean`; core-model does not state them):
 
 - `DeploymentFacts`: the program is not the System Program, so an account the program owns is never mistaken for a free one.
-- `HashesAgree`: the deployment's hashes are the spec's.
 - `SolanaFacts`: no program-derived address signs, per transaction. (Positive rent is part of core-model's `Run`.)
 - `CryptoFacts`: circuit and SHA-256 facts, per transaction (includes I1).
 - `ExecutionAssumptions` (`run_connection`): `SolanaFacts` and `CryptoFacts` for every `transact`; the fixed addresses differ.
-- `CompletenessAssumptions` (`handler_complete_except_L1_A0`, G3a, G3b): the hashes and syscalls return a value on valid input; `usize` is 64 bits (SOLANA FACT, unprovable in Lean).
+- `CompletenessAssumptions` (`handler_complete_except_L1_A0`, G3a, G3b; in `Hypotheses.lean`, as it includes `HashesAgree`): the hashes and syscalls return a value on valid input; `usize` is 64 bits (SOLANA FACT, unprovable in Lean).
+- `ProgramAccountsInPlace`, `NullifierAddressesFree` (in `ReachesProgram`, G3 for the code): Anchor's account constraints hold.
 - Syscall contracts (`AltBn128Contracts`) and `PairingLaws`: the verifier bridge.
 - Core-model's own assumptions (`core-model/README.md`), in particular `EnvStep`, on which double-spend protection rests.
-- By design: `OutsideSpecDetail`, `ExecutionOutsideSpecDetail` (Solana details the spec does not model).

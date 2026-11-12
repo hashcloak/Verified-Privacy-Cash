@@ -1,4 +1,5 @@
 import Connection.Mapping
+import Connection.CodeModelAssumptions
 import Connection.Hypotheses
 import Connection.ConnectionTheorems
 import Connection.CodeModelStatements

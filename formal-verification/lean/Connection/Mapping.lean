@@ -394,6 +394,11 @@ open PrivacyCash.Proofs.Groth16 (ic)
   ⟨G1, G2, GT, fun bs => (toArray 64#usize bs).bind C.decodeG1,
     fun bs => (toArray 128#usize bs).bind C.decodeG2⟩
 
+/-- `syscallPairing C`: the spec's pairing is the syscall's. -/
+@[reducible] def syscallPairing (C : AltBn128Contracts s G1 G2 GT) :
+    @LeanSpec.Pairing (syscallGroups C) :=
+  @LeanSpec.Pairing.mk (syscallGroups C) C.e
+
 /-- `programKey C`: the spec's deployed key is the program's key, as the syscalls decode it. The key is the
     program's own constant, not sender data; whenever the verifier accepts a proof, every one
     of its points decodes (`programVerifier_groth16`), so the default `0` is never used. -/

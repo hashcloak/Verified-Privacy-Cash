@@ -48,7 +48,8 @@ it provable.
 
 **Assumptions.** Every theorem is only as good as its assumptions: the hash functions compute
 the spec's, facts about Solana and the circuit, the syscall contracts, and the Solana details
-the spec deliberately leaves out. Each is named and documented in `Hypotheses.lean`.
+the spec deliberately leaves out. Each is named and documented in `Hypotheses.lean` (linking the
+code to the spec, by-design exclusions) or `CodeModelAssumptions.lean` (about the code alone).
 
 **Non-vacuity.** A theorem "if H then C" is true but says nothing if H can never hold, and
 Lean does not warn about this.
