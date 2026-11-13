@@ -52,24 +52,6 @@ lemma inputsAt_eq_stepPair (O : Opening) (leaf : F) (h : ℕ) :
   simp only [Opening.inputsAt, stepPair, OpeningSib, nodeAt_eq_foldUpTo]
 
 
--- LEMMA (used by G1b): one `transact` step strictly grows the nullifier set.
-lemma nullifier_set_monotonicity_step
-  (oldWorld newWorld: World)
-  (inputs: TxInputs)
-  (h: transact inputs oldWorld newWorld)
-  : oldWorld.state.nullifiers ⊂ newWorld.state.nullifiers := by
-  -- Direct proof: unfold `transact`, then hand back `inputs.k0` as the witness element that's
-  -- in `newWorld` but not `oldWorld`.
-  -- `transact` gives us that `newWorld` is exactly `transactEffects inputs oldWorld`, and its
-  -- preconditions guarantee `k0` is a fresh nullifier, absent from `oldWorld`.
-  obtain ⟨hpre, hagree⟩ := h
-  have hk0New : inputs.k0 ∉ oldWorld.state.nullifiers := hpre.newNullifiers.1
-  -- the new nullifier set is the one `transactEffects` predicts
-  rw [hagree.nullifiers]
-  simp only [transactEffects, transferEffects]
-  split_ifs <;>
-    exact (Finset.ssubset_iff_of_subset Finset.subset_union_left).mpr
-      ⟨inputs.k0, Finset.mem_union_right _ (Finset.mem_insert_self _ _), hk0New⟩
 
 
 -- LEMMA (used by G1b): the same note (amount, secret key, blinding, mint) at the same leaf
@@ -150,16 +132,52 @@ lemma transferEffects_state (inputs: TxInputs) (w: World) :
     (transferEffects inputs w).state = w.state := by
   unfold transferEffects; split_ifs <;> rfl
 
+-- LEMMA: the rent step pays each new nullifier account its top-up from the signer. Needs the
+-- signer to be able to pay, and the signer and the two addresses to be three different accounts.
+lemma nullifierRentEffects_balances (inputs : TxInputs) (old : World)
+    (hSolv : old.nullifierTopUp inputs 0 + old.nullifierTopUp inputs 1 ≤ old.balances inputs.s)
+    (hs0 : inputs.s ≠ old.state.newNullifierAccount inputs 0)
+    (hs1 : inputs.s ≠ old.state.newNullifierAccount inputs 1)
+    (h01 : old.state.newNullifierAccount inputs 0 ≠ old.state.newNullifierAccount inputs 1)
+    (x : Pubkey) :
+    ((nullifierRentEffects inputs old).balances x : ℤ) = old.balances x
+      - (if x = inputs.s then (old.nullifierTopUp inputs 0 + old.nullifierTopUp inputs 1 : ℤ) else 0)
+      + (if x = old.state.newNullifierAccount inputs 0 then (old.nullifierTopUp inputs 0 : ℤ) else 0)
+      + (if x = old.state.newNullifierAccount inputs 1 then (old.nullifierTopUp inputs 1 : ℤ) else 0) := by
+  set a0 := old.state.newNullifierAccount inputs 0 with ha0
+  set a1 := old.state.newNullifierAccount inputs 1 with ha1
+  set T0 := old.nullifierTopUp inputs 0 with hT0
+  set T1 := old.nullifierTopUp inputs 1 with hT1
+  set paid0 := moveLamports old.balances inputs.s a0 T0 with hpaid0
+  have hp0 : ∀ y, (paid0 y : ℤ) = old.balances y - (if y = inputs.s then (T0 : ℤ) else 0)
+      + (if y = a0 then (T0 : ℤ) else 0) :=
+    moveLamports_apply _ _ _ _ hs0 (by omega)
+  have hpa1 : paid0 a1 = old.balances a1 := by
+    simp only [hpaid0, moveLamports]
+    rw [Function.update_of_ne (Ne.symm h01), Function.update_of_ne (Ne.symm hs1)]
+  have hT1' : old.nullifierRent - paid0 a1 = T1 := by rw [hpa1]; rfl
+  have hcan1 : T1 ≤ paid0 inputs.s := by
+    have := hp0 inputs.s
+    rw [if_pos rfl, if_neg hs0] at this
+    omega
+  show (moveLamports paid0 inputs.s a1 (old.nullifierRent - paid0 a1) x : ℤ) = _
+  rw [hT1', moveLamports_apply _ _ _ _ hs1 hcan1, hp0]
+  split_ifs <;> ring
+
 -- LEMMA (used by G1c, G3a, G4): the predicted world moves every account by exactly
--- `balanceDelta`. The solvency preconditions rule out ℕ underflow; `poolIsSeparate` keeps
--- the pool's role apart from the paid roles.
+-- `balanceDelta`. The solvency preconditions rule out ℕ underflow; `poolNotRecipient`,
+-- `signerNotPoolNotNullifiers` and `nullifierAccountsCreatable` keep the roles apart where it matters.
 lemma transactEffects_balances (inputs : TxInputs) (old : World)
-    (hSolv : signerSolvent old.balances inputs.s inputs.extAmt old.nullifierRent)
+    (hSolv : signerSolvent old.balances inputs.s inputs.extAmt
+      (old.nullifierTopUp inputs 0 + old.nullifierTopUp inputs 1))
     (hPool : poolSolvent old.poolBalance old.rentExemptMin inputs.extAmt inputs.f)
-    (hSep : poolIsSeparate inputs old.state.pool) (k : Pubkey) :
+    (hSep : poolNotRecipient inputs old.state.pool) (hPda : signerNotPoolNotNullifiers inputs old.state)
+    (hNew : nullifierAccountsCreatable old.state inputs) (k : Pubkey) :
     ((transactEffects inputs old).balances k : ℤ)
-      = old.balances k + balanceDelta inputs old.state.pool old.nullifierRent k := by
-  obtain ⟨hsP, hAP, htP⟩ := hSep
+      = old.balances k + balanceDelta inputs old k := by
+  obtain ⟨hAP, htP⟩ := hSep
+  obtain ⟨hsP, hs0, hs1⟩ := hPda
+  obtain ⟨h01, h0P, h1P⟩ := hNew
   obtain ⟨hPw, hPd⟩ := hPool
   unfold signerSolvent at hSolv
   unfold World.poolBalance at hPw hPd
@@ -169,17 +187,11 @@ lemma transactEffects_balances (inputs : TxInputs) (old : World)
   have hw0P : w0.state.pool = P := by rw [hw0, nullifierRentEffects_state]
   have hw1P : w1.state.pool = P := by rw [hw1, transferEffects_state, hw0P]
   -- the rent step
-  have hrent : ∀ x, (w0.balances x : ℤ) = old.balances x
-      - (if x = inputs.s then 2 * (old.nullifierRent : ℤ) else 0) := by
-    intro x
-    simp only [hw0, nullifierRentEffects]
-    by_cases hxs : x = inputs.s
-    · rw [hxs, Function.update_self, if_pos rfl]
-      have : 2 * old.nullifierRent ≤ old.balances inputs.s := by split_ifs at hSolv <;> omega
-      rw [Nat.cast_sub this]; push_cast; ring
-    · rw [Function.update_of_ne hxs, if_neg hxs]; ring
+  have hrent := nullifierRentEffects_balances inputs old (by split_ifs at hSolv <;> omega)
+    hs0 hs1 h01
+  simp only [← hw0] at hrent
   have hw0Pv : (w0.balances P : ℤ) = old.balances P := by
-    rw [hrent P, if_neg (Ne.symm hsP)]; ring
+    rw [hrent P, if_neg (Ne.symm hsP), if_neg (Ne.symm h0P), if_neg (Ne.symm h1P)]; ring
   -- the transfer step
   have htr : ∀ x, (w1.balances x : ℤ) = w0.balances x
       + (if x = inputs.A ∧ inputs.extAmt < 0 then (inputs.extAmt.natAbs : ℤ) else 0)
@@ -193,7 +205,7 @@ lemma transactEffects_balances (inputs : TxInputs) (old : World)
       · have habs : (inputs.extAmt.natAbs : ℤ) = inputs.extAmt := Int.natAbs_of_nonneg (le_of_lt hpos)
         have hcan : inputs.extAmt.natAbs ≤ w0.balances inputs.s := by
           have h1 := hrent inputs.s
-          rw [if_pos rfl] at h1
+          rw [if_pos rfl, if_neg hs0, if_neg hs1] at h1
           rw [if_pos hpos] at hSolv
           omega
         simp only [hz, if_false, hpos, if_true]
@@ -228,7 +240,8 @@ lemma transactEffects_balances (inputs : TxInputs) (old : World)
       simp only [moveLamports, hf0, Nat.sub_zero, Nat.add_zero, Function.update_eq_self]
     rw [hm, htr k, hrent k]
     unfold balanceDelta
-    split_ifs <;> simp_all <;> ring
+    simp only [hf0, Nat.cast_zero]
+    split_ifs <;> ring
   · rw [hw1P, moveLamports_apply _ _ _ _ (Ne.symm (htP hfpos)) hfee, htr k, hrent k]
     unfold balanceDelta
     split_ifs <;> ring
@@ -241,26 +254,36 @@ lemma sol_balance_correctness_step
   : (newWorld.poolBalance : ℤ) = oldWorld.poolBalance + inputs.extAmt - inputs.f
   := by
   obtain ⟨hpre, heff⟩ := h1
-  obtain ⟨hsP, hAP, htP⟩ := hpre.poolSeparate
+  obtain ⟨hAP, htP⟩ := hpre.poolNotRecipient
+  obtain ⟨hsP, -, -⟩ := hpre.signerNotPoolNotNullifiers
+  obtain ⟨-, h0P, h1P⟩ := hpre.nullifierAccountsNew
   have hpool : newWorld.state.pool = oldWorld.state.pool := by
     rw [heff.pool]; simp only [transactEffects, transferEffects_state, nullifierRentEffects_state]
   unfold World.poolBalance
   rw [hpool, heff.balances, transactEffects_balances inputs oldWorld hpre.signerSolvency
-    hpre.poolSolvency hpre.poolSeparate]
+    hpre.poolSolvency hpre.poolNotRecipient hpre.signerNotPoolNotNullifiers hpre.nullifierAccountsNew]
   unfold balanceDelta
   have hA : ¬ (oldWorld.state.pool = inputs.A ∧ inputs.extAmt < 0) := fun h => hAP h.2 h.1.symm
   have hs1 : ¬ (oldWorld.state.pool = inputs.s ∧ inputs.extAmt > 0) := fun h => hsP h.1.symm
   have hs2 : ¬ (oldWorld.state.pool = inputs.s) := fun h => hsP h.symm
-  rw [if_neg hA, if_neg hs1, if_neg hs2, if_pos rfl]
+  have h0 : ¬ (oldWorld.state.pool = oldWorld.state.newNullifierAccount inputs 0) :=
+    fun h => h0P h.symm
+  have h1 : ¬ (oldWorld.state.pool = oldWorld.state.newNullifierAccount inputs 1) :=
+    fun h => h1P h.symm
+  rw [if_neg hA, if_neg hs1, if_neg hs2, if_neg h0, if_neg h1, if_pos rfl]
   rcases Nat.eq_zero_or_pos inputs.f with hf0 | hfpos
   · simp [hf0]
-  · rw [if_neg (fun h => htP hfpos h.symm)]; ring
+  · have ht : ¬ (oldWorld.state.pool = inputs.t) := fun h => htP hfpos h.symm
+    rw [if_neg ht]; ring
 
 -- HELPERS: what happens between transactions changes only the balances and the config.
 @[simp] lemma World.withUpdatedValues_tree (w : World) (b : UpdatedValuesBetweenTransacts) :
     (w.withUpdatedValues b).state.tree = w.state.tree := rfl
-@[simp] lemma World.withUpdatedValues_nullifiers (w : World) (b : UpdatedValuesBetweenTransacts) :
-    (w.withUpdatedValues b).state.nullifiers = w.state.nullifiers := rfl
+@[simp] lemma World.withUpdatedValues_nullifierAccounts (w : World)
+    (b : UpdatedValuesBetweenTransacts) :
+    (w.withUpdatedValues b).state.nullifierAccounts = w.state.nullifierAccounts := rfl
+@[simp] lemma World.withUpdatedValues_nullifierAddr (w : World) (b : UpdatedValuesBetweenTransacts) :
+    (w.withUpdatedValues b).state.nullifierAddr = w.state.nullifierAddr := rfl
 @[simp] lemma World.withUpdatedValues_pool (w : World) (b : UpdatedValuesBetweenTransacts) :
     (w.withUpdatedValues b).state.pool = w.state.pool := rfl
 @[simp] lemma World.withUpdatedValues_config (w : World) (b : UpdatedValuesBetweenTransacts) :
@@ -1318,30 +1341,107 @@ lemma foldAppend_root_mem_history (cs : List F) :
     rw [this, appendEffects_history]
     exact Function.update_self _ _ _
 
-/-- A nullifier spent by transaction `j` is in the nullifier set of every later world. -/
-lemma Run.nullifier_spent {w0 : World} (r : Run w0) (j : ℕ) (hj : j < r.txs.length) (i : Fin 2) :
-    ∀ j', j < j' → j' ≤ r.txs.length → r.txs[j].pubInputs.nullifiers i ∈ (r.ws j').state.nullifiers := by
+-- HELPERS (used by G1b, G3a): a field element has one canonical encoding.
+lemma natOfLE_injective : ∀ (l l' : Bytes), l.length = l'.length → natOfLE l = natOfLE l' → l = l'
+  | [], [], _, _ => rfl
+  | b :: l, b' :: l', hlen, h => by
+    change b.toNat + 256 * natOfLE l = b'.toNat + 256 * natOfLE l' at h
+    have hb : b.toNat < 256 := b.isLt
+    have hb' : b'.toNat < 256 := b'.isLt
+    have h1 : b.toNat = b'.toNat := by omega
+    have h2 : natOfLE l = natOfLE l' := by omega
+    rw [BitVec.eq_of_toNat_eq h1, natOfLE_injective l l' (by simpa using hlen) h2]
+
+lemma natOfBE_eq_natOfLE_reverse (l : Bytes) : natOfBE l = natOfLE l.reverse := by
+  unfold natOfBE natOfLE
+  rw [List.foldr_reverse]
+  congr 1
+  funext acc b; ring
+
+lemma canonicalEncoding_unique {bs bs' : Bytes} {x : F} (h : canonicalEncoding bs x)
+    (h' : canonicalEncoding bs' x) : bs = bs' := by
+  obtain ⟨hl, hlt, hx⟩ := h
+  obtain ⟨hl', hlt', hx'⟩ := h'
+  have hv : natOfBE bs = natOfBE bs' := by
+    rw [← ZMod.val_natCast_of_lt hlt, ← ZMod.val_natCast_of_lt hlt', hx, hx']
+  rw [natOfBE_eq_natOfLE_reverse, natOfBE_eq_natOfLE_reverse] at hv
+  have := natOfLE_injective _ _ (by simp [hl, hl']) hv
+  simpa using congrArg List.reverse this
+
+/-- The bytes of input nullifier `i` encode that nullifier, when the public inputs are sent
+    canonically. -/
+lemma nullifierBytes_canonical (inputs : TxInputs) (h : publicInputsEncoded inputs) (i : Fin 2) :
+    canonicalEncoding (inputs.nullifierBytes i) (inputs.pubInputs.nullifiers i) := by
+  fin_cases i
+  · exact h 3
+  · exact h 4
+
+-- LEMMA (used by G1b): one `transact` step keeps every nullifier account.
+lemma nullifierAccounts_subset_step (oldWorld newWorld : World) (inputs : TxInputs)
+    (h : transact inputs oldWorld newWorld) :
+    oldWorld.state.nullifierAccounts ⊆ newWorld.state.nullifierAccounts := by
+  rw [h.2.nullifierAccounts]
+  show _ ⊆ (transferEffects inputs (nullifierRentEffects inputs oldWorld)).state.nullifierAccounts ∪ _
+  rw [transferEffects_state, nullifierRentEffects_state]
+  exact Finset.subset_union_left
+
+/-- The nullifier accounts' addresses stay those of the run's start. -/
+lemma Run.nullifierAddr_eq {w0 : World} (r : Run w0) :
+    ∀ j ≤ r.txs.length, (r.ws j).state.nullifierAddr = w0.state.nullifierAddr := by
+  intro j
+  induction j with
+  | zero => intro _; rw [r.start]
+  | succ j ih =>
+    intro hj
+    rw [(r.step j (by omega)).2.nullifierAddr, ← ih (by omega)]
+    show (transferEffects _ (nullifierRentEffects _ _)).state.nullifierAddr = _
+    rw [transferEffects_state, nullifierRentEffects_state]
+    rfl
+
+/-- Transaction `j` creates the account of its input `i` at the run's address for it. -/
+lemma Run.nullifier_account_created {w0 : World} (r : Run w0) (j : ℕ) (hj : j < r.txs.length)
+    (i : Fin 2) : ∀ j', j < j' → j' ≤ r.txs.length →
+      w0.state.nullifierAddr i (r.txs[j].nullifierBytes i) ∈ (r.ws j').state.nullifierAccounts := by
   intro j' hjj'
   induction j' with
   | zero => omega
   | succ j' ih =>
     intro hj'
     by_cases hlt : j < j'
-    · exact (nullifier_set_monotonicity_step _ _ _ (r.step j' (by omega))).subset (ih hlt (by omega))
+    · exact nullifierAccounts_subset_step _ _ _ (r.step j' (by omega)) (ih hlt (by omega))
     · have hjeq : j = j' := by omega
       subst hjeq
-      obtain ⟨_, hagree⟩ := r.step j hj
-      rw [hagree.nullifiers]
-      simp only [transactEffects, transferEffects]
-      fin_cases i <;> split_ifs <;> simp [TxInputs.pubInputs]
+      rw [(r.step j hj).2.nullifierAccounts]
+      show _ ∈ (transferEffects _ (nullifierRentEffects _ _)).state.nullifierAccounts ∪ _
+      have ha := r.nullifierAddr_eq j hj.le
+      apply Finset.mem_union_right
+      fin_cases i <;> simp [State.newNullifierAccount, ha]
 
-/-- A nullifier spent by transaction `j` was not in the nullifier set before it. -/
+/-- A nullifier spent by transaction `j` is spent in every later world. -/
+lemma Run.nullifier_spent {w0 : World} (r : Run w0) (j : ℕ) (hj : j < r.txs.length) (i : Fin 2) :
+    ∀ j', j < j' → j' ≤ r.txs.length → (r.ws j').state.spent (r.txs[j].nullifierBytes i) := by
+  intro j' hjj' hj'
+  have hm := r.nullifier_account_created j hj i j' hjj' hj'
+  rw [← r.nullifierAddr_eq j' hj'] at hm
+  fin_cases i
+  · exact Or.inl hm
+  · exact Or.inr hm
+
+/-- A nullifier spent by transaction `j` was not spent before it. -/
 lemma Run.nullifier_fresh {w0 : World} (r : Run w0) (j : ℕ) (hj : j < r.txs.length) (i : Fin 2) :
-    r.txs[j].pubInputs.nullifiers i ∉ (r.ws j).state.nullifiers := by
+    ¬ (r.ws j).state.spent (r.txs[j].nullifierBytes i) := by
   have hfresh := (r.step j hj).1.newNullifiers
   fin_cases i
   · exact hfresh.1
   · exact hfresh.2
+
+/-- Two transactions of a run that reveal the same nullifier send the same bytes for it. -/
+lemma Run.nullifierBytes_eq {w0 : World} (r : Run w0) {j j' : ℕ} (hj : j < r.txs.length)
+    (hj' : j' < r.txs.length) {i i' : Fin 2}
+    (hN : r.txs[j].pubInputs.nullifiers i = r.txs[j'].pubInputs.nullifiers i') :
+    r.txs[j].nullifierBytes i = r.txs[j'].nullifierBytes i' :=
+  canonicalEncoding_unique (nullifierBytes_canonical _ (r.step j hj).1.canonicalInputs i)
+    (by rw [hN]; exact nullifierBytes_canonical _ (r.step j' hj').1.canonicalInputs i')
 
 /-- The pool's SOL after the first `j` transactions: rent reserve plus their `extAmt − f`
     plus the donations before them. -/
@@ -1435,7 +1535,7 @@ theorem no_double_spend
   · exfalso
     rcases lt_trichotomy j j' with hlt | heq | hgt
     · have hin := r.nullifier_spent j hj i j' hlt hj'.le
-      rw [hN] at hin
+      rw [r.nullifierBytes_eq hj hj' hN] at hin
       exact r.nullifier_fresh j' hj' i' hin
     · subst heq
       have hii : i ≠ i' := fun h => hdiff (by rw [h])
@@ -1446,7 +1546,7 @@ theorem no_double_spend
       · exact hnd hN.symm
       · exact hii rfl
     · have hin := r.nullifier_spent j' hj' i' j hgt hj.le
-      rw [← hN] at hin
+      rw [← r.nullifierBytes_eq hj hj' hN] at hin
       exact r.nullifier_fresh j hj i hin
   · exact hH1
   · exact absurd hnote hH4.ne
@@ -1736,31 +1836,28 @@ theorem shared_nullifier_requires_owner_key
 
 /-! ## G3. Liveness -/
 
--- LEMMA (used by G3a): `transferEffects` doesn't touch the nullifier set.
-lemma transferEffects_nullifiers (inputs: TxInputs) (oldWorld: World) :
-    (transferEffects inputs oldWorld).state.nullifiers = oldWorld.state.nullifiers := by
-  unfold transferEffects
-  split_ifs <;> rfl
-
--- LEMMA (used by G3a): every nullifier in the set was revealed by a transaction of the run.
-lemma Run.nullifier_origin {params : InitParams}
+-- LEMMA (used by G3a): every nullifier account was created by a transaction of the run, at the
+-- address of one of its nullifiers.
+lemma Run.nullifierAccount_origin {params : InitParams}
     (r : Run (initWorld params)) :
-    ∀ j ≤ r.txs.length, ∀ x ∈ (r.ws j).state.nullifiers,
-      ∃ j', ∃ (hj' : j' < r.txs.length), ∃ i, r.txs[j'].pubInputs.nullifiers i = x := by
+    ∀ j ≤ r.txs.length, ∀ x ∈ (r.ws j).state.nullifierAccounts,
+      ∃ j', ∃ (hj' : j' < r.txs.length), ∃ i,
+        x = params.nullifierAddr i (r.txs[j'].nullifierBytes i) := by
   intro j
   induction j with
   | zero => intro _ x hx; rw [r.start] at hx; simp [initWorld] at hx
   | succ j ih =>
     intro hj x hx
     have hjn : j < r.txs.length := by omega
-    obtain ⟨_, hagree⟩ := r.step j hjn
-    rw [hagree.nullifiers] at hx
-    simp only [transactEffects, transferEffects_nullifiers, nullifierRentEffects_state, Finset.mem_union, Finset.mem_insert,
-      Finset.mem_singleton] at hx
+    have ha := r.nullifierAddr_eq j hjn.le
+    rw [(r.step j hjn).2.nullifierAccounts] at hx
+    change x ∈ (transferEffects _ (nullifierRentEffects _ _)).state.nullifierAccounts ∪ _ at hx
+    rw [transferEffects_state, nullifierRentEffects_state] at hx
+    simp only [Finset.mem_union, Finset.mem_insert, Finset.mem_singleton] at hx
     rcases hx with hx | hx | hx
     · exact ih (by omega) x hx
-    · exact ⟨j, hjn, 0, by simp [TxInputs.pubInputs, hx]⟩
-    · exact ⟨j, hjn, 1, by simp [TxInputs.pubInputs, hx]⟩
+    · exact ⟨j, hjn, 0, by rw [hx]; simp [State.newNullifierAccount, ha, initWorld]⟩
+    · exact ⟨j, hjn, 1, by rw [hx]; simp [State.newNullifierAccount, ha, initWorld]⟩
 
 -- LEMMA (used by G3a): leaf indices are below `p`, so equal as field elements means equal.
 lemma leafIndex_cast_inj (a b : Fin (2^26)) (h : ((a : ℕ) : F) = ((b : ℕ) : F)) : a = b := by
@@ -1770,19 +1867,38 @@ lemma leafIndex_cast_inj (a b : Fin (2^26)) (h : ((a : ℕ) : F) = ((b : ℕ) : 
   exact Fin.ext hmod
 
 -- LEMMA (used by G3a): an input whose commitment no input of the run has used at this position
--- has a fresh nullifier, unless an `H3` collision occurs.
+-- has an unspent nullifier, unless an `H3` collision occurs or another nullifier's account is
+-- at one of its addresses.
 lemma unused_input_nullifier_free
     (params : InitParams)
     (r : Run (initWorld params)) (wit : ℕ → Witness) (hwit : r.WitnessesFor wit)
-    (w : Witness) (i : Fin 2)
+    (inputs : TxInputs) (w : Witness) (i : Fin 2)
+    (hcanon : publicInputsEncoded inputs)
+    (hN : inputs.pubInputs.nullifiers i = nullifier (w.inC i) (w.sign i) (w.openings i).index)
     (hnew : ¬ InputUsedInRun r wit w i) :
-    nullifier (w.inC i) (w.sign i) (w.openings i).index ∉ r.final.state.nullifiers
-    ∨ NullifierTakenByCollision r wit w := by
+    ¬ r.final.state.spent (inputs.nullifierBytes i)
+    ∨ NullifierTakenByCollision r wit w ∨ NullifierAddressCollision r inputs := by
   classical
-  by_cases hmem : nullifier (w.inC i) (w.sign i) (w.openings i).index ∈ r.final.state.nullifiers
-  swap; · exact Or.inl hmem
+  by_cases hsp : r.final.state.spent (inputs.nullifierBytes i)
+  swap; · exact Or.inl hsp
   right
-  obtain ⟨j, hj, i', hji⟩ := r.nullifier_origin r.txs.length le_rfl _ hmem
+  have ha := r.nullifierAddr_eq r.txs.length le_rfl
+  obtain ⟨s, hm⟩ : ∃ s, r.final.state.nullifierAddr s (inputs.nullifierBytes i)
+      ∈ r.final.state.nullifierAccounts := by
+    rcases hsp with h | h
+    exacts [⟨0, h⟩, ⟨1, h⟩]
+  obtain ⟨j, hj, i', hx⟩ := r.nullifierAccount_origin r.txs.length le_rfl _ hm
+  by_cases hpair : (s, inputs.nullifierBytes i) = (i', r.txs[j].nullifierBytes i')
+  swap
+  · refine Or.inr (Or.inr (Or.inr ⟨i, s, j, hj, i', ?_, hpair⟩))
+    rw [hx]; show _ = r.final.state.nullifierAddr i' _
+    rw [show r.final = r.ws r.txs.length from rfl, ha]; rfl
+  left
+  -- the same bytes: the same nullifier
+  have hB : inputs.nullifierBytes i = r.txs[j].nullifierBytes i' := congrArg Prod.snd hpair
+  have hji : r.txs[j].pubInputs.nullifiers i' = nullifier (w.inC i) (w.sign i) (w.openings i).index := by
+    rw [← hN, ← (nullifierBytes_canonical _ hcanon i).2.2,
+      ← (nullifierBytes_canonical _ (r.step j hj).1.canonicalInputs i').2.2, hB]
   refine ⟨i, j, hj, i', hji, ?_⟩
   have hH3 : H3 (w.nullifierArgs i).1 (w.nullifierArgs i).2.1 (w.nullifierArgs i).2.2
       = H3 ((wit j).nullifierArgs i').1 ((wit j).nullifierArgs i').2.1 ((wit j).nullifierArgs i').2.2 := by
@@ -1931,7 +2047,8 @@ theorem all_checks_accounted {w0 : World} (r : Run w0) (wit : ℕ → Witness)
     (hHonest : HonestSpend r wit inputs witness k)
     (hLimits : LimitsNotHit r.final inputs)
     (hRootNonzero : inputs.R ≠ 0)
-    (hFresh : nullifiersFresh r.final.state.nullifiers inputs.k0 inputs.k1)
+    (hFresh : nullifiersFresh r.final.state inputs)
+    (hNew : nullifierAccountsCreatable r.final.state inputs)
     (hSolvent : poolSolvent r.final.poolBalance r.final.rentExemptMin inputs.extAmt inputs.f) :
     transactPreconditions inputs r.final where
   knownRoot := rootBytesKnown_of hHonest.wellFormed.encodings ⟨hLimits.inWindow, hRootNonzero⟩
@@ -1943,13 +2060,15 @@ theorem all_checks_accounted {w0 : World} (r : Run w0) (wit : ℕ → Witness)
   validZKP := hHonest.wellFormed.validProof
   newNullifiers := hFresh
   distinctNullifiers := hHonest.circuit.noDuplicateNullifiers
+  nullifierAccountsNew := hNew
   signerSolvency := hHonest.signerCanPay
+  signerNotPoolNotNullifiers := hHonest.signerNotPoolNotNullifiers
   depositLimit := hLimits.depositLimit
   poolSolvency := hSolvent
   treeNotFull := hLimits.treeRoom
   amountRange := hHonest.wellFormed.amountRange
   encOutLength := hHonest.wellFormed.encOutLength
-  poolSeparate := hHonest.wellFormed.poolSeparate
+  poolNotRecipient := hHonest.wellFormed.poolNotRecipient
   signerSignature := hHonest.wellFormed.signed
 
 lemma spendable_core
@@ -1961,7 +2080,8 @@ lemma spendable_core
     transact inputs r.final (transactEffects inputs r.final)
     ∨ H2ZeroPreimage (treeHash ((leaves r.txs).take k) 25 0, treeHash ((leaves r.txs).take k) 25 1)
     ∨ BreakInSomeSpend r wit
-    ∨ NullifierTakenByCollision r wit witness := by
+    ∨ NullifierTakenByCollision r wit witness
+    ∨ NullifierAddressCollision r inputs := by
   have hk := hHonest.root.isPrefix
   have hRk : inputs.R = (foldAppend ((leaves r.txs).take k) initTree).root := hHonest.root.isPrefixRoot
   have hRoom := hLimits.treeRoom
@@ -1994,17 +2114,23 @@ lemma spendable_core
   by_cases hB : BreakInSomeSpend r wit
   · exact Or.inr (Or.inr (Or.inl hB))
   by_cases hT : NullifierTakenByCollision r wit witness
-  · exact Or.inr (Or.inr (Or.inr hT))
+  · exact Or.inr (Or.inr (Or.inr (Or.inl hT)))
+  by_cases hAC : NullifierAddressCollision r inputs
+  · exact Or.inr (Or.inr (Or.inr (Or.inr hAC)))
   left
-  -- the nullifiers are free
-  have hfree : ∀ i, inputs.pubInputs.nullifiers i ∉ r.final.state.nullifiers := by
+  -- the nullifiers are unspent
+  have hfree : ∀ i, ¬ r.final.state.spent (inputs.nullifierBytes i) := by
     intro i
-    rw [hNullifierCorrectness i]
-    rcases unused_input_nullifier_free params r wit hwit witness i (hUnused i) with h | h
+    rcases unused_input_nullifier_free params r wit hwit inputs witness i
+        hHonest.wellFormed.encodings (hNullifierCorrectness i) (hUnused i) with h | h | h
     · exact h
     · exact absurd h hT
-  have hFresh : nullifiersFresh r.final.state.nullifiers inputs.k0 inputs.k1 :=
-    ⟨hfree 0, hfree 1⟩
+    · exact absurd h hAC
+  have hFresh : nullifiersFresh r.final.state inputs := ⟨hfree 0, hfree 1⟩
+  -- the new nullifier accounts can be created
+  have hNew : nullifierAccountsCreatable r.final.state inputs :=
+    ⟨fun h => hAC (Or.inl h), fun h => hAC (Or.inr (Or.inl ⟨0, h⟩)),
+      fun h => hAC (Or.inr (Or.inl ⟨1, h⟩))⟩
   -- the pool can pay: from G1c
   have hSolvent : poolSolvent r.final.poolBalance r.final.rentExemptMin inputs.extAmt inputs.f := by
     rcases pool_solvent params r wit hwit inputs witness
@@ -2014,8 +2140,8 @@ lemma spendable_core
         hRange with h | h
     · exact h
     · exact absurd h hB
-  refine ⟨?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
-  exact all_checks_accounted r wit inputs witness k hHonest hLimits hR0 hFresh hSolvent
+  refine ⟨?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+  exact all_checks_accounted r wit inputs witness k hHonest hLimits hR0 hFresh hNew hSolvent
 
 -- PROOF of G3a. Statement and explanation: `Spec/Statements.lean`.
 
@@ -2028,12 +2154,13 @@ theorem honest_spend_is_accepted
     (inputs : TxInputs) (witness : Witness) (k : ℕ)
     (hHonest : HonestSpend r wit inputs witness k)
     (hLimits : LimitsNotHit r.final inputs) :
-    CanBeAccepted inputs r.final ∨ SpendBlockedByBreak r wit witness k := by
+    CanBeAccepted inputs r.final ∨ SpendBlockedByBreak r wit inputs witness k := by
   rcases spendable_core params r wit hwit inputs witness k hHonest hLimits with h | h
   · exact Or.inl h
   · -- `spendable_core` lists the zero-root case first; `SpendBlockedByBreak` lists it last.
-    rcases h with h | h | h
-    exacts [Or.inr (Or.inr (Or.inr h)), Or.inr (Or.inl h), Or.inr (Or.inr (Or.inl h))]
+    rcases h with h | h | h | h
+    exacts [Or.inr (Or.inr (Or.inr (Or.inr h))), Or.inr (Or.inl h), Or.inr (Or.inr (Or.inl h)),
+      Or.inr (Or.inr (Or.inr (Or.inl h)))]
 
 -- LEMMA (used by G3b, G5): the run's recorded admin changes produce the config of each world.
 lemma Run.adminChanges_reachable (params : InitParams) (r : Run (initWorld params)) :
@@ -2088,7 +2215,7 @@ theorem admins_cannot_lock_withdrawals
         inputs.R ∈ Set.range r.final.state.tree.history →
         treeHasRoom r.final.state.tree →
         balancesFit inputs r.final →
-        CanBeAccepted inputs r.final ∨ SpendBlockedByBreak r wit witness k := by
+        CanBeAccepted inputs r.final ∨ SpendBlockedByBreak r wit inputs witness k := by
   have hw : r.final.state.config.withdrawalFeeRate ≤ 10000 :=
     (Run.adminChanges_reachable params r _ le_rfl).keeps.2.2.2.2 params.withdrawalFeeRate_init
   have hfee : feeSufficient r.final.state.config (-((value / 2 : ℕ) : ℤ)) (value - value / 2) :=
@@ -2108,11 +2235,11 @@ theorem balance_changes_exact
     (oldWorld newWorld : World) (inputs : TxInputs) (h : transact inputs oldWorld newWorld)
     (k : Pubkey) :
     (newWorld.balances k : ℤ)
-      = oldWorld.balances k + balanceDelta inputs oldWorld.state.pool oldWorld.nullifierRent k := by
+      = oldWorld.balances k + balanceDelta inputs oldWorld k := by
   obtain ⟨hpre, hagree⟩ := h
   rw [hagree.balances]
   exact transactEffects_balances inputs oldWorld hpre.signerSolvency hpre.poolSolvency
-    hpre.poolSeparate k
+    hpre.poolNotRecipient hpre.signerNotPoolNotNullifiers hpre.nullifierAccountsNew k
 
 -- HELPER: bounds on what `balanceDelta` charges an account as the depositor.
 lemma deposit_term_bounds (inputs : TxInputs) (k : Pubkey) :
@@ -2141,11 +2268,21 @@ theorem only_signers_pay
   have hlost' : (newWorld.balances k : ℤ) < oldWorld.balances k := by exact_mod_cast hlost
   obtain ⟨hA, hT⟩ := payee_terms_nonneg inputs k
   obtain ⟨hD0, hD⟩ := deposit_term_bounds inputs k
+  -- each top-up is at most the rent, and what a nullifier account receives is never negative
+  have hT0 : (oldWorld.nullifierTopUp inputs 0 : ℤ) ≤ oldWorld.nullifierRent := by
+    exact_mod_cast Nat.sub_le _ _
+  have hT1 : (oldWorld.nullifierTopUp inputs 1 : ℤ) ≤ oldWorld.nullifierRent := by
+    exact_mod_cast Nat.sub_le _ _
+  have hN0 : 0 ≤ (if k = oldWorld.state.newNullifierAccount inputs 0
+      then (oldWorld.nullifierTopUp inputs 0 : ℤ) else 0) := by split_ifs <;> omega
+  have hN1 : 0 ≤ (if k = oldWorld.state.newNullifierAccount inputs 1
+      then (oldWorld.nullifierTopUp inputs 1 : ℤ) else 0) := by split_ifs <;> omega
   unfold balanceDelta at hd
   rw [if_neg hk] at hd
   by_cases hs : k = inputs.s
   · refine ⟨hs ▸ hsigned, ?_⟩
     rw [if_pos hs] at hd
+    have : (0 : ℤ) ≤ oldWorld.nullifierTopUp inputs 0 := by positivity
     linarith
   · exfalso
     have hdep : (if k = inputs.s ∧ inputs.extAmt > 0 then inputs.extAmt else 0) = 0 :=
@@ -2160,9 +2297,15 @@ theorem exact_payouts
     (∀ k, k ≠ oldWorld.state.pool →
       (newWorld.balances k : ℤ) = oldWorld.balances k
         + ((if k = inputs.A ∧ inputs.extAmt < 0 then (inputs.extAmt.natAbs : ℤ) else 0)
-          + (if k = inputs.t then (inputs.f : ℤ) else 0))
+          + (if k = inputs.t then (inputs.f : ℤ) else 0)
+          + (if k = oldWorld.state.newNullifierAccount inputs 0
+              then (oldWorld.nullifierTopUp inputs 0 : ℤ) else 0)
+          + (if k = oldWorld.state.newNullifierAccount inputs 1
+              then (oldWorld.nullifierTopUp inputs 1 : ℤ) else 0))
         - ((if k = inputs.s ∧ inputs.extAmt > 0 then inputs.extAmt else 0)
-          + (if k = inputs.s then 2 * (oldWorld.nullifierRent : ℤ) else 0))) := by
+          + (if k = inputs.s
+              then (oldWorld.nullifierTopUp inputs 0 + oldWorld.nullifierTopUp inputs 1 : ℤ)
+              else 0))) := by
   refine ⟨sol_balance_correctness_step oldWorld newWorld inputs h, fun k hk => ?_⟩
   have hd := balance_changes_exact oldWorld newWorld inputs h k
   unfold balanceDelta at hd

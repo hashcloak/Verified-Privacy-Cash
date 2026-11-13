@@ -80,13 +80,13 @@ theorem toy_donation_nonvacuous :
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
     rcases hm with h | h | h <;> cases h <;> rfl
   · intro params r hr
-    obtain ⟨hpool, hrent, -, -, -, -, hpl, hpb, -⟩ := hr
+    obtain ⟨hpool, -, hrent, -, -, -, -, hpl, hpb, -⟩ := hr
     -- the spec sees the pool's balance before the deposit: 2 lamports
     have hv : (executionView toyD toyRent toyS0 [.program toyTx (.initialize toyInitA) [], .env,
         .program toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) e₂]
-        [s₁, s₁d, s₂]).poolBeforeTx = [publicBalance s₁d (poolAddr toyD)] := rfl
-    have hb : publicBalance s₁d (poolAddr toyD) = 2 := by
-      unfold publicBalance
+        [s₁, s₁d, s₂]).poolBeforeTx = [lamportsOf s₁d (poolAddr toyD)] := rfl
+    have hb : lamportsOf s₁d (poolAddr toyD) = 2 := by
+      unfold lamportsOf
       rw [show poolAddr toyD = tokenA from rfl, hs₁d, State.set_same]; rfl
     rw [hv, hb] at hpl hpb
     have hlen : r.txs.length = 1 := hpl.symm

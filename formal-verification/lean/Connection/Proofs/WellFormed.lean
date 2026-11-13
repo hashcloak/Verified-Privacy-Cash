@@ -52,15 +52,15 @@ theorem ugc_rates (c c' : zkcash_core.admin.GlobalConfig) (dep wd m : Option U16
 omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
 /-- Outside actions keep `WellFormed`: accounts the program owns keep their owner and data, and
     no other account can come to hold the program's account types. -/
-theorem wf_envStep {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State}
-    (wf : WellFormed d spent s) (h : EnvStep d.programId s s') : WellFormed d spent s' := by
+theorem wf_envStep {d : Deployment} {s s' : State}
+    (wf : WellFormed d s) (h : EnvStep d.programId s s') : WellFormed d s' := by
   have own : ∀ k, (s' k).owner = d.programId → (∃ x, (s' k).data = x ∧ x.isProgramData = true) →
       (s k).owner = d.programId ∧ (s' k).data = (s k).data := by
     intro k _ ⟨x, hx, hpx⟩
     by_cases hk : (s k).owner = d.programId
     · exact ⟨hk, ((h k).1 hk).2.1⟩
     · have := (h k).2 hk; rw [hx] at this; simp [hpx] at this
-  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_, ?_⟩
   · intro k t ⟨ho, hd⟩
     obtain ⟨ho', hd'⟩ := own k ho ⟨_, hd, rfl⟩
     exact wf.tree k t ⟨ho', hd' ▸ hd⟩
@@ -70,9 +70,6 @@ theorem wf_envStep {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State}
   · intro k c ⟨ho, hd⟩
     obtain ⟨ho', hd'⟩ := own k ho ⟨_, hd, rfl⟩
     exact wf.config k c ⟨ho', hd' ▸ hd⟩
-  · intro x hx
-    obtain ⟨n, hn, hnx, hown⟩ := wf.spentRecorded x hx
-    exact ⟨n, hn, hnx, hown.imp (EnvStep.keepsOwned h _) (EnvStep.keepsOwned h _)⟩
   · intro k t ⟨ho, hd⟩
     obtain ⟨ho', hd'⟩ := own k ho ⟨_, hd, rfl⟩
     exact wf.storedRoots k t ⟨ho', hd' ▸ hd⟩
@@ -87,10 +84,10 @@ theorem set_data_other {s : State} {key k : Pubkey} {acc : Account} (hk : k ≠ 
     (s.set key acc k) = s k := by simp [State.set, hk]
 
 omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
-theorem wf_updateDepositLimit {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State} {tx : TxEnv}
+theorem wf_updateDepositLimit {d : Deployment} {s s' : State} {tx : TxEnv}
     {a : UpdateDepositLimitAccounts} {newLimit : U64}
-    (wf : WellFormed d spent s) (h : execUpdateDepositLimit d s tx a newLimit = .ok s') :
-    WellFormed d spent s' := by
+    (wf : WellFormed d s) (h : execUpdateDepositLimit d s tx a newLimit = .ok s') :
+    WellFormed d s' := by
   unfold execUpdateDepositLimit at h
   split at h
   swap; · cases h
@@ -110,7 +107,7 @@ theorem wf_updateDepositLimit {d : Deployment} {spent : Finset LeanSpec.F} {s s'
     fun k hk => set_data_other hk
   have hkey : (s.set a.treeAccount { s a.treeAccount with data := .treeAccount tree' }) a.treeAccount
       = { s a.treeAccount with data := .treeAccount tree' } := by simp
-  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_, ?_⟩
   · intro k t ⟨ho, hd⟩
     by_cases hka' : k = a.treeAccount
     · subst hka'; rw [hkey] at hd; cases hd
@@ -124,15 +121,6 @@ theorem wf_updateDepositLimit {d : Deployment} {spent : Finset LeanSpec.F} {s s'
     by_cases hka' : k = a.treeAccount
     · subst hka'; rw [hkey] at hd; cases hd
     · rw [hk k hka'] at ho hd; exact wf.config k c ⟨ho, hd⟩
-  · intro x hx
-    obtain ⟨n, hn, hnx, hown⟩ := wf.spentRecorded x hx
-    have keep : ∀ k, (s k).owner = d.programId →
-        ((s.set a.treeAccount { s a.treeAccount with data := .treeAccount tree' }) k).owner = d.programId := by
-      intro k ho
-      by_cases hka' : k = a.treeAccount
-      · subst hka'; rw [hkey]; exact ho
-      · rw [hk k hka']; exact ho
-    exact ⟨n, hn, hnx, hown.imp (keep _) (keep _)⟩
   · intro k t ⟨ho, hd⟩
     by_cases hka' : k = a.treeAccount
     · subst hka'; rw [hkey] at hd; cases hd
@@ -147,10 +135,10 @@ theorem wf_updateDepositLimit {d : Deployment} {spent : Finset LeanSpec.F} {s s'
     · rw [hk k hka'] at ho hd; exact wf.storedSubtrees k t ⟨ho, hd⟩
 
 omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
-theorem wf_updateGlobalConfig {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State} {tx : TxEnv}
+theorem wf_updateGlobalConfig {d : Deployment} {s s' : State} {tx : TxEnv}
     {a : UpdateGlobalConfigAccounts} {dep wd m : Option U16}
-    (wf : WellFormed d spent s) (h : execUpdateGlobalConfig d s tx a dep wd m = .ok s') :
-    WellFormed d spent s' := by
+    (wf : WellFormed d s) (h : execUpdateGlobalConfig d s tx a dep wd m = .ok s') :
+    WellFormed d s' := by
   unfold execUpdateGlobalConfig at h
   split at h
   swap; · cases h
@@ -170,7 +158,7 @@ theorem wf_updateGlobalConfig {d : Deployment} {spent : Finset LeanSpec.F} {s s'
     fun k hk => set_data_other hk
   have hkey : (s.set a.globalConfig { s a.globalConfig with data := .globalConfig config' }) a.globalConfig
       = { s a.globalConfig with data := .globalConfig config' } := by simp
-  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_, ?_⟩
   · intro k t ⟨ho, hd⟩
     by_cases hka' : k = a.globalConfig
     · subst hka'; rw [hkey] at hd; cases hd
@@ -184,15 +172,6 @@ theorem wf_updateGlobalConfig {d : Deployment} {spent : Finset LeanSpec.F} {s s'
     · subst hka'; rw [hkey] at hd; cases hd
       exact ⟨hka, hd1, hw1, hm1⟩
     · rw [hk k hka'] at ho hd; exact wf.config k c ⟨ho, hd⟩
-  · intro x hx
-    obtain ⟨n, hn, hnx, hown⟩ := wf.spentRecorded x hx
-    have keep : ∀ k, (s k).owner = d.programId →
-        ((s.set a.globalConfig { s a.globalConfig with data := .globalConfig config' }) k).owner = d.programId := by
-      intro k ho
-      by_cases hka' : k = a.globalConfig
-      · subst hka'; rw [hkey]; exact ho
-      · rw [hk k hka']; exact ho
-    exact ⟨n, hn, hnx, hown.imp (keep _) (keep _)⟩
   · intro k t ⟨ho, hd⟩
     by_cases hka' : k = a.globalConfig
     · subst hka'; rw [hkey] at hd; cases hd
@@ -204,15 +183,15 @@ theorem wf_updateGlobalConfig {d : Deployment} {spent : Finset LeanSpec.F} {s s'
 
 
 omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
-/-- Every successful `transact` keeps `WellFormed`, and its two input nullifiers become spent.
+/-- Every successful `transact` keeps `WellFormed`.
     Needs that Poseidon's outputs are canonical (`HashesAgree.poseidonCanonical`): the two
     appends store Poseidon outputs as roots. -/
-theorem wf_transact {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State} {tx : TxEnv}
+theorem wf_transact {d : Deployment} {s s' : State} {tx : TxEnv}
     {a : TransactAccounts} {proof : zkcash_core.transact.Proof} {ext : I64} {fee : U64}
     {out1 out2 : Slice U8} {evs : List CommitmentData}
     (hpc : ∀ a b h, d.crypto.hasher.hash_pair a b = ok h → Canonical h)
-    (wf : WellFormed d spent s) (hx : execTransact d s tx a proof ext fee out1 out2 = .ok (s', evs)) :
-    WellFormed d (spent ∪ {toF proof.input_nullifiers.val[0]!, toF proof.input_nullifiers.val[1]!}) s' := by
+    (wf : WellFormed d s) (hx : execTransact d s tx a proof ext fee out1 out2 = .ok (s', evs)) :
+    WellFormed d s' := by
   obtain ⟨tree, tt, config, mb, s₁, env', tree', ap, hvalid, hmb, hs₁, hhandler, hs', -⟩ := execTransact_ok hx
   obtain ⟨sA, hA1, hA2⟩ := Option.bind_eq_some_iff.mp hs₁
   obtain ⟨o0, d0, k0⟩ := initAccount_ownerData hA1
@@ -276,7 +255,7 @@ theorem wf_transact {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State} 
     intro k hk
     obtain ⟨-, b, hb⟩ := hnf k hk
     exact ⟨b, by rw [(hs'k k).2, if_neg (htree_nf k hk), hb]⟩
-  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_, ?_⟩
   · intro k t ⟨ho, hd⟩
     by_cases ht : k = a.treeAccount
     · subst ht; rw [(hs'k _).2, if_pos rfl] at hd; cases hd; exact ⟨htreeAddr, hsh2⟩
@@ -298,17 +277,6 @@ theorem wf_transact {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State} 
     · obtain ⟨b, hb⟩ := notNull k hn; rw [hb] at hd; cases hd
     obtain ⟨e1, e2⟩ := back k ht hn
     exact wf.config k c ⟨e1 ▸ ho, e2 ▸ hd⟩
-  · intro x hx'
-    have hkeep := PrivacyCash.Model.execTransact_keepsOwned hx
-    rcases Finset.mem_union.mp hx' with hold | hnew
-    · obtain ⟨n, hn, hnx, hown⟩ := wf.spentRecorded x hold
-      exact ⟨n, hn, hnx, hown.imp (hkeep _) (hkeep _)⟩
-    · rcases Finset.mem_insert.mp hnew with h | h
-      · refine ⟨_, hcan0, h.symm, Or.inl ?_⟩
-        rw [← hvalid.nullifier0.1, (hs'k _).1]; exact (hnf _ (Or.inl rfl)).1
-      · rw [Finset.mem_singleton] at h
-        refine ⟨_, hcan1, h.symm, Or.inr ?_⟩
-        rw [← hvalid.nullifier1.1, (hs'k _).1]; exact (hnf _ (Or.inr rfl)).1
   · intro k t ⟨ho, hd⟩
     by_cases ht : k = a.treeAccount
     · subst ht; rw [(hs'k _).2, if_pos rfl] at hd; cases hd; exact hroots'
@@ -469,11 +437,11 @@ theorem adminInitialize_ok {H : zkcash_core.merkle_tree.Hasher Unit}
 omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
 /-- `initialize` keeps `WellFormed` (it creates the tree, pool and config at their canonical
     addresses, with the fixed tree shape and rates 0, 25, 500). -/
-theorem wf_initialize {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State} {tx : TxEnv}
+theorem wf_initialize {d : Deployment} {s s' : State} {tx : TxEnv}
     {a : InitializeAccounts}
     (hzc : ∃ z, d.crypto.hasher.zero_bytes = ok z ∧ ∀ i, i ≤ 26 → Canonical (z.val[i]!))
-    (wf : WellFormed d spent s) (h : execInitialize d s tx a = .ok s') :
-    WellFormed d spent s' := by
+    (wf : WellFormed d s) (h : execInitialize d s tx a = .ok s') :
+    WellFormed d s' := by
   have hkeep := PrivacyCash.Model.execInitialize_keepsOwned h
   unfold execInitialize at h
   split at h
@@ -523,7 +491,7 @@ theorem wf_initialize {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State
     intro k ht hp hc
     obtain ⟨e1, e2⟩ := hs'k k; obtain ⟨e3, e4⟩ := hoth k ht hp hc
     rw [e1, e2, if_neg hc, if_neg hp, if_neg ht]; exact ⟨e3, e4⟩
-  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_, ?_⟩
   · intro k t ⟨ho, hd⟩
     rw [(hs'k k).2] at hd
     by_cases hc : k = a.globalConfig
@@ -564,9 +532,6 @@ theorem wf_initialize {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State
     rw [if_neg ht] at hd
     obtain ⟨e1, e2⟩ := back k ht hp hc
     exact wf.config k c ⟨e1 ▸ ho, by rw [← (hoth k ht hp hc).2]; exact hd⟩
-  · intro x hx
-    obtain ⟨n, hn, hnx, hown⟩ := wf.spentRecorded x hx
-    exact ⟨n, hn, hnx, hown.imp (hkeep _) (hkeep _)⟩
   · intro k t ⟨ho, hd⟩
     rw [(hs'k k).2] at hd
     by_cases hc : k = a.globalConfig
@@ -596,52 +561,52 @@ theorem wf_initialize {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State
 
 
 omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
-theorem wf_step {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State} {tx : TxEnv}
+theorem wf_step {d : Deployment} {s s' : State} {tx : TxEnv}
     {ix : Instruction} {evs : List CommitmentData}
     (hpc : ∀ a b h, d.crypto.hasher.hash_pair a b = ok h → Canonical h)
     (hzc : ∃ z, d.crypto.hasher.zero_bytes = ok z ∧ ∀ i, i ≤ 26 → Canonical (z.val[i]!))
-    (wf : WellFormed d spent s) (h : step d s tx ix = .ok (s', evs)) :
-    WellFormed d (spent ∪ stepSpent ix) s' := by
+    (wf : WellFormed d s) (h : step d s tx ix = .ok (s', evs)) :
+    WellFormed d s' := by
   cases ix with
   | «initialize» a =>
     obtain ⟨s₁, h1, h2⟩ := PrivacyCash.Model.Except.bind_ok h
-    cases h2; simpa [stepSpent] using wf_initialize hzc wf h1
+    cases h2; exact wf_initialize hzc wf h1
   | updateDepositLimit a l =>
     obtain ⟨s₁, h1, h2⟩ := PrivacyCash.Model.Except.bind_ok h
-    cases h2; simpa [stepSpent] using wf_updateDepositLimit wf h1
+    cases h2; exact wf_updateDepositLimit wf h1
   | updateGlobalConfig a dep wd m =>
     obtain ⟨s₁, h1, h2⟩ := PrivacyCash.Model.Except.bind_ok h
-    cases h2; simpa [stepSpent] using wf_updateGlobalConfig wf h1
+    cases h2; exact wf_updateGlobalConfig wf h1
   | transact a proof ext fee out1 out2 =>
     exact wf_transact hpc wf h
 
 omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
-theorem wf_run {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State} {evs : List Event}
+theorem wf_run {d : Deployment} {s s' : State} {evs : List Event}
     (hpc : ∀ a b h, d.crypto.hasher.hash_pair a b = ok h → Canonical h)
     (hzc : ∃ z, d.crypto.hasher.zero_bytes = ok z ∧ ∀ i, i ≤ 26 → Canonical (z.val[i]!))
-    (hrun : Run d s evs s') (wf : WellFormed d spent s) : WellFormed d (spent ∪ runSpent evs) s' := by
-  induction hrun generalizing spent with
-  | nil => simpa [runSpent] using wf
+    (hrun : Run d s evs s') (wf : WellFormed d s) : WellFormed d s' := by
+  induction hrun with
+  | nil => exact wf
   | program hstep _ _ ih =>
     have := ih (wf_step hpc hzc wf hstep)
-    simpa [runSpent, Finset.union_assoc] using this
+    exact this
   | env henv _ ih =>
-    simpa [runSpent] using ih (wf_envStep wf henv)
+    exact ih (wf_envStep wf henv)
 
 omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
 theorem wf_genesis {d : Deployment} {s : State} (hgen : Genesis d.programId s)
-    (hpid : d.programId ≠ systemProgram) : WellFormed d ∅ s :=
+    (hpid : d.programId ≠ systemProgram) : WellFormed d s :=
   ⟨hpid, fun k _ h => absurd h.1 (hgen k), fun k _ h => absurd h.1 (hgen k),
-   fun k _ h => absurd h.1 (hgen k), fun _ hx => absurd hx (Finset.notMem_empty _),
+   fun k _ h => absurd h.1 (hgen k),
    fun k _ h => absurd h.1 (hgen k), fun k _ h => absurd h.1 (hgen k)⟩
 
-/-- **Every state an execution reaches from genesis is `WellFormed`**, for the nullifiers the
-    execution spent. Uses only the canonicity fields of `HashesAgree`. -/
+/-- **Every state an execution reaches from genesis is `WellFormed`**.
+    Uses only the canonicity fields of `HashesAgree`. -/
 theorem wf_reachable {d : Deployment} {s₀ s : State} {evs : List Event}
     (hgen : Genesis d.programId s₀) (hrun : Run d s₀ evs s) (hpid : d.programId ≠ systemProgram)
     (hashes : HashesAgree d.crypto) :
-    WellFormed d (runSpent evs) s := by
-  simpa using wf_run hashes.poseidonCanonical hashes.zeroBytesCanonical hrun (wf_genesis hgen hpid)
+    WellFormed d s := by
+  exact wf_run hashes.poseidonCanonical hashes.zeroBytesCanonical hrun (wf_genesis hgen hpid)
 
 /-- **The program's trees hold canonical roots in every reachable state.** -/
 theorem storedRoots_reachable {d : Deployment} {s₀ s : State} {evs : List Event}

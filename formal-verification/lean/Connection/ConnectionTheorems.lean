@@ -81,9 +81,8 @@ variable {G1 G2 GT : Type} [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGrou
     one-step `Run`: `step` accepts it, with core-model's positive rent), then between the worlds before
     and after (mapped by `toWorld`) the spec's `transact` holds for the mapped transaction
     (`toInputs`): every spec precondition held, the proof check included, and the new world is
-    exactly the spec's `transactEffects`. The spec's nullifier set is taken from the
-    execution: before, the nullifiers it has spent so far (`runSpent evs`); after, those
-    plus this transaction's two (`inputs.k0`, `inputs.k1`). -/
+    exactly the spec's `transactEffects`. The spec's nullifier accounts are the program's,
+    read from the chain before and after. -/
 theorem transact_connection
     {d : Deployment} {rent : Nat → U64} {sGenesis s s' : State} {evs : List Event} {tx : TxEnv}
     {a : TransactAccounts} {proof : zkcash_core.transact.Proof} {extAmount : I64} {fee : U64}
@@ -95,7 +94,7 @@ theorem transact_connection
     (solana : SolanaFacts d tx)                            -- [assumed] Solana runtime facts
     (crypto : CryptoFacts d proof)                         -- [assumed] SHA-256 facts
     (circuit : CircuitFacts d {proof})                     -- [assumed] the circuit keeps the nullifiers distinct (I1)
-    (outside : OutsideSpecDetail d rent s tx a proof)      -- [by design] details the spec omits
+    (sameRent : SameRent rent tx)                          -- [assumed] same rent as the spec
     (hgen : Genesis d.programId sGenesis)                  -- [premise] an execution from genesis
     (hrun : Run d sGenesis evs s)                          --   ...that reached `s`
     (hstep : Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s') :
@@ -104,9 +103,8 @@ theorem transact_connection
     letI : LeanSpec.Pairing := syscallPairing C
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     let inputs := toInputs tx.signers a proof extAmount fee out1 out2
-    LeanSpec.transact inputs (toWorld d rent (runSpent evs) s)
-      (toWorld d rent (runSpent evs ∪ {inputs.k0, inputs.k1}) s') :=
-  transact_connection_pf hgen hrun deploy.programNotSystem hstep C laws hashes solana crypto circuit outside
+    LeanSpec.transact inputs (toWorld d rent s) (toWorld d rent s') :=
+  transact_connection_pf hgen hrun deploy.programNotSystem hstep C laws hashes solana crypto circuit sameRent
 
 /-- **An execution path is core-model's execution, with its states.** `ExecutionPath`
     (`Mapping.lean`), which `run_connection` takes, has exactly the executions of core-model's
@@ -123,9 +121,7 @@ theorem execution_path_iff_run {d : Deployment} {s s' : State} {evs : List Event
     transaction. `initialize` gives the start world; each accepted `transact` is a spec
     transaction; outside actions and the admin instructions are changes the spec allows between
     transactions. It assumes the code and the spec use the same rent (`SameRent`, for every
-    program instruction; for `transact_connection` it is `OutsideSpecDetail.sameRent`). The other
-    details `OutsideSpecDetail` rules out need no exclusion here: a pre-funded nullifier address,
-    or a payee that is a nullifier account, is an allowed change before or after the spec transaction. -/
+    program instruction). -/
 theorem run_connection {d : Deployment} {rent : Nat → U64} {sGenesis s : State} {evs : List Event}
     {states : List State}
     (deploy : DeploymentFacts d)                           -- [assumed] see the structure
@@ -160,25 +156,27 @@ variable {signers : List Pubkey}
     for the mapped inputs in the world the handler sees. -/
 def HandlerSpecAllows (signers : List Pubkey) (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT)
     (a : TransactAccounts) (s₁ : State) (v : U64) (tree : zkcash_core.merkle_tree.MerkleTreeAccount)
-    (config : zkcash_core.admin.GlobalConfig) (spent : Finset LeanSpec.F)
+    (config : zkcash_core.admin.GlobalConfig) (accts : Finset LeanSpec.Pubkey)
+    (addr : Fin 2 → LeanSpec.Bytes → LeanSpec.Pubkey)
     (proof : zkcash_core.transact.Proof) (ext : I64) (fee : U64) (out1 out2 : Slice U8) : Prop :=
   letI : LeanSpec.Groups := syscallGroups C
   letI : LeanSpec.Pairing := syscallPairing C
   letI : LeanSpec.Deployment := ⟨programKey C⟩
-  LeanSpec.transactPreconditions (toInputs signers a proof ext fee out1 out2) (handlerWorld a s₁ v tree config spent)
+  LeanSpec.transactPreconditions (toInputs signers a proof ext fee out1 out2) (handlerWorld a s₁ v tree config accts addr)
 
 /-- `HandlerMatchesSpec …`: the handler accepts, with exactly the spec's effects: it returns
     `Ok`, every account's balance is the spec's (`transactEffects`, on code addresses), and
     the new tree is the spec's. -/
 def HandlerMatchesSpec (signers : List Pubkey) (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT)
     (a : TransactAccounts) (s₁ : State) (v : U64) (tree : zkcash_core.merkle_tree.MerkleTreeAccount)
-    (config : zkcash_core.admin.GlobalConfig) (spent : Finset LeanSpec.F)
+    (config : zkcash_core.admin.GlobalConfig) (accts : Finset LeanSpec.Pubkey)
+    (addr : Fin 2 → LeanSpec.Bytes → LeanSpec.Pubkey)
     (proof : zkcash_core.transact.Proof) (ext : I64) (fee : U64) (out1 out2 : Slice U8) : Prop :=
   letI : LeanSpec.Groups := syscallGroups C
   letI : LeanSpec.Pairing := syscallPairing C
   letI : LeanSpec.Deployment := ⟨programKey C⟩
   let effects := LeanSpec.transactEffects (toInputs signers a proof ext fee out1 out2)
-    (handlerWorld a s₁ v tree config spent)
+    (handlerWorld a s₁ v tree config accts addr)
   ∃ ap env' tree', zkcash_core.transact.transact c.hasher arkFr c.sha256 c.proofVerifier solRuntime
       (handlerEnv a s₁ v) tree config proof ext fee a.recipient a.feeRecipientAccount out1 out2
       = ok (.Ok ap, env', tree') ∧
@@ -195,17 +193,18 @@ def HandlerMatchesSpec (signers : List Pubkey) (c : Crypto) (C : AltBn128Contrac
 theorem handler_complete_except_L1_A0 (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT)
     (laws : PairingLaws C.e) {a : TransactAccounts} {s₁ : State} {v : U64}
     {tree : zkcash_core.merkle_tree.MerkleTreeAccount} {config : zkcash_core.admin.GlobalConfig}
-    {spent : Finset LeanSpec.F} {proof : zkcash_core.transact.Proof} {ext : I64} {fee : U64}
+    {accts : Finset LeanSpec.Pubkey} {addr : Fin 2 → LeanSpec.Bytes → LeanSpec.Pubkey}
+    {proof : zkcash_core.transact.Proof} {ext : I64} {fee : U64}
     {out1 out2 : Slice U8}
     (hashes : HashesAgree c)                               -- [assumed] the hashes are the spec's
     (assume : CompletenessAssumptions c C)                 -- [assumed] see the structure
     (ctx : HandlerContext a s₁ tree config)      -- [invariant], [premise]: see the structure
     (notL1 : ext.val ≠ 0)                                  -- [finding L1] excluded
     (notA0 : proof.proof_a.val ≠ List.replicate 64 0#u8)   -- [finding A0] excluded
-    (allows : HandlerSpecAllows signers c C a s₁ v tree config spent proof ext fee out1 out2) :
+    (allows : HandlerSpecAllows signers c C a s₁ v tree config accts addr proof ext fee out1 out2) :
                                                            -- [premise] the spec allows it
-    HandlerMatchesSpec signers c C a s₁ v tree config spent proof ext fee out1 out2 :=
-  handler_complete_exact' c C laws hashes assume.1 assume.2 assume.3 a s₁ v tree config spent proof ext
+    HandlerMatchesSpec signers c C a s₁ v tree config accts addr proof ext fee out1 out2 :=
+  handler_complete_exact' c C laws hashes assume.1 assume.2 assume.3 a s₁ v tree config accts addr proof ext
     fee out1 out2 ctx.1 ctx.2 ctx.3 ctx.4 ctx.5 ctx.6 ctx.7 assume.usize64 notL1 notA0 allows
 
 end
@@ -300,7 +299,7 @@ end
     deployment satisfying the deployment-level hypotheses (`PairingLaws`, genesis,
     `DeploymentFacts`, `HashesAgree`), the code accepts a deposit (`extAmount > 0`) and
     a withdrawal (`extAmount < 0`), each in an execution from genesis and each satisfying the
-    per-transaction hypotheses (`SolanaFacts`, `CryptoFacts`, `CircuitFacts`, `OutsideSpecDetail`). The two
+    per-transaction hypotheses (`SolanaFacts`, `CryptoFacts`, `CircuitFacts`, `SameRent`). The two
     cover both payment paths: the signer pays the pool, and the pool pays the recipient. -/
 theorem transact_connection_nonvacuous :
     ∃ (d : Deployment) (rent : Nat → U64) (sGenesis : State)
@@ -313,14 +312,14 @@ theorem transact_connection_nonvacuous :
           (events : List CommitmentData),
         Run d sGenesis evs s ∧ Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s'
         ∧ extAmount.val > 0
-        ∧ SolanaFacts d tx ∧ CryptoFacts d proof ∧ CircuitFacts d {proof} ∧ OutsideSpecDetail d rent s tx a proof)
+        ∧ SolanaFacts d tx ∧ CryptoFacts d proof ∧ CircuitFacts d {proof} ∧ SameRent rent tx)
       -- and a withdrawal the code accepts, with the per-transaction hypotheses
       ∧ (∃ (evs : List Event) (s s' : State) (tx : TxEnv) (a : TransactAccounts)
           (proof : zkcash_core.transact.Proof) (extAmount : I64) (fee : U64) (out1 out2 : Slice U8)
           (events : List CommitmentData),
         Run d sGenesis evs s ∧ Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s'
         ∧ extAmount.val < 0
-        ∧ SolanaFacts d tx ∧ CryptoFacts d proof ∧ CircuitFacts d {proof} ∧ OutsideSpecDetail d rent s tx a proof) :=
+        ∧ SolanaFacts d tx ∧ CryptoFacts d proof ∧ CircuitFacts d {proof} ∧ SameRent rent tx) :=
   Toy.toy_transact_nonvacuous
 
 /-- **`handler_complete_except_L1_A0` is not vacuous**: in the toy deployment, a deposit of 1
@@ -332,13 +331,14 @@ theorem handler_complete_nonvacuous
     ∃ (c : Crypto) (C : AltBn128Contracts c.altBn128 Unit Unit Unit) (laws : PairingLaws C.e)
       (signers : List Pubkey) (a : TransactAccounts) (s₁ : State) (v : U64)
       (tree : zkcash_core.merkle_tree.MerkleTreeAccount) (config : zkcash_core.admin.GlobalConfig)
-      (spent : Finset LeanSpec.F) (proof : zkcash_core.transact.Proof) (ext : I64) (fee : U64)
+      (accts : Finset LeanSpec.Pubkey) (addr : Fin 2 → LeanSpec.Bytes → LeanSpec.Pubkey)
+      (proof : zkcash_core.transact.Proof) (ext : I64) (fee : U64)
       (out1 out2 : Slice U8),
       -- every hypothesis of `handler_complete_except_L1_A0`
       HashesAgree c ∧ CompletenessAssumptions c C ∧ HandlerContext a s₁ tree config
       ∧ ext.val ≠ 0 ∧ proof.proof_a.val ≠ List.replicate 64 0#u8
-      ∧ HandlerSpecAllows signers c C a s₁ v tree config spent proof ext fee out1 out2 :=
-  ⟨_, _, Toy.toyLaws, _, _, _, _, _, _, _, _, _, _, _, _, Toy.toyHashesAgree, Toy.toyAssumptions h64, Toy.toyContext 1#u64, by simp,
+      ∧ HandlerSpecAllows signers c C a s₁ v tree config accts addr proof ext fee out1 out2 :=
+  ⟨_, _, Toy.toyLaws, _, _, _, _, _, _, _, _, _, _, _, _, _, Toy.toyHashesAgree, Toy.toyAssumptions h64, Toy.toyContext 1#u64, by simp,
     Toy.okProof_notA0, Toy.toy_pre_ok⟩
 
 end

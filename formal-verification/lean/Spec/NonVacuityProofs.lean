@@ -73,9 +73,50 @@ def toyPool : Pubkey := 1
 
 lemma toyPool_ne : (0 : Pubkey) ≠ toyPool := by decide
 
+/-- The addresses of nullifier accounts: `2·v + 2` for input 0 and `2·v + 3` for input 1, where
+    `v` is the bytes' big-endian value. Never `0` (the signer) or `1` (the pool), and different
+    for different inputs or values. -/
+def toyAddr (i : Fin 2) (b : Bytes) : Pubkey := BitVec.ofNat 256 (2 * natOfBE b + 2 + i.val)
+
+lemma natOfBE_encodeBE32 (x : F) : natOfBE (encodeBE32 x) = x.val := by
+  obtain ⟨-, hlt, hx⟩ := canonicalEncoding_encodeBE32 x
+  have := ZMod.val_natCast_of_lt hlt
+  rw [hx] at this
+  exact this.symm
+
+lemma toyAddr_toNat (i : Fin 2) (x : F) :
+    (toyAddr i (encodeBE32 x)).toNat = 2 * x.val + 2 + i.val := by
+  have hx := ZMod.val_lt x
+  have hp : p < 28948022309329048855892746252171976963317496166410141009864396001978282409984 := by
+    norm_num [p]
+  have h256 : (2 : ℕ)^256
+      = 115792089237316195423570985008687907853269984665640564039457584007913129639936 := by
+    norm_num
+  have hi := i.isLt
+  rw [toyAddr, natOfBE_encodeBE32, BitVec.toNat_ofNat, Nat.mod_eq_of_lt (by rw [h256]; omega)]
+
+lemma toyAddr_ne {i j : Fin 2} {x y : F} (h : i ≠ j ∨ x ≠ y) :
+    toyAddr i (encodeBE32 x) ≠ toyAddr j (encodeBE32 y) := by
+  haveI : NeZero p := ⟨by norm_num [p]⟩
+  intro he
+  have := congrArg BitVec.toNat he
+  rw [toyAddr_toNat, toyAddr_toNat] at this
+  have hi := i.isLt
+  have hj := j.isLt
+  rcases h with h | h
+  · exact h (Fin.ext (by omega))
+  · exact h (ZMod.val_injective _ (by omega))
+
+lemma toyAddr_ne_small (i : Fin 2) (x : F) (n : ℕ) (hn : n < 2) :
+    toyAddr i (encodeBE32 x) ≠ BitVec.ofNat 256 n := by
+  intro he
+  have := congrArg BitVec.toNat he
+  rw [toyAddr_toNat, BitVec.toNat_ofNat, Nat.mod_eq_of_lt (lt_trans hn (by norm_num))] at this
+  omega
+
 /-- The pool's parameters: every other account holds 2 lamports, rents are `0`. -/
 abbrev toyParams : InitParams :=
-  ⟨toyCfg, fun _ => 2, 0, 0, toyPool, 0, [0], (by simp), none, rfl, rfl,
+  ⟨toyCfg, fun _ => 2, 0, 0, toyPool, toyAddr, 0, [0], (by simp), none, rfl, rfl,
     (fun _ h => by cases h), (by decide), (by decide), (by decide)⟩
 
 /-- The pool, freshly initialized. -/
@@ -151,9 +192,22 @@ lemma toyInit_bal (k : Pubkey) : toyInit.balances k ≤ 2 := by
   simp only [initWorld, Function.update]
   split_ifs <;> simp
 
+/-- With a nullifier rent of `0`, nothing is topped up. -/
+lemma topUp_zero (w : World) (h : w.nullifierRent = 0) (inputs : TxInputs) (i : Fin 2) :
+    w.nullifierTopUp inputs i = 0 := by
+  unfold World.nullifierTopUp; rw [h]; exact Nat.zero_sub _
+
+/-- The deposit's nullifier accounts: for `0` (input 0) and `11` (input 1). -/
+lemma toy_dep_acct0 (π : Groth16.ProofBytes) :
+    toyInit.state.newNullifierAccount (toyInputs π) 0 = toyAddr 0 (encodeBE32 0) := rfl
+lemma toy_dep_acct1 (π : Groth16.ProofBytes) :
+    toyInit.state.newNullifierAccount (toyInputs π) 1 = toyAddr 1 (encodeBE32 11) := rfl
+
 lemma toy_delta_le (π : Groth16.ProofBytes) (k : Pubkey) :
-    balanceDelta (toyInputs π) toyInit.state.pool toyInit.nullifierRent k ≤ 2 := by
-  unfold balanceDelta; split_ifs <;> simp_all [toyInputs, initWorld]
+    balanceDelta (toyInputs π) toyInit k ≤ 2 := by
+  unfold balanceDelta
+  simp only [topUp_zero toyInit rfl, Nat.cast_zero, add_zero, ite_self, sub_zero]
+  split_ifs <;> simp_all [toyInputs, initWorld]
 
 lemma toy_deposit_fit (π : Groth16.ProofBytes) : balancesFit (toyInputs π) toyInit := by
   refine ⟨fun k _ => ?_, fun _ => ?_⟩
@@ -164,7 +218,7 @@ lemma toy_deposit_fit (π : Groth16.ProofBytes) : balancesFit (toyInputs π) toy
 
 lemma toy_deposit_step (hCompl : Groth16CompleteBytes) :
     transact (toyDeposit hCompl) toyInit (W1 hCompl) := by
-  refine ⟨?_, ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩
+  refine ⟨?_, ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩
   obtain ⟨π, hdec, hver⟩ := Classical.choose_spec
       (hCompl (toyInputs ⟨[], [], []⟩).pubInputs toyWitness (toy_relation _))
   exact {
@@ -176,17 +230,28 @@ lemma toy_deposit_step (hCompl : Groth16CompleteBytes) :
     minimumFee := by simp [feeSufficient, initWorld, toyCfg, toyInputs]
     pubAmtConsistency := by simp [pubAmtConsistent, toyInputs]
     validZKP := ⟨π, hdec, hver⟩
-    newNullifiers := by simp [nullifiersFresh, initWorld]
+    newNullifiers := by simp [nullifiersFresh, State.spent, initWorld]
     distinctNullifiers := fun h => natCast_ne_zero 11 (by norm_num) (by norm_num [p])
       (by simp only [toyInputs] at h; exact_mod_cast h.symm)
+    nullifierAccountsNew := by
+      refine ⟨?_, ?_, ?_⟩
+      · rw [toy_dep_acct0, toy_dep_acct1]; exact toyAddr_ne (Or.inl (by decide))
+      · rw [toy_dep_acct0]; exact toyAddr_ne_small 0 0 1 (by norm_num)
+      · rw [toy_dep_acct1]; exact toyAddr_ne_small 1 11 1 (by norm_num)
     depositLimit := by simp [depositWithinLimit, initWorld, toyCfg, toyInputs]
     poolSolvency := by simp [poolSolvent, toyInputs]
-    signerSolvency := by simp [signerSolvent, initWorld, toyInputs, toyPool]
+    signerSolvency := by
+      unfold signerSolvent; rw [topUp_zero toyInit rfl, topUp_zero toyInit rfl]
+      simp [initWorld, toyInputs, toyPool]
     treeNotFull := by simp [treeHasRoom, initWorld, initTree]
     amountRange := by simp [amountsInRange, toyInputs]
     encOutLength := by simp [encOutsFit, toyInputs]
-    poolSeparate := ⟨toyPool_ne, fun _ => toyPool_ne, fun _ => toyPool_ne⟩
+    poolNotRecipient := ⟨fun _ => toyPool_ne, fun _ => toyPool_ne⟩
     signerSignature := by simp [signerSigned, toyInputs]
+    signerNotPoolNotNullifiers := by
+      refine ⟨toyPool_ne, ?_, ?_⟩
+      · rw [toy_dep_acct0]; exact (toyAddr_ne_small 0 0 0 (by norm_num)).symm
+      · rw [toy_dep_acct1]; exact (toyAddr_ne_small 1 11 0 (by norm_num)).symm
   }
 
 /-- The run of the deposit alone. -/
@@ -232,8 +297,15 @@ lemma W1_root_mem (hCompl : Groth16CompleteBytes) : (1 : F) ∈ Set.range (W1 hC
 lemma W1_nextIndex (hCompl : Groth16CompleteBytes) : (W1 hCompl).state.tree.nextIndex = 2 := by
   rw [W1_tree, foldAppend_nextIndex, leaves_length]; simp [toyRun1]
 
-lemma W1_nullifiers (hCompl : Groth16CompleteBytes) : (W1 hCompl).state.nullifiers = {0, 11} := by
-  simp [W1, transactEffects, transferEffects_state, initWorld, toyDeposit, toyInputs]
+lemma W1_accounts (hCompl : Groth16CompleteBytes) : (W1 hCompl).state.nullifierAccounts
+    = {toyAddr 0 (encodeBE32 0), toyAddr 1 (encodeBE32 11)} := by
+  show (transferEffects _ (nullifierRentEffects _ _)).state.nullifierAccounts ∪ _ = _
+  rw [transferEffects_state, nullifierRentEffects_state, toy_dep_acct0, toy_dep_acct1]
+  simp [initWorld]
+
+lemma W1_addr (hCompl : Groth16CompleteBytes) : (W1 hCompl).state.nullifierAddr = toyAddr := by
+  show (transferEffects _ (nullifierRentEffects _ _)).state.nullifierAddr = _
+  rw [transferEffects_state, nullifierRentEffects_state]; rfl
 
 lemma W1_rent (hCompl : Groth16CompleteBytes) :
     (W1 hCompl).nullifierRent = 0 ∧ (W1 hCompl).rentExemptMin = 0 := by
@@ -245,20 +317,20 @@ lemma W1_pool (hCompl : Groth16CompleteBytes) : (W1 hCompl).state.pool = toyPool
 lemma W1_poolBalance (hCompl : Groth16CompleteBytes) : (W1 hCompl).poolBalance = 2 := by
   have hpre := (toy_deposit_step hCompl).1
   have h := transactEffects_balances (toyDeposit hCompl) toyInit hpre.signerSolvency
-    hpre.poolSolvency hpre.poolSeparate toyPool
+    hpre.poolSolvency hpre.poolNotRecipient hpre.signerNotPoolNotNullifiers hpre.nullifierAccountsNew toyPool
   have hP : (W1 hCompl).poolBalance = (W1 hCompl).balances toyPool := by
     unfold World.poolBalance; rw [W1_pool]
   rw [hP]
   have hz : (toyInit.balances toyPool : ℤ) = 0 := by simp [initWorld]
-  have hd : balanceDelta (toyDeposit hCompl) toyInit.state.pool toyInit.nullifierRent toyPool = 2 := by
-    simp [balanceDelta, toyInputs, initWorld, toyPool]
+  have hd : balanceDelta (toyDeposit hCompl) toyInit toyPool = 2 := by
+    simp [balanceDelta, topUp_zero toyInit rfl, toyInputs, initWorld, toyPool]
   have : ((W1 hCompl).balances toyPool : ℤ) = 2 := by rw [h, hz, hd]; ring
   exact_mod_cast this
 
 lemma W1_bal (hCompl : Groth16CompleteBytes) (k : Pubkey) : ((W1 hCompl).balances k : ℤ) ≤ 4 := by
   have hpre := (toy_deposit_step hCompl).1
   have h := transactEffects_balances (toyDeposit hCompl) toyInit hpre.signerSolvency
-    hpre.poolSolvency hpre.poolSeparate k
+    hpre.poolSolvency hpre.poolNotRecipient hpre.signerNotPoolNotNullifiers hpre.nullifierAccountsNew k
   have h1 : (toyInit.balances k : ℤ) ≤ 2 := by exact_mod_cast toyInit_bal k
   have h2 := toy_delta_le (depProof hCompl) k
   rw [h]; linarith
@@ -311,24 +383,48 @@ lemma wd_fit (hCompl : Groth16CompleteBytes) (π : Groth16.ProofBytes) :
     balancesFit (wdInputs π) (W1 hCompl) := by
   refine ⟨fun k _ => ?_, fun h => by simp [wdInputs] at h⟩
   have h1 := W1_bal hCompl k
-  have h2 : balanceDelta (wdInputs π) (W1 hCompl).state.pool (W1 hCompl).nullifierRent k ≤ 2 := by
-    rw [(W1_rent hCompl).1]
-    unfold balanceDelta; split_ifs <;> simp_all [wdInputs]
+  have h2 : balanceDelta (wdInputs π) (W1 hCompl) k ≤ 2 := by
+    unfold balanceDelta
+    simp only [topUp_zero (W1 hCompl) (W1_rent hCompl).1, Nat.cast_zero, add_zero, ite_self,
+      sub_zero]
+    split_ifs <;> simp_all [wdInputs]
   linarith
 
 lemma ne_14_21 : (14 : F) ≠ 21 := by
   have := natCast_ne 14 21 (by norm_num [p]) (by norm_num [p]) (by norm_num); exact_mod_cast this
 
+/-- The withdrawal's nullifier accounts: for `14` (input 0) and `21` (input 1). -/
+lemma wd_acct (hCompl : Groth16CompleteBytes) (π : Groth16.ProofBytes) (slot i : Fin 2) :
+    (W1 hCompl).state.nullifierAddr slot ((wdInputs π).nullifierBytes i)
+      = toyAddr slot (encodeBE32 (![14, 21] i)) := by
+  rw [W1_addr]; fin_cases i <;> rfl
+
 lemma wd_fresh (hCompl : Groth16CompleteBytes) (π : Groth16.ProofBytes) (i : Fin 2) :
-    (wdInputs π).pubInputs.nullifiers i ∉ (W1 hCompl).state.nullifiers := by
-  rw [W1_nullifiers]
+    ¬ (W1 hCompl).state.spent ((wdInputs π).nullifierBytes i) := by
   have h70 : (14 : F) ≠ 0 := by have := natCast_ne_zero 14 (by norm_num) (by norm_num [p]); exact_mod_cast this
   have h710 : (14 : F) ≠ 11 := by
     have := natCast_ne 14 11 (by norm_num [p]) (by norm_num [p]) (by norm_num); exact_mod_cast this
   have h210 : (21 : F) ≠ 0 := by have := natCast_ne_zero 21 (by norm_num) (by norm_num [p]); exact_mod_cast this
   have h2110 : (21 : F) ≠ 11 := by
     have := natCast_ne 21 11 (by norm_num [p]) (by norm_num [p]) (by norm_num); exact_mod_cast this
-  fin_cases i <;> simp [wdInputs, TxInputs.pubInputs, h70, h710, h210, h2110]
+  unfold State.spent
+  rw [wd_acct, wd_acct, W1_accounts]
+  have h01 : (0 : Fin 2) ≠ 1 := by decide
+  fin_cases i <;>
+    simp only [Fin.zero_eta, Fin.mk_one, Matrix.cons_val_zero, Matrix.cons_val_one,
+      Matrix.head_cons, Finset.mem_insert, Finset.mem_singleton, not_or] <;>
+    exact ⟨⟨toyAddr_ne (Or.inr (by assumption)), toyAddr_ne (Or.inl h01)⟩,
+      ⟨toyAddr_ne (Or.inl h01.symm), toyAddr_ne (Or.inr (by assumption))⟩⟩
+
+/-- The withdrawal's new nullifier accounts are not the pool, not each other, and not the
+    signer. -/
+lemma wd_accounts_new (hCompl : Groth16CompleteBytes) (π : Groth16.ProofBytes) :
+    nullifierAccountsCreatable (W1 hCompl).state (wdInputs π)
+    ∧ signerNotPoolNotNullifiers (wdInputs π) (W1 hCompl).state := by
+  simp only [nullifierAccountsCreatable, signerNotPoolNotNullifiers, State.newNullifierAccount, wd_acct, W1_pool]
+  refine ⟨⟨toyAddr_ne (Or.inl (by decide)), toyAddr_ne_small _ _ 1 (by norm_num),
+    toyAddr_ne_small _ _ 1 (by norm_num)⟩, toyPool_ne, (toyAddr_ne_small _ _ 0 (by norm_num)).symm,
+    (toyAddr_ne_small _ _ 0 (by norm_num)).symm⟩
 
 lemma wd_relation (π : Groth16.ProofBytes) : RelationS (wdInputs π).pubInputs wdWitness where
   outputCommitmentIntegrity := by
@@ -358,8 +454,8 @@ lemma toy_withdrawal_honest (hCompl : Groth16CompleteBytes) :
            circuit := wd_relation _,
            wellFormed := { validProof := ?_, externalData := rfl, publicAmount := ?_,
                            amountRange := ?_, encOutLength := ?_, encodings := wd_encoded _,
-                           poolSeparate := ?_, signed := by simp [signerSigned, wdInputs] },
-           signerCanPay := ?_ }
+                           poolNotRecipient := ?_, signed := by simp [signerSigned, wdInputs] },
+           signerCanPay := ?_, signerNotPoolNotNullifiers := by rw [hfin]; exact (wd_accounts_new hCompl _).2 }
   · intro i hne; fin_cases i
     · refine { inTree := ?_, ownsNote := ?_, knowsNote := ?_ }
       · simp [Witness.openedPos, wdWitness]
@@ -386,8 +482,9 @@ lemma toy_withdrawal_honest (hCompl : Groth16CompleteBytes) :
   · simp [pubAmtConsistent, wdInputs]; norm_num
   · simp [amountsInRange, wdInputs]
   · simp [encOutsFit, wdInputs]
-  · rw [hfin, W1_pool]; exact ⟨toyPool_ne, fun _ => toyPool_ne, fun _ => toyPool_ne⟩
-  · rw [hfin]; unfold signerSolvent; rw [(W1_rent hCompl).1]; simp [wdInputs]
+  · rw [hfin, W1_pool]; exact ⟨fun _ => toyPool_ne, fun _ => toyPool_ne⟩
+  · rw [hfin]; unfold signerSolvent
+    simp [topUp_zero (W1 hCompl) (W1_rent hCompl).1, wdInputs]
 
 lemma wdWitness_real : wdWitness.inAmt 0 ≠ 0 := by
   simp only [wdWitness, Matrix.cons_val_zero]
@@ -397,7 +494,7 @@ lemma wdWitness_real : wdWitness.inAmt 0 ≠ 0 := by
 
 lemma toy_withdrawal_step (hCompl : Groth16CompleteBytes) :
     transact (toyWithdrawal hCompl) (W1 hCompl) (transactEffects (toyWithdrawal hCompl) (W1 hCompl)) := by
-  refine ⟨?_, ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩
+  refine ⟨?_, ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩⟩
   have hcfg : (W1 hCompl).state.config = toyCfg := by
     simp [W1, transactEffects, transferEffects_state, initWorld]
   have hrent : (W1 hCompl).rentExemptMin = 0 := (W1_rent hCompl).2
@@ -413,16 +510,19 @@ lemma toy_withdrawal_step (hCompl : Groth16CompleteBytes) :
     validZKP := ⟨π, hdec, hver⟩
     newNullifiers := ⟨wd_fresh hCompl (wdProof hCompl) 0, wd_fresh hCompl (wdProof hCompl) 1⟩
     distinctNullifiers := ne_14_21
+    nullifierAccountsNew := (wd_accounts_new hCompl _).1
     depositLimit := by simp [depositWithinLimit, wdInputs]
     poolSolvency := by
       refine ⟨fun _ => ?_, fun h => by simp [wdInputs] at h⟩
       rw [W1_poolBalance, hrent]; simp [wdInputs]
-    signerSolvency := by unfold signerSolvent; rw [(W1_rent hCompl).1]; simp [wdInputs]
+    signerSolvency := by
+      unfold signerSolvent; simp [topUp_zero (W1 hCompl) (W1_rent hCompl).1, wdInputs]
     treeNotFull := by unfold treeHasRoom; rw [W1_nextIndex]; norm_num
     amountRange := by simp [amountsInRange, wdInputs]
     encOutLength := by simp [encOutsFit, wdInputs]
-    poolSeparate := by rw [W1_pool]; exact ⟨toyPool_ne, fun _ => toyPool_ne, fun _ => toyPool_ne⟩
+    poolNotRecipient := by rw [W1_pool]; exact ⟨fun _ => toyPool_ne, fun _ => toyPool_ne⟩
     signerSignature := by simp [signerSigned, wdInputs]
+    signerNotPoolNotNullifiers := (wd_accounts_new hCompl _).2
   }
 
 /-- The run of the deposit followed by the withdrawal. -/
@@ -493,11 +593,12 @@ lemma wdSplit_fit (hCompl : Groth16CompleteBytes) (π : Groth16.ProofBytes) {pay
     (h : payout + fee = 2) : balancesFit (wdSplit payout fee π) (W1 hCompl) := by
   refine ⟨fun k _ => ?_, fun h' => by simp [wdSplit] at h'; omega⟩
   have h1 := W1_bal hCompl k
-  have h2 : balanceDelta (wdSplit payout fee π) (W1 hCompl).state.pool (W1 hCompl).nullifierRent k
-      ≤ 2 := by
-    rw [(W1_rent hCompl).1]
+  have h2 : balanceDelta (wdSplit payout fee π) (W1 hCompl) k ≤ 2 := by
+    unfold balanceDelta
+    simp only [topUp_zero (W1 hCompl) (W1_rent hCompl).1, Nat.cast_zero, add_zero, ite_self,
+      sub_zero]
     rcases split_cases h with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;>
-      (unfold balanceDelta; split_ifs <;> simp_all [wdSplit, wdInputs])
+      (split_ifs <;> simp_all [wdSplit, wdInputs])
   linarith
 
 /-- With any split, the toy withdrawal is an honest spend of the deposit's note: only the amounts
@@ -513,8 +614,8 @@ lemma toy_split_honest (hCompl : Groth16CompleteBytes) {payout fee : ℕ} (h : p
                            publicAmount := ?_, amountRange := ?_,
                            encOutLength := hw.wellFormed.encOutLength,
                            encodings := hw.wellFormed.encodings,
-                           poolSeparate := ?_, signed := hw.wellFormed.signed },
-           signerCanPay := ?_ }
+                           poolNotRecipient := ?_, signed := hw.wellFormed.signed },
+           signerCanPay := ?_, signerNotPoolNotNullifiers := by rw [hfin]; exact (wd_accounts_new hCompl (wdProof hCompl)).2 }
   · have hcap2 : ((leaves (toyRun1 hCompl).txs).take 2).length < 2^26 := by
       rw [List.length_take, leaves_length]; simp [toyRun1]
     exact { isPrefix := by simp [toyRun1]
@@ -523,8 +624,9 @@ lemma toy_split_honest (hCompl : Groth16CompleteBytes) {payout fee : ℕ} (h : p
       simp [pubAmtConsistent, wdSplit, wdInputs] <;> norm_num
   · rcases split_cases h with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;>
       simp [amountsInRange, wdSplit, wdInputs]
-  · rw [hfin, W1_pool]; exact ⟨toyPool_ne, fun _ => toyPool_ne, fun _ => toyPool_ne⟩
-  · rw [hfin]; unfold signerSolvent; rw [(W1_rent hCompl).1]
+  · rw [hfin, W1_pool]; exact ⟨fun _ => toyPool_ne, fun _ => toyPool_ne⟩
+  · rw [hfin]; unfold signerSolvent
+    simp only [topUp_zero (W1 hCompl) (W1_rent hCompl).1]
     rcases split_cases h with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;> simp [wdSplit, wdInputs]
 
 /-- **The hypotheses of G3b's `WayIsAccepted` can all hold, on a real spend, for every split.**

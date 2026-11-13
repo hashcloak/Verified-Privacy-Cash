@@ -331,7 +331,7 @@ structure TxWellFormed (inputs : TxInputs) (pool : Pubkey) : Prop where
   /-- The seven public inputs are sent as their canonical encodings. -/
   encodings : publicInputsEncoded inputs
   /-- The pool is not named where it would be paid. -/
-  poolSeparate : poolIsSeparate inputs pool
+  poolNotRecipient : poolNotRecipient inputs pool
   /-- The signer signed the transaction. -/
   signed : signerSigned inputs
 
@@ -347,7 +347,8 @@ def InputUsedInRun {w0 : World} (r : Run w0) (wit : ℕ → Witness) (w : Witnes
     Each input is a real note (`inAmt i ≠ 0`) or a dummy (`inAmt i = 0`).
     Real notes are `genuine` (G1a) and not double spent (`notDoubleSpend`, G1b);
     both must satisfy `inputNotUsedBefore`.
-    The rest is the transaction: `root`, `circuit`, `wellFormed` and `signerCanPay`.
+    The rest is the transaction: `root`, `circuit`, `wellFormed`, `signerCanPay` and
+    `signerNotPoolNotNullifiers`.
 
     `k`: the spend's root is the tree's root after its first `k` leaves. `wit`: the witnesses
     of the run's transactions. -/
@@ -368,7 +369,10 @@ structure HonestSpend {w0 : World} (r : Run w0) (wit : ℕ → Witness) (inputs 
   /-- The transaction's own fields are correct, and it carries a valid proof. -/
   wellFormed : TxWellFormed inputs r.final.state.pool
   /-- The signer's account can pay the rent for the two nullifier accounts and the deposit. -/
-  signerCanPay : signerSolvent r.final.balances inputs.s inputs.extAmt r.final.nullifierRent
+  signerCanPay : signerSolvent r.final.balances inputs.s inputs.extAmt
+    (r.final.nullifierTopUp inputs 0 + r.final.nullifierTopUp inputs 1)
+  /-- The signer is a real account, not one of the program's own accounts. -/
+  signerNotPoolNotNullifiers : signerNotPoolNotNullifiers inputs r.final.state
 
 /-- `LimitsNotHit w inputs`: what can legitimately block the spend `inputs` in world `w`, and the
     owner can't ensure: an attacker or an admin can make these false.
@@ -394,8 +398,27 @@ structure LimitsNotHit (w : World) (inputs : TxInputs) : Prop where
 def CanBeAccepted (inputs : TxInputs) (w : World) : Prop :=
   transact inputs w (transactEffects inputs w)
 
-/-- `SpendBlockedByBreak r wit witness k`: an attacker blocked the owner's honest spend
-    (`witness`, against the root of the first `k` leaves), which needs a hash break.
+/-- `NullifierAddressCollision r inputs`: an address of a new nullifier account of the spend
+    `inputs`, after run `r`, is also the address of another account: of the spend's other new
+    nullifier account, of the pool, or of a nullifier account for a different input slot or
+    nullifier bytes, created by a transaction of `r`. Program-derived addresses are SHA-256
+    hashes, so this needs a SHA-256 collision (T2). -/
+def NullifierAddressCollision {w0 : World} (r : Run w0) (inputs : TxInputs) : Prop :=
+  -- The two new nullifier accounts have the same address,
+  r.final.state.newNullifierAccount inputs 0 = r.final.state.newNullifierAccount inputs 1
+  -- or one of them is the pool's address,
+  ∨ (∃ i, r.final.state.newNullifierAccount inputs i = r.final.state.pool)
+  -- or one of the addresses the spend's nullifiers are checked at (both input slots)
+  ∨ ∃ i slot, ∃ j, ∃ (hj : j < r.txs.length), ∃ i',
+    -- is the address of a nullifier account transaction `j` created,
+    r.final.state.nullifierAddr slot (inputs.nullifierBytes i)
+      = r.final.state.nullifierAddr i' (r.txs[j].nullifierBytes i')
+    -- for a different input slot or nullifier.
+    ∧ (slot, inputs.nullifierBytes i) ≠ (i', r.txs[j].nullifierBytes i')
+
+/-- `SpendBlockedByBreak r wit inputs witness k`: an attacker blocked the owner's honest spend
+    (`inputs`, with secrets `witness`, against the root of the first `k` leaves), or its
+    nullifier accounts can't be created; either needs a hash break.
 
     To make the program reject the spend, the attacker must defeat one of its checks:
     - **drain the pool** (`BreakInSomeSpend`): to leave too little SOL for the owner's
@@ -406,12 +429,19 @@ def CanBeAccepted (inputs : TxInputs) (w : World) : Prop :=
       arguments, i.e. find an `H3` collision;
     - **make the root `0`** (`H2ZeroPreimage`): the program rejects the root `0`. To make
       the tree's root `0`, the attacker must add leaves whose two top subtrees hash to `0`,
-      i.e. find an `H2` preimage of `0`. -/
-def SpendBlockedByBreak {w0 : World} (r : Run w0) (wit : ℕ → Witness) (witness : Witness) (k : ℕ) : Prop :=
+      i.e. find an `H2` preimage of `0`.
+
+    Or the spend's nullifier accounts can't be created, or its nullifier counts as spent
+    because another nullifier's account is at one of its addresses
+    (`NullifierAddressCollision`): a SHA-256 collision. -/
+def SpendBlockedByBreak {w0 : World} (r : Run w0) (wit : ℕ → Witness) (inputs : TxInputs)
+    (witness : Witness) (k : ℕ) : Prop :=
   -- Drain pool by breaking spending
   BreakInSomeSpend r wit
   -- or, already use the nullifiers
   ∨ NullifierTakenByCollision r wit witness
+  -- or an address of the spend's nullifier accounts is taken
+  ∨ NullifierAddressCollision r inputs
   -- or the 2 last nodes hash together to obtain 0 for root
   ∨ H2ZeroPreimage (treeHash (r.firstLeaves k) 25 0, treeHash (r.firstLeaves k) 25 1)
 

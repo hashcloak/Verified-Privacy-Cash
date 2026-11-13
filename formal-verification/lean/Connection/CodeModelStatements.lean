@@ -138,12 +138,12 @@ variable {d : Deployment} {rent : Nat → U64} {sGenesis s s' : State} {evs : Li
   (solana : SolanaFacts d tx)               -- [assumed] Solana runtime facts
   (crypto : CryptoFacts d proof)                           -- [assumed] SHA-256 facts
   (circuit : CircuitFacts d {proof})                     -- [assumed] the circuit keeps the nullifiers distinct (I1)
-  (outside : OutsideSpecDetail d rent s tx a proof)        -- [by design] details the spec omits
+  (sameRent : SameRent rent tx)                            -- [assumed] same rent as the spec
   (hgen : Genesis d.programId sGenesis)                    -- [premise] an execution from genesis
   (hrun : Run d sGenesis evs s)                            --   ...that reached `s`
   (hstep : Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s')
                                                            -- [premise] ...then accepted a transact (one more step)
-include deploy C laws hashes solana crypto circuit outside hgen hrun hstep
+include deploy C laws hashes solana crypto circuit sameRent hgen hrun hstep
 
 /-! #### G2. Non-malleability
 
@@ -151,8 +151,7 @@ G2b (`shared_nullifier_requires_owner_key`) has no code version: it is about cir
 only, with no code involved. -/
 
 /-- **G2a for the code**: if the accepted transaction has the public inputs of a
-    well-formed honest transaction `T`, the two pay out the same (`SamePayout`). Like
-    `transact_connection`, it excludes what `OutsideSpecDetail` rules out. -/
+    well-formed honest transaction `T`, the two pay out the same (`SamePayout`). -/
 theorem samePayout_code :
     letI : LeanSpec.Groups := syscallGroups C
     letI : LeanSpec.Pairing := syscallPairing C
@@ -164,35 +163,29 @@ theorem samePayout_code :
       (_hSame : T.pubInputs = inputs.pubInputs),           -- [attacker] the accepted transaction
                                                            --   has its public inputs
       LeanSpec.Goals.SamePayout T inputs :=
-  same_payout_pf hgen hrun deploy.programNotSystem hstep C laws hashes solana crypto circuit outside
+  same_payout_pf hgen hrun deploy.programNotSystem hstep C laws hashes solana crypto circuit sameRent
 
 /-! #### G4. Correct public payouts -/
 
 /-- **G4a for the code**: in the accepted transaction, only accounts that signed pay, and at most
-    what they agreed to (`OnlySignersPay`). Like `transact_connection`, it excludes what
-    `OutsideSpecDetail` rules out: a different rent, a pre-funded nullifier address, or a payee that
-    is a nullifier account. -/
+    what they agreed to (`OnlySignersPay`). -/
 theorem onlySignersPay_code :
     letI : LeanSpec.Groups := syscallGroups C
     letI : LeanSpec.Pairing := syscallPairing C
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     let inputs := toInputs tx.signers a proof extAmount fee out1 out2
-    LeanSpec.Goals.OnlySignersPay inputs (toWorld d rent (runSpent evs) s)
-      (toWorld d rent (runSpent evs ∪ {inputs.k0, inputs.k1}) s') :=
-  only_signers_pay_pf hgen hrun deploy.programNotSystem hstep C laws hashes solana crypto circuit outside
+    LeanSpec.Goals.OnlySignersPay inputs (toWorld d rent s) (toWorld d rent s') :=
+  only_signers_pay_pf hgen hrun deploy.programNotSystem hstep C laws hashes solana crypto circuit sameRent
 
 /-- **G4b for the code**: in the accepted transaction, every account changes by exactly what
-    it should receive minus what it should pay (`ExactPayouts`). Like `transact_connection`, it
-    excludes what `OutsideSpecDetail` rules out: a different rent, a pre-funded nullifier address, or
-    a payee that is a nullifier account. -/
+    it should receive minus what it should pay (`ExactPayouts`). -/
 theorem exactPayouts_code :
     letI : LeanSpec.Groups := syscallGroups C
     letI : LeanSpec.Pairing := syscallPairing C
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     let inputs := toInputs tx.signers a proof extAmount fee out1 out2
-    LeanSpec.Goals.ExactPayouts inputs (toWorld d rent (runSpent evs) s)
-      (toWorld d rent (runSpent evs ∪ {inputs.k0, inputs.k1}) s') :=
-  exact_payouts_pf hgen hrun deploy.programNotSystem hstep C laws hashes solana crypto circuit outside
+    LeanSpec.Goals.ExactPayouts inputs (toWorld d rent s) (toWorld d rent s') :=
+  exact_payouts_pf hgen hrun deploy.programNotSystem hstep C laws hashes solana crypto circuit sameRent
 
 end
 
@@ -240,13 +233,13 @@ theorem honestSpendIsAccepted_code
     let inputs := toInputs tx.signers a proof ext fee out1 out2
     ∀ (params : LeanSpec.InitParams) (r : LeanSpec.Run (LeanSpec.initWorld params))
       (wit : ℕ → LeanSpec.Witness) (witness : LeanSpec.Witness) (k : ℕ),
-      toWorld d rent (runSpent evs) s = r.final →          -- [premise] nothing changed since the
+      toWorld d rent s = r.final →          -- [premise] nothing changed since the
                                                            --   run's last transaction
       r.WitnessesFor wit →                                 -- [assumption T1]
       LeanSpec.HonestSpend r wit inputs witness k →        -- [owner]
       LeanSpec.LimitsNotHit r.final inputs →               -- [limit]
       (∃ s' events, step d s tx (.transact a proof ext fee out1 out2) = .ok (s', events))
-        ∨ LeanSpec.SpendBlockedByBreak r wit witness k :=
+        ∨ LeanSpec.SpendBlockedByBreak r wit inputs witness k :=
   honest_spend_is_accepted_pf hgen hrun deploy.programNotSystem C laws hashes assume reach notL1 notA0
 
 /-- **G3b for the code.** A way to withdraw notes worth `spentAmt` lamports exists, at least half
@@ -260,7 +253,7 @@ theorem adminsCannotLockWithdrawals_code :
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     ∀ (params : LeanSpec.InitParams) (r : LeanSpec.Run (LeanSpec.initWorld params))
       (wit : ℕ → LeanSpec.Witness) (spentAmt : ℕ),
-      toWorld d rent (runSpent evs) s = r.final →          -- [premise] nothing changed since the
+      toWorld d rent s = r.final →          -- [premise] nothing changed since the
                                                            --   run's last transaction
       r.WitnessesFor wit →                                 -- [assumption T1]
       2 ≤ spentAmt →                                       -- [premise] the total of the notes the owner spends
@@ -284,7 +277,7 @@ theorem adminsCannotLockWithdrawals_code :
           LeanSpec.treeHasRoom r.final.state.tree →        -- [limit] the tree is not full
           LeanSpec.balancesFit inputs r.final →            -- [limit] no credited balance overflows
           (∃ s' events, step d s tx (.transact a proof ext fee out1 out2) = .ok (s', events))
-            ∨ LeanSpec.SpendBlockedByBreak r wit witness k :=
+            ∨ LeanSpec.SpendBlockedByBreak r wit inputs witness k :=
   admins_cannot_lock_withdrawals_pf hgen hrun deploy.programNotSystem C laws hashes assume
 
 end
@@ -343,7 +336,7 @@ theorem liveness_code_nonvacuous
       Genesis Toy.toyD.programId sGenesis ∧ Run Toy.toyD sGenesis evs s ∧ DeploymentFacts Toy.toyD
       ∧ PairingLaws Toy.toyC.e ∧ HashesAgree Toy.toyD.crypto ∧ CompletenessAssumptions Toy.toyD.crypto Toy.toyC
       -- the hypotheses of G3a and G3b for the code about the run
-      ∧ toWorld Toy.toyD Toy.toyRent (runSpent evs) s = r.final
+      ∧ toWorld Toy.toyD Toy.toyRent s = r.final
       ∧ r.WitnessesFor wit
       -- for every way to withdraw 2 lamports
       ∧ ∀ payout feeAmount : ℕ,

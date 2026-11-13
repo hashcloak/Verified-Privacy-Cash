@@ -320,8 +320,15 @@ structure Tree where
 
 structure State where
   tree: Tree
-  nullifiers: Finset F
+  -- SOLANA FACT: the nullifier accounts that exist. Spending a nullifier creates an account
+  -- at its address (`nullifierAddr`); a nullifier is spent when such an account exists
+  -- (`State.spent`).
+  nullifierAccounts: Finset Pubkey
   pool: Pubkey -- the pool's account (the `tree_token` PDA), which holds the pool's SOL
+  -- SOLANA FACT: the address of the nullifier account for a nullifier, given as its 32 bytes,
+  -- spent as input 0 or input 1 of a transaction: a program-derived address (PDA), one per
+  -- input slot. Fixed for the deployment.
+  nullifierAddr: Fin 2 → Bytes → Pubkey
   config: config
 
 -- Needed: `balances` is how deposits/withdrawals/fees actually move real SOL between
@@ -330,11 +337,11 @@ structure State where
 -- depositor can cover their deposit. Without it there'd be nothing to state those over.
 structure World where
   state: State
-  balances: Pubkey → ℕ -- balances of (public) Solana accounts in lamports
+  balances: Pubkey → ℕ -- balances of Solana accounts in lamports
   -- SOLANA FACT: the pool's rent-exempt minimum, the lamports it must keep to keep existing
   rentExemptMin: ℕ
-  -- SOLANA FACT: the lamports the signer pays (the rent-exempt minimum) for each nullifier
-  -- account a transaction creates
+  -- SOLANA FACT: a nullifier account's rent-exempt minimum: the lamports it must hold when a
+  -- transaction creates it (the signer pays what its address is missing, `nullifierTopUp`)
   nullifierRent: ℕ
 
 --/////////////////////////////////////////
@@ -424,6 +431,26 @@ def externalDataHash (inputs : TxInputs) : F :=
 /-- The pool's SOL: the balance of the pool's account. -/
 def World.poolBalance (w : World) : ℕ := w.balances w.state.pool
 
+/-- The bytes of input nullifier `i`, as the sender sends them: public inputs 3 and 4. -/
+def TxInputs.nullifierBytes (inputs : TxInputs) (i : Fin 2) : Bytes :=
+  ![inputs.pubInputBytes 3, inputs.pubInputBytes 4] i
+
+/-- `st.spent b`: the nullifier with bytes `b` is spent: its nullifier account exists, for
+    input slot 0 or input slot 1. -/
+def State.spent (st : State) (b : Bytes) : Prop :=
+  st.nullifierAddr 0 b ∈ st.nullifierAccounts ∨ st.nullifierAddr 1 b ∈ st.nullifierAccounts
+
+/-- `st.newNullifierAccount inputs i`: the address of the nullifier account the transaction
+    creates for its input `i`. -/
+def State.newNullifierAccount (st : State) (inputs : TxInputs) (i : Fin 2) : Pubkey :=
+  st.nullifierAddr i (inputs.nullifierBytes i)
+
+/-- `w.nullifierTopUp inputs i`: what the signer pays into the address of the new nullifier
+    account for input `i`: what that address is missing to hold the nullifier rent (`0` if it
+    already holds that much). -/
+def World.nullifierTopUp (w : World) (inputs : TxInputs) (i : Fin 2) : ℕ :=
+  w.nullifierRent - w.balances (w.state.newNullifierAccount inputs i)
+
 /-- Move `x` lamports from account `src` to account `dst`. -/
 def moveLamports (b : Pubkey → ℕ) (src dst : Pubkey) (x : ℕ) : Pubkey → ℕ :=
   let b' := Function.update b src (b src - x)
@@ -447,11 +474,17 @@ def transferEffects (inputs: TxInputs) (oldWorld: World): World :=
 
 -- The signer pays the rent for the two nullifier accounts a transaction creates (Anchor
 -- `init` with `payer = signer` on `nullifier0` and `nullifier1`, before the instruction body
--- runs). Network fees are charged by the runtime before the program runs, so they are not
--- part of the balances the program sees.
+-- runs), first for input 0, then for input 1. Network fees are charged by the runtime before
+-- the program runs, so they are not part of the balances the program sees.
+-- SOLANA FACT: anyone can send lamports to an address before an account is created there.
+-- The signer then pays only what the address is missing to hold the rent (`nullifierTopUp`).
 def nullifierRentEffects (inputs: TxInputs) (oldWorld: World): World :=
-  let rentPaid := oldWorld.balances inputs.s - 2 * oldWorld.nullifierRent
-  { oldWorld with balances := Function.update oldWorld.balances inputs.s rentPaid }
+  let paid0 := moveLamports oldWorld.balances inputs.s
+    (oldWorld.state.newNullifierAccount inputs 0) (oldWorld.nullifierTopUp inputs 0)
+  let w0 : World := { oldWorld with balances := paid0 }
+  let paid1 := moveLamports paid0 inputs.s
+    (w0.state.newNullifierAccount inputs 1) (w0.nullifierTopUp inputs 1)
+  { oldWorld with balances := paid1 }
 
 -- Returns a new World after updating all necessary elements according to the txInputs
 def transactEffects (inputs: TxInputs)(oldWorld: World): World :=
@@ -462,8 +495,9 @@ def transactEffects (inputs: TxInputs)(oldWorld: World): World :=
       -- Append outC0, then append outC1.
       -- This insert the output commitments & updates the Merkle root
       tree:= appendEffects inputs.outC1 (appendEffects inputs.outC0 worldAfterTransfers.state.tree)
-      -- Add nullifiers to the state.
-      nullifiers := worldAfterTransfers.state.nullifiers ∪ {inputs.k0, inputs.k1}
+      -- Create the two nullifier accounts: this records both nullifiers as spent.
+      nullifierAccounts := worldAfterTransfers.state.nullifierAccounts ∪
+        {oldWorld.state.newNullifierAccount inputs 0, oldWorld.state.newNullifierAccount inputs 1}
     }
     -- The fee moves from the pool to the fee recipient
     balances := moveLamports worldAfterTransfers.balances worldAfterTransfers.state.pool inputs.t
@@ -472,15 +506,18 @@ def transactEffects (inputs: TxInputs)(oldWorld: World): World :=
 
 /-- What one transaction moves into (positive) or out of (negative) account `k`, summed
     over every role `k` plays: the recipient receives `|extAmt|` on a withdrawal, the fee
-    recipient receives `f`, the signer pays `extAmt` on a deposit and the rent for the two
-    nullifier accounts (`rent` each), and the pool gains `extAmt − f`. An account with
-    several roles (e.g. a relayer that signs and collects the fee) gets the sum. -/
-def balanceDelta (inputs : TxInputs) (pool : Pubkey) (rent : ℕ) (k : Pubkey) : ℤ :=
+    recipient receives `f`, the signer pays `extAmt` on a deposit and the top-ups of the two
+    new nullifier accounts, each of which receives its top-up, and the pool gains `extAmt − f`.
+    An account with several roles (e.g. a relayer that signs and collects the fee) gets the
+    sum. `w`: the world before the transaction. -/
+def balanceDelta (inputs : TxInputs) (w : World) (k : Pubkey) : ℤ :=
   (if k = inputs.A ∧ inputs.extAmt < 0 then (inputs.extAmt.natAbs : ℤ) else 0)
   + (if k = inputs.t then (inputs.f : ℤ) else 0)
   - (if k = inputs.s ∧ inputs.extAmt > 0 then inputs.extAmt else 0)
-  - (if k = inputs.s then 2 * (rent : ℤ) else 0)
-  + (if k = pool then inputs.extAmt - inputs.f else 0)
+  - (if k = inputs.s then (w.nullifierTopUp inputs 0 + w.nullifierTopUp inputs 1 : ℤ) else 0)
+  + (if k = w.state.newNullifierAccount inputs 0 then (w.nullifierTopUp inputs 0 : ℤ) else 0)
+  + (if k = w.state.newNullifierAccount inputs 1 then (w.nullifierTopUp inputs 1 : ℤ) else 0)
+  + (if k = w.state.pool then inputs.extAmt - inputs.f else 0)
 
 --/////////////////////////////////////////
 -- Preconditions, one named condition each.
@@ -528,14 +565,22 @@ def proofValid (inputs: TxInputs): Prop :=
 -- big-endian value is below `p` and is the field element the spec uses.
 -- ADDED MANUALLY (docs silent): the canonical encoding check, big-endian value < p. Taken from
 -- the code (`prepare_inputs`). The spec needs it because without it the bytes of `x + p` would
--- be accepted as `x`, so one nullifier could be sent as two different byte strings (two different
--- nullifier accounts on-chain) while the spec sees one.
+-- be accepted as `x`, so one nullifier could be sent as two different byte strings, with two
+-- different nullifier accounts (`nullifierAddr`), and be spent twice.
 def publicInputsEncoded (inputs: TxInputs): Prop :=
   ∀ i, canonicalEncoding (inputs.pubInputBytes i) (Groth16.toVector inputs.pubInputs i)
 
--- Neither input nullifier has been spent before.
-def nullifiersFresh (spent: Finset F) (k0 k1: F): Prop :=
-  k0 ∉ spent ∧ k1 ∉ spent
+-- Neither input nullifier has been spent before, in either input slot.
+def nullifiersFresh (st: State) (inputs: TxInputs): Prop :=
+  ¬ st.spent (inputs.nullifierBytes 0) ∧ ¬ st.spent (inputs.nullifierBytes 1)
+
+-- The two new nullifier accounts can be created: no account exists at their addresses yet
+-- (`nullifiersFresh` covers the existing nullifier accounts).
+-- SOLANA FACT: Anchor's `init` fails if an account already exists at the address. The pool's
+-- account exists, and the account for input 0 is created before the one for input 1.
+def nullifierAccountsCreatable (st: State) (inputs: TxInputs): Prop :=
+  st.newNullifierAccount inputs 0 ≠ st.newNullifierAccount inputs 1 ∧
+  st.newNullifierAccount inputs 0 ≠ st.pool ∧ st.newNullifierAccount inputs 1 ≠ st.pool
 
 -- The two input nullifiers differ. Enforced by the circuit (`noDuplicateNullifiers`),
 -- not checked by the program itself.
@@ -553,11 +598,12 @@ def poolSolvent (poolBalance rentExemptMin: ℕ) (extAmt: ℤ) (f: ℕ): Prop :=
   (extAmt < 0 → poolBalance ≥ |extAmt| + f + rentExemptMin) ∧
   (extAmt ≥ 0 ∧ f > 0 → poolBalance + extAmt ≥ f + rentExemptMin)
 
--- The signer can pay the rent for the two nullifier accounts and, on a deposit, the deposit.
+-- The signer can pay the rent for the two nullifier accounts (`topUps`, what the two addresses
+-- are missing) and, on a deposit, the deposit.
 -- Enforced on-chain: Anchor's `init` fails if the signer can't pay the rent, and the deposit
 -- transfer fails if the signer can't cover it. It isn't a silent underflow.
-def signerSolvent (balances: Pubkey → ℕ) (s: Pubkey) (extAmt: ℤ) (nullifierRent: ℕ): Prop :=
-  balances s ≥ 2 * nullifierRent + (if extAmt > 0 then extAmt.natAbs else 0)
+def signerSolvent (balances: Pubkey → ℕ) (s: Pubkey) (extAmt: ℤ) (topUps: ℕ): Prop :=
+  balances s ≥ topUps + (if extAmt > 0 then extAmt.natAbs else 0)
 
 -- The signer really signed the transaction.
 -- SOLANA FACT: an account's SOL can be spent only with its signature. Enforced on-chain by
@@ -565,6 +611,15 @@ def signerSolvent (balances: Pubkey → ℕ) (s: Pubkey) (extAmt: ℤ) (nullifie
 -- the signer and take its SOL (G4a).
 def signerSigned (inputs: TxInputs): Prop :=
   inputs.s ∈ inputs.signers
+
+-- The signer is none of the program's own accounts: not the pool, and not the two new
+-- nullifier accounts.
+-- SOLANA FACT: these are program-derived addresses (PDAs), which have no private key, so they
+-- can't sign. Without this rule the signer could be paid its own nullifier rent, and the pool
+-- could pay a deposit to itself.
+def signerNotPoolNotNullifiers (inputs: TxInputs) (st: State): Prop :=
+  inputs.s ≠ st.pool ∧
+  inputs.s ≠ st.newNullifierAccount inputs 0 ∧ inputs.s ≠ st.newNullifierAccount inputs 1
 
 -- There is room in the tree for the two output commitments (the tree holds `2^26` leaves).
 def treeHasRoom (T: Tree): Prop :=
@@ -584,18 +639,18 @@ def amountsInRange (extAmt: ℤ) (f: ℕ): Prop :=
 def encOutsFit (inputs: TxInputs): Prop :=
   inputs.encOut0.length < 2^32 ∧ inputs.encOut1.length < 2^32
 
--- The pool's account is not the signer, and is not paid as recipient or fee recipient.
+-- The pool's account is not paid as recipient or fee recipient.
 -- SOLANA FACT: a modelling precondition. It makes the pool's balance change by exactly
 -- `extAmt − f` (`sol_balance_correctness_step`), which G1c (every unspent note is backed by SOL
 -- in the pool) and G4 (correct public payouts) rely on: a withdrawal paid to the pool
--- would spend notes while the SOL stays in the pool. It holds on Solana: the signer can't be
--- the pool (a program address can't sign); if the pool is paid as recipient or fee recipient,
--- the program reads both balances and then writes both, which would create lamports, and the
--- runtime rejects any instruction that doesn't conserve lamports (the program itself doesn't
--- check this). Naming the pool where it is not paid (the recipient of a deposit, the fee
--- recipient of a zero fee) is allowed: nothing moves.
-def poolIsSeparate (inputs: TxInputs) (pool: Pubkey): Prop :=
-  inputs.s ≠ pool ∧ (inputs.extAmt < 0 → inputs.A ≠ pool) ∧ (inputs.f > 0 → inputs.t ≠ pool)
+-- would spend notes while the SOL stays in the pool. It holds on Solana: if the pool is paid
+-- as recipient or fee recipient, the program reads both balances and then writes both, which
+-- would create lamports, and the runtime rejects any instruction that doesn't conserve
+-- lamports (the program itself doesn't check this). Naming the pool where it is not paid (the
+-- recipient of a deposit, the fee recipient of a zero fee) is allowed: nothing moves. That the
+-- signer is not the pool is `signerNotPoolNotNullifiers`.
+def poolNotRecipient (inputs: TxInputs) (pool: Pubkey): Prop :=
+  (inputs.extAmt < 0 → inputs.A ≠ pool) ∧ (inputs.f > 0 → inputs.t ≠ pool)
 
 -- Every balance a payment credits is below 2^64 after that payment: every account the
 -- transaction credits (`balanceDelta` positive) ends below 2^64, and so does the pool right
@@ -605,8 +660,7 @@ def poolIsSeparate (inputs: TxInputs) (pool: Pubkey): Prop :=
 -- supply. The pool between deposit and fee is the only intermediate balance that can exceed
 -- a final one (every other payment only adds to its payee's final balance).
 def balancesFit (inputs: TxInputs) (w: World): Prop :=
-  (∀ k, 0 < balanceDelta inputs w.state.pool w.nullifierRent k →
-    (w.balances k : ℤ) + balanceDelta inputs w.state.pool w.nullifierRent k < 2^64) ∧
+  (∀ k, 0 < balanceDelta inputs w k → (w.balances k : ℤ) + balanceDelta inputs w k < 2^64) ∧
   (inputs.extAmt > 0 → (w.poolBalance : ℤ) + inputs.extAmt < 2^64)
 
 structure transactPreconditions
@@ -617,28 +671,32 @@ structure transactPreconditions
   minimumFee: feeSufficient oldWorld.state.config inputs.extAmt inputs.f
   pubAmtConsistency: pubAmtConsistent inputs.extAmt inputs.f inputs.pubAmt
   validZKP: proofValid inputs
-  newNullifiers: nullifiersFresh oldWorld.state.nullifiers inputs.k0 inputs.k1
+  newNullifiers: nullifiersFresh oldWorld.state inputs
   distinctNullifiers: nullifiersDistinct inputs.k0 inputs.k1
+  nullifierAccountsNew: nullifierAccountsCreatable oldWorld.state inputs
   depositLimit: depositWithinLimit oldWorld.state.config inputs.extAmt
   poolSolvency: poolSolvent oldWorld.poolBalance oldWorld.rentExemptMin inputs.extAmt inputs.f
-  signerSolvency: signerSolvent oldWorld.balances inputs.s inputs.extAmt oldWorld.nullifierRent
+  signerSolvency: signerSolvent oldWorld.balances inputs.s inputs.extAmt
+    (oldWorld.nullifierTopUp inputs 0 + oldWorld.nullifierTopUp inputs 1)
   signerSignature: signerSigned inputs
+  signerNotPoolNotNullifiers: signerNotPoolNotNullifiers inputs oldWorld.state
   -- The 2 output commitments are added to the tree; make sure there is space for both
   treeNotFull: treeHasRoom oldWorld.state.tree
   amountRange: amountsInRange inputs.extAmt inputs.f
   encOutLength: encOutsFit inputs
-  poolSeparate: poolIsSeparate inputs oldWorld.state.pool
+  poolNotRecipient: poolNotRecipient inputs oldWorld.state.pool
   canonicalInputs: publicInputsEncoded inputs
   balancesFit: balancesFit inputs oldWorld
 
 /-- `actual` agrees with `predicted` on everything, field by field: every account balance
-    (uninvolved accounts stay unchanged, the pool's included), the pool's address, the tree, the nullifiers, the config and
-    the rent amounts. Kept field by field so the code-side theorem can prove each part on
-    its own. -/
+    (uninvolved accounts stay unchanged, the pool's included), the pool's address, the tree, the
+    nullifier accounts and their addresses, the config and the rent amounts. Kept field by
+    field so the code-side theorem can prove each part on its own. -/
 structure AgreesOnProgramEffects (inputs : TxInputs) (predicted actual : World) : Prop where
   tree          : actual.state.tree = predicted.state.tree
-  nullifiers    : actual.state.nullifiers = predicted.state.nullifiers
+  nullifierAccounts : actual.state.nullifierAccounts = predicted.state.nullifierAccounts
   pool          : actual.state.pool = predicted.state.pool
+  nullifierAddr : actual.state.nullifierAddr = predicted.state.nullifierAddr
   config        : actual.state.config = predicted.state.config
   rentExemptMin : actual.rentExemptMin = predicted.rentExemptMin
   nullifierRent : actual.nullifierRent = predicted.nullifierRent
@@ -688,6 +746,8 @@ structure InitParams where
   nullifierRent : ℕ
   -- The pool's account.
   pool : Pubkey
+  -- SOLANA FACT: where nullifier accounts are created (`State.nullifierAddr`).
+  nullifierAddr : Fin 2 → Bytes → Pubkey
   -- Who initialized the pool.
   initializer : Pubkey
   -- SOLANA FACT: the accounts that signed the `initialize` transaction.
@@ -720,8 +780,9 @@ structure InitParams where
 def initWorld (params : InitParams) : World := {
   state := {
     tree := initTree
-    nullifiers := ∅
+    nullifierAccounts := ∅
     pool := params.pool
+    nullifierAddr := params.nullifierAddr
     config := params.cfg
   }
   -- Function.update from Lean Mathlib
@@ -792,8 +853,9 @@ inductive ReachableByAdminChanges : List AdminChange → config → config → P
     `transact`.
 
     The world doesn't stand still between two `transact`s: anyone can send SOL, account owners
-    can spend, and admins can change the config. The tree and the nullifiers stay as they are,
-    because only `transact` changes them.
+    can spend, and admins can change the config. The tree and the nullifier accounts stay as they
+    are, because only `transact` changes them (SOLANA FACT: only the program can create an
+    account at its own derived address, and it never closes a nullifier account).
 
     This records the outcome for balances: for example, the pool's new total balance, not the
     amount someone sent. For the config it also records the activity, because who changed it
@@ -806,7 +868,7 @@ structure UpdatedValuesBetweenTransacts where
   adminChanges : List AdminChange
 
 /-- `w.withUpdatedValues b`: world `w` with the balances and config of `b`; the tree, the
-    nullifiers, the pool's address and the rent stay as they are. -/
+    nullifier accounts and their addresses, the pool's address and the rent stay as they are. -/
 def World.withUpdatedValues (w : World) (b : UpdatedValuesBetweenTransacts) : World :=
   { w with state := { w.state with config := b.config }, balances := b.balances }
 

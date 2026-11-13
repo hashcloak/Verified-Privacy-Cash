@@ -428,11 +428,14 @@ theorem dep_pre (s₂ : State) (tree : merkle_tree.MerkleTreeAccount) (config : 
     (hTm : 2 ≤ tree.max_deposit_amount.val)
     (hdr : config.deposit_fee_rate.val = 0) {n : ℕ} (hn : n + 2 < 2 ^ 64)
     (hsigB : (s₂ (pk 1#u8)).lamports.val = 995) (hpoolB : (s₂ tokenA).lamports.val = n) :
-    HandlerPre Unit Unit Unit toyTx.signers toyCrypto toyC depA s₂ 1#u64 tree config ∅ depProof 2#i64 0#u64
+    HandlerPre Unit Unit Unit toyTx.signers toyCrypto toyC depA s₂ 1#u64 tree config ∅ (handlerAddr depA)
+      depProof 2#i64 0#u64
       emptySlice emptySlice := by
   unfold HandlerPre
   have hn' : n + 2 < 18446744073709551616 := hn
-  obtain ⟨-, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, hTP, -⟩ := dep_addr
+  obtain ⟨-, a02, -, a04, -, a12, -, a14, a0n1, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, hTP, -⟩ := dep_addr
+  have hfacts := handlerAddr_facts toyTx.signers depA depProof 2#i64 0#u64 emptySlice emptySlice s₂ 1#u64
+    tree config ∅ a0n1 a02 a12 (Ne.symm a04) (Ne.symm a14) (Ne.symm hTP)
   have hdec := decode_toInputs (signers := toyTx.signers) toyC depProof depA 2#i64 0#u64 emptySlice emptySlice
     toy_alpha_decodes rfl toy_zeros_decodes
   have hk0 : depProof.input_nullifiers.val[0]! = zeros32 := rfl
@@ -444,7 +447,7 @@ theorem dep_pre (s₂ : State) (tree : merkle_tree.MerkleTreeAccount) (config : 
     (inferInstanceAs (Module LeanSpec.F Unit))
     (inferInstanceAs (CommGroup Unit))
     (syscallPairing toyC) (@LeanSpec.Deployment.mk (syscallGroups toyC) (programKey toyC)) _ _
-    ?_ ?_ ?_ ?_ ⟨_, hdec, rfl⟩ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_
+    ?_ ?_ ?_ ?_ ⟨_, hdec, rfl⟩ ?_ ?_ hfacts.1 ?_ ?_ ?_ ?_ hfacts.2 ?_ ?_ ?_ ?_ ?_ ?_
   · show LeanSpec.rootBytesKnown (toTree tree) (toBytes one32.val)
     rw [rootBytesKnown_iff]
     refine ⟨canonical_one32, ⟨⟨0, ?_⟩, by rw [toF_one32]; exact h10⟩⟩
@@ -456,7 +459,7 @@ theorem dep_pre (s₂ : State) (tree : merkle_tree.MerkleTreeAccount) (config : 
   · unfold LeanSpec.pubAmtConsistent; rw [he, hf]
     refine ⟨fun _ => by omega, ?_⟩
     show toF two32 = _; rw [toF_two32]; simp
-  · simp [LeanSpec.nullifiersFresh, handlerWorld]
+  · simp [LeanSpec.nullifiersFresh, LeanSpec.State.spent, handlerWorld]
   · show toF _ ≠ toF _
     rw [hk0, hk1, toF_zeros32, toF_one32]; exact h10.symm
   · intro _; rw [he]; show (2 : ℤ) ≤ (tree.max_deposit_amount.val : ℤ)
@@ -464,13 +467,15 @@ theorem dep_pre (s₂ : State) (tree : merkle_tree.MerkleTreeAccount) (config : 
   · unfold LeanSpec.poolSolvent; rw [he, hf]
     exact ⟨fun h => by omega, fun h => by omega⟩
   · unfold LeanSpec.signerSolvent; rw [he]
-    show (s₂ (fromPubkey (toPubkey depA.signer))).lamports.val ≥ 2 * 0 + _
+    simp only [LeanSpec.World.nullifierTopUp, show (handlerWorld depA s₂ 1#u64 tree config ∅
+      (handlerAddr depA)).nullifierRent = 0 from rfl, Nat.zero_sub]
+    show (s₂ (fromPubkey (toPubkey depA.signer))).lamports.val ≥ 0 + 0 + _
     rw [fromPubkey_toPubkey]; show (s₂ (pk 1#u8)).lamports.val ≥ _; rw [hsigB]; simp
   · exact List.mem_map_of_mem (f := toPubkey) (List.mem_singleton.mpr rfl)
   · show tree.next_index.val ≤ 2 ^ 26 - 2; rw [hTn]; simp
   · unfold LeanSpec.amountsInRange; rw [he, hf]; norm_num
   · simp [LeanSpec.encOutsFit, toInputs, emptySlice, toBytes]
-  · refine ⟨fun e => (Ne.symm hTP) (toPubkey_inj e), fun h => ?_, fun h => ?_⟩
+  · refine ⟨fun h => ?_, fun h => ?_⟩
     · rw [he] at h; omega
     · rw [hf] at h; omega
   · intro i
@@ -486,22 +491,22 @@ theorem dep_pre (s₂ : State) (tree : merkle_tree.MerkleTreeAccount) (config : 
     · exact ⟨canonical_zeros32, rfl⟩
   · refine ⟨fun k hk => ?_, fun _ => ?_⟩
     · -- only the pool is credited, and it holds `n` lamports before the deposit
-      have hpool : (handlerWorld depA s₂ 1#u64 tree config ∅).state.pool = toPubkey tokenA := rfl
-      have hnr : (handlerWorld depA s₂ 1#u64 tree config ∅).nullifierRent = 0 := rfl
+      have hpool : (handlerWorld depA s₂ 1#u64 tree config ∅ (handlerAddr depA)).state.pool = toPubkey tokenA := rfl
+      have hnr : (handlerWorld depA s₂ 1#u64 tree config ∅ (handlerAddr depA)).nullifierRent = 0 := rfl
       by_cases hkp : k = toPubkey tokenA
       · subst hkp
-        have hb : (handlerWorld depA s₂ 1#u64 tree config ∅).balances (toPubkey tokenA) = n := by
+        have hb : (handlerWorld depA s₂ 1#u64 tree config ∅ (handlerAddr depA)).balances (toPubkey tokenA) = n := by
           show (s₂ (fromPubkey (toPubkey tokenA))).lamports.val = n
           rw [fromPubkey_toPubkey, hpoolB]
         rw [hb]
-        unfold LeanSpec.balanceDelta
-        rw [he, hf, hpool, hnr]
+        rw [balanceDelta_noRent _ _ hnr]
+        rw [he, hf, hpool]
         split_ifs <;> push_cast <;> omega
       · exfalso
-        unfold LeanSpec.balanceDelta at hk
-        rw [he, hf, hpool, hnr, if_neg hkp] at hk
+        rw [balanceDelta_noRent _ _ hnr] at hk
+        rw [he, hf, hpool, if_neg hkp] at hk
         split_ifs at hk <;> omega
-    · show ((handlerWorld depA s₂ 1#u64 tree config ∅).balances (toPubkey tokenA) : ℤ) + _ < _
+    · show ((handlerWorld depA s₂ 1#u64 tree config ∅ (handlerAddr depA)).balances (toPubkey tokenA) : ℤ) + _ < _
       rw [he]
       show ((s₂ (fromPubkey (toPubkey tokenA))).lamports.val : ℤ) + 2 < _
       rw [fromPubkey_toPubkey, hpoolB]; push_cast; omega
@@ -554,7 +559,8 @@ theorem toy_deposit_ok_pool (s₁ : State) (tree : merkle_tree.MerkleTreeAccount
     rw [show sB tokenA = s₁ tokenA from (kB tokenA hTP (Ne.symm a12)).trans (kA tokenA hTP (Ne.symm a02)), hK]
   -- the handler
   obtain ⟨ap, env', tree', hh⟩ := handler_ok_exists toyCrypto toyC toyLaws toyHashesAgree toyHashesSucceed
-    toySyscalls toyKey depA sB 1#u64 tree config ∅ depProof 2#i64 0#u64 emptySlice emptySlice hshape hroots
+    toySyscalls toyKey depA sB 1#u64 tree config ∅ (handlerAddr depA) depProof 2#i64 0#u64 emptySlice emptySlice
+    hshape hroots
     hsubs (by omega) (by omega) (by omega)
     ⟨by rw [oB, oA, hPs], by rw [dB, dA, hPs]; rfl⟩ toyFit (by simp) alpha_ne_zeros
     (dep_pre sB tree config hT0 hTn hTm hdr hpl lB' hpoolB)
@@ -680,7 +686,7 @@ theorem toy_execution :
       Genesis toyD.programId toyS0 ∧ toyD.programId ≠ systemProgram ∧
       step toyD s toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) = .ok (s', events) ∧
       HashesAgree toyD.crypto ∧ SolanaFacts toyD toyTx ∧ (CryptoFacts toyD depProof ∧ CircuitFacts toyD {depProof}) ∧
-      OutsideSpecDetail toyD toyRent s toyTx depA depProof := by
+      SameRent toyRent toyTx := by
   obtain ⟨s₁, tree, token, config, hinit, hT, hK, hC, hP, hO, hshape, hroots, hsubs, hT0, hTn, hTb, hTm,
     hkb, hcb, hdr, hwr, hmr⟩ := toy_init_ok
   obtain ⟨s', events, -, hstep, -⟩ := toy_deposit_ok s₁ tree token config hT hK hC hP hO hshape hroots hsubs hT0
@@ -690,10 +696,8 @@ theorem toy_execution :
   have hinitStep : step toyD toyS0 toyTx (.initialize toyInitA) = .ok (s₁, []) := by
     show (do let s' ← execInitialize toyD toyS0 toyTx toyInitA; pure (s', [])) = _
     rw [hinit]; rfl
-  have p1 : pk 3#u8 ≠ pk 1#u8 := pk_ne (by decide)
-  have p2 : pk 4#u8 ≠ pk 1#u8 := pk_ne (by decide)
   refine ⟨s₁, s', events, hinitStep, toyGenesis, by unfold toyD; decide +kernel, hstep, toyHashesAgree,
-    ⟨?_⟩, ⟨⟨?_⟩, CircuitFacts.of_distinct ?_⟩, ⟨rfl, ?_, ?_⟩⟩
+    ⟨?_⟩, ⟨⟨?_⟩, CircuitFacts.of_distinct ?_⟩, rfl⟩
   · intro seeds h
     have e : toyCPA (toyD.pdaInput seeds) = pk 1#u8 := List.mem_singleton.mp h
     have := congrArg (fun p : Pubkey => p.val[0]!) e
@@ -706,14 +710,6 @@ theorem toy_execution :
     · exact absurd hxy.symm a0n1
     · rfl
   · show zeros32 ≠ one32; decide +kernel
-  · refine ⟨?_, ?_⟩
-    · show (s₁ nf0A).lamports.val = 0; rw [hO nf0A a01 a02 a03 a04]; unfold toyS0; decide +kernel
-    · show (s₁ nf1A).lamports.val = 0; rw [hO nf1A a11 a12 a13 a14]; unfold toyS0; decide +kernel
-  · refine ⟨fun b h => ?_, fun b h => ?_, p30, p31, p40, p41⟩
-    · rw [show s₁ depA.recipient = toyS0 (pk 3#u8) from hO _ p3T p3K p3C p1] at h
-      unfold toyS0 at h; rw [if_neg p1] at h; cases h
-    · rw [show s₁ depA.feeRecipientAccount = toyS0 (pk 4#u8) from hO _ p4T p4K p4C p2] at h
-      unfold toyS0 at h; rw [if_neg p2] at h; cases h
 
 /-- The toy's three fixed addresses differ (the toy derivation tells their seeds apart by
     length). -/

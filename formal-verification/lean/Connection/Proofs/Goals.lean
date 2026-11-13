@@ -97,8 +97,8 @@ variable {d : Deployment} {rent : Nat → U64} {s₀ s s' : State} {evs : List E
   (hstep : Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s')
   (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
   (hashes : HashesAgree d.crypto) (solana : SolanaFacts d tx)
-  (crypto : CryptoFacts d proof) (circuit : CircuitFacts d {proof}) (outside : OutsideSpecDetail d rent s tx a proof)
-include hgen hrun hpid hstep C laws hashes solana crypto circuit outside
+  (crypto : CryptoFacts d proof) (circuit : CircuitFacts d {proof}) (sameRent : SameRent rent tx)
+include hgen hrun hpid hstep C laws hashes solana crypto circuit sameRent
 
 theorem same_payout_pf :
     letI : LeanSpec.Groups := syscallGroups C
@@ -109,29 +109,29 @@ theorem same_payout_pf :
       LeanSpec.Goals.SamePayout T inputs :=
   letI := syscallGroups C; letI := syscallPairing C; letI : LeanSpec.Deployment := ⟨programKey C⟩
   fun T hT hSame => LeanSpec.Goals.same_public_inputs_same_external_data T hT _ _ _ hSame
-    (transact_connection_pf hgen hrun hpid hstep C laws hashes solana crypto circuit outside)
+    (transact_connection_pf hgen hrun hpid hstep C laws hashes solana crypto circuit sameRent)
 
 theorem only_signers_pay_pf :
     letI : LeanSpec.Groups := syscallGroups C
     letI : LeanSpec.Pairing := syscallPairing C
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     let inputs := toInputs tx.signers a proof extAmount fee out1 out2
-    LeanSpec.Goals.OnlySignersPay inputs (toWorld d rent (runSpent evs) s)
-      (toWorld d rent (runSpent evs ∪ {inputs.k0, inputs.k1}) s') :=
+    LeanSpec.Goals.OnlySignersPay inputs (toWorld d rent s)
+      (toWorld d rent s') :=
   letI := syscallGroups C; letI := syscallPairing C; letI : LeanSpec.Deployment := ⟨programKey C⟩
   LeanSpec.Goals.only_signers_pay _ _ _
-    (transact_connection_pf hgen hrun hpid hstep C laws hashes solana crypto circuit outside)
+    (transact_connection_pf hgen hrun hpid hstep C laws hashes solana crypto circuit sameRent)
 
 theorem exact_payouts_pf :
     letI : LeanSpec.Groups := syscallGroups C
     letI : LeanSpec.Pairing := syscallPairing C
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     let inputs := toInputs tx.signers a proof extAmount fee out1 out2
-    LeanSpec.Goals.ExactPayouts inputs (toWorld d rent (runSpent evs) s)
-      (toWorld d rent (runSpent evs ∪ {inputs.k0, inputs.k1}) s') :=
+    LeanSpec.Goals.ExactPayouts inputs (toWorld d rent s)
+      (toWorld d rent s') :=
   letI := syscallGroups C; letI := syscallPairing C; letI : LeanSpec.Deployment := ⟨programKey C⟩
   LeanSpec.Goals.exact_payouts _ _ _
-    (transact_connection_pf hgen hrun hpid hstep C laws hashes solana crypto circuit outside)
+    (transact_connection_pf hgen hrun hpid hstep C laws hashes solana crypto circuit sameRent)
 
 end
 
@@ -158,12 +158,12 @@ theorem honest_spend_is_accepted_pf
     let inputs := toInputs tx.signers a proof ext fee out1 out2
     ∀ (params : LeanSpec.InitParams) (r : LeanSpec.Run (LeanSpec.initWorld params))
       (wit : ℕ → LeanSpec.Witness) (witness : LeanSpec.Witness) (k : ℕ),
-      toWorld d rent (runSpent evs) s = r.final →
+      toWorld d rent s = r.final →
       r.WitnessesFor wit →
       LeanSpec.HonestSpend r wit inputs witness k →
       LeanSpec.LimitsNotHit r.final inputs →
       (∃ s' events, step d s tx (.transact a proof ext fee out1 out2) = .ok (s', events))
-        ∨ LeanSpec.SpendBlockedByBreak r wit witness k :=
+        ∨ LeanSpec.SpendBlockedByBreak r wit inputs witness k :=
   letI := syscallGroups C; letI := syscallPairing C; letI : LeanSpec.Deployment := ⟨programKey C⟩
   fun params r wit witness k hfinal hwit hH hL =>
     (LeanSpec.Goals.honest_spend_is_accepted params r wit hwit _ witness k hH hL).imp_left
@@ -176,7 +176,7 @@ theorem admins_cannot_lock_withdrawals_pf :
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     ∀ (params : LeanSpec.InitParams) (r : LeanSpec.Run (LeanSpec.initWorld params))
       (wit : ℕ → LeanSpec.Witness) (spentAmt : ℕ),
-      toWorld d rent (runSpent evs) s = r.final →
+      toWorld d rent s = r.final →
       r.WitnessesFor wit →
       2 ≤ spentAmt →
       ∃ payout feeAmount : ℕ,
@@ -196,7 +196,7 @@ theorem admins_cannot_lock_withdrawals_pf :
           LeanSpec.treeHasRoom r.final.state.tree →
           LeanSpec.balancesFit inputs r.final →
           (∃ s' events, step d s tx (.transact a proof ext fee out1 out2) = .ok (s', events))
-            ∨ LeanSpec.SpendBlockedByBreak r wit witness k :=
+            ∨ LeanSpec.SpendBlockedByBreak r wit inputs witness k :=
   letI := syscallGroups C; letI := syscallPairing C; letI : LeanSpec.Deployment := ⟨programKey C⟩
   fun params r wit spentAmt hfinal hwit hSpentAmt =>
     let ⟨payout, feeAmount, hway, hhalf, haccept⟩ :=

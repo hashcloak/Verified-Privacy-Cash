@@ -812,15 +812,18 @@ structure PreExceptDistinct [LeanSpec.PoseidonHashes] [LeanSpec.Sha] [LeanSpec.G
   minimumFee : LeanSpec.feeSufficient oldWorld.state.config inputs.extAmt inputs.f
   pubAmtConsistency : LeanSpec.pubAmtConsistent inputs.extAmt inputs.f inputs.pubAmt
   validZKP : LeanSpec.proofValid inputs
-  newNullifiers : LeanSpec.nullifiersFresh oldWorld.state.nullifiers inputs.k0 inputs.k1
+  newNullifiers : LeanSpec.nullifiersFresh oldWorld.state inputs
+  nullifierAccountsNew : LeanSpec.nullifierAccountsCreatable oldWorld.state inputs
   depositLimit : LeanSpec.depositWithinLimit oldWorld.state.config inputs.extAmt
   poolSolvency : LeanSpec.poolSolvent oldWorld.poolBalance oldWorld.rentExemptMin inputs.extAmt inputs.f
-  signerSolvency : LeanSpec.signerSolvent oldWorld.balances inputs.s inputs.extAmt oldWorld.nullifierRent
+  signerSolvency : LeanSpec.signerSolvent oldWorld.balances inputs.s inputs.extAmt
+    (oldWorld.nullifierTopUp inputs 0 + oldWorld.nullifierTopUp inputs 1)
   signerSignature : LeanSpec.signerSigned inputs
+  signerNotPoolNotNullifiers : LeanSpec.signerNotPoolNotNullifiers inputs oldWorld.state
   treeNotFull : LeanSpec.treeHasRoom oldWorld.state.tree
   amountRange : LeanSpec.amountsInRange inputs.extAmt inputs.f
   encOutLength : LeanSpec.encOutsFit inputs
-  poolSeparate : LeanSpec.poolIsSeparate inputs oldWorld.state.pool
+  poolNotRecipient : LeanSpec.poolNotRecipient inputs oldWorld.state.pool
   canonicalInputs : LeanSpec.publicInputsEncoded inputs
   balancesFit : LeanSpec.balancesFit inputs oldWorld
 
@@ -831,15 +834,18 @@ theorem PreExceptDistinct.of_pre [LeanSpec.PoseidonHashes] [LeanSpec.Sha] [LeanS
     {inputs : LeanSpec.TxInputs} {w : LeanSpec.World} (h : LeanSpec.transactPreconditions inputs w) :
     PreExceptDistinct inputs w :=
   ⟨h.knownRoot, h.externalDataBinding, h.minimumFee, h.pubAmtConsistency, h.validZKP, h.newNullifiers,
-    h.depositLimit, h.poolSolvency, h.signerSolvency, h.signerSignature, h.treeNotFull, h.amountRange,
-    h.encOutLength, h.poolSeparate, h.canonicalInputs, h.balancesFit⟩
+    h.nullifierAccountsNew,
+    h.depositLimit, h.poolSolvency, h.signerSolvency, h.signerSignature, h.signerNotPoolNotNullifiers,
+    h.treeNotFull, h.amountRange,
+    h.encOutLength, h.poolNotRecipient, h.canonicalInputs, h.balancesFit⟩
 
 /-- The handler accepts when the spec's preconditions hold, `distinctNullifiers` aside. -/
 theorem handler_ok_exists_nd [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
     (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
     (hashes : HashesAgree c) (succ : HashesSucceed c) (sys : SyscallsSucceed C) (key : KeyG2Decodes C)
     (a : TransactAccounts) (s₁ : State) (v : U64) (tree : merkle_tree.MerkleTreeAccount)
-    (config : admin.GlobalConfig) (spent : Finset LeanSpec.F) (proof : transact.Proof)
+    (config : admin.GlobalConfig) (accts : Finset LeanSpec.Pubkey)
+    (addr : Fin 2 → LeanSpec.Bytes → LeanSpec.Pubkey) (proof : transact.Proof)
     (ext : I64) (fee : U64) (out1 out2 : Slice U8)
     (hshape : TreeShape tree) (hhist : ∀ j : Fin 100, Canonical tree.root_history.val[j.val]!)
     (hsub : ∀ j : Fin 26, Canonical tree.subtrees.val[j.val]!)
@@ -852,7 +858,7 @@ theorem handler_ok_exists_nd [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
     letI : LeanSpec.Pairing := syscallPairing C
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     PreExceptDistinct (toInputs signers a proof ext fee out1 out2)
-      (handlerWorld a s₁ v tree config spent) →
+      (handlerWorld a s₁ v tree config accts addr) →
     ∃ ap env' tree', transact.transact c.hasher arkFr c.sha256 c.proofVerifier solRuntime
       (handlerEnv a s₁ v) tree config proof ext fee a.recipient a.feeRecipientAccount out1 out2
       = ok (.Ok ap, env', tree') := by
@@ -861,7 +867,7 @@ theorem handler_ok_exists_nd [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
   letI : LeanSpec.Pairing := syscallPairing C
   letI : LeanSpec.Deployment := ⟨programKey C⟩
   set inputs := toInputs signers a proof ext fee out1 out2 with hinputs
-  set W := handlerWorld a s₁ v tree config spent with hW
+  set W := handlerWorld a s₁ v tree config accts addr with hW
   -- canonical public inputs
   have hcan : ∀ j, j < 7 → Canonical ((publicInputs proof)[j]!) := by
     intro j hj
@@ -909,7 +915,8 @@ theorem handler_ok_exists_nd [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
   have hWr : W.nullifierRent = 0 := rfl
   have hu : ∀ k, (s₁ k).lamports.val < 2 ^ 64 := fun k => u64_lt _
   have hmax := u64_max_eq
-  obtain ⟨hsP, hAP, htP⟩ := hpre.poolSeparate
+  obtain ⟨hAP, htP⟩ := hpre.poolNotRecipient
+  have hsP := hpre.signerNotPoolNotNullifiers.1
   have hsP' : a.signer ≠ a.treeTokenAccount := fun e => hsP (by show toPubkey a.signer = toPubkey a.treeTokenAccount; rw [e])
   have hAP' : ext.val < 0 → a.recipient ≠ a.treeTokenAccount := fun hn e => hAP hn (by show toPubkey a.recipient = toPubkey a.treeTokenAccount; rw [e])
   have htP' : fee.val > 0 → a.feeRecipientAccount ≠ a.treeTokenAccount := fun hf e => htP hf (by show toPubkey a.feeRecipientAccount = toPubkey a.treeTokenAccount; rw [e])
@@ -917,16 +924,16 @@ theorem handler_ok_exists_nd [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
   have hsolv := hpre.poolSolvency
   have hsig := hpre.signerSolvency
   have hpubc := hpre.pubAmtConsistency
-  have hdelta : ∀ k, LeanSpec.balanceDelta inputs W.state.pool W.nullifierRent (toPubkey k)
+  have hdelta : ∀ k, LeanSpec.balanceDelta inputs W (toPubkey k)
       = (if k = a.recipient ∧ ext.val < 0 then (ext.val.natAbs : ℤ) else 0)
         + (if k = a.feeRecipientAccount then (fee.val : ℤ) else 0)
         - (if k = a.signer ∧ ext.val > 0 then ext.val else 0)
         + (if k = a.treeTokenAccount then ext.val - fee.val else 0) := by
     intro k
-    simp only [LeanSpec.balanceDelta, hWp, hWr, inputs, toInputs, toPubkey_eq_iff]
-    simp
-  have hfitk : ∀ k, 0 < LeanSpec.balanceDelta inputs W.state.pool W.nullifierRent (toPubkey k) →
-      ((s₁ k).lamports.val : ℤ) + LeanSpec.balanceDelta inputs W.state.pool W.nullifierRent (toPubkey k)
+    rw [balanceDelta_noRent inputs W hWr]
+    simp only [hWp, inputs, toInputs, toPubkey_eq_iff]
+  have hfitk : ∀ k, 0 < LeanSpec.balanceDelta inputs W (toPubkey k) →
+      ((s₁ k).lamports.val : ℤ) + LeanSpec.balanceDelta inputs W (toPubkey k)
         < 2 ^ 64 := by
     intro k hk; have := hfitB.1 (toPubkey k) hk; rwa [hWb] at this
   have hpoolW : W.poolBalance = (s₁ a.treeTokenAccount).lamports.val := hWb _
@@ -950,6 +957,7 @@ theorem handler_ok_exists_nd [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
     have hlim : ext.val ≤ ((toConfig config tree).maxDepositLimit : ℤ) := hpre.depositLimit hp
     have hsg0 := hsig
     unfold LeanSpec.signerSolvent at hsg0
+    rw [nullifierTopUp_noRent inputs W hWr, nullifierTopUp_noRent inputs W hWr] at hsg0
     rw [hsigB] at hsg0
     have hsg : (s₁ a.signer).lamports.val ≥ 2 * 0 + (if ext.val > 0 then ext.val.natAbs else 0) := hsg0
     rw [if_pos hp] at hsg
@@ -1050,7 +1058,8 @@ theorem handler_ok_exists [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
     (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
     (hashes : HashesAgree c) (succ : HashesSucceed c) (sys : SyscallsSucceed C) (key : KeyG2Decodes C)
     (a : TransactAccounts) (s₁ : State) (v : U64) (tree : merkle_tree.MerkleTreeAccount)
-    (config : admin.GlobalConfig) (spent : Finset LeanSpec.F) (proof : transact.Proof)
+    (config : admin.GlobalConfig) (accts : Finset LeanSpec.Pubkey)
+    (addr : Fin 2 → LeanSpec.Bytes → LeanSpec.Pubkey) (proof : transact.Proof)
     (ext : I64) (fee : U64) (out1 out2 : Slice U8)
     (hshape : TreeShape tree) (hhist : ∀ j : Fin 100, Canonical tree.root_history.val[j.val]!)
     (hsub : ∀ j : Fin 26, Canonical tree.subtrees.val[j.val]!)
@@ -1063,7 +1072,7 @@ theorem handler_ok_exists [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
     letI : LeanSpec.Pairing := syscallPairing C
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     LeanSpec.transactPreconditions (toInputs signers a proof ext fee out1 out2)
-      (handlerWorld a s₁ v tree config spent) →
+      (handlerWorld a s₁ v tree config accts addr) →
     ∃ ap env' tree', transact.transact c.hasher arkFr c.sha256 c.proofVerifier solRuntime
       (handlerEnv a s₁ v) tree config proof ext fee a.recipient a.feeRecipientAccount out1 out2
       = ok (.Ok ap, env', tree') := by
@@ -1071,7 +1080,7 @@ theorem handler_ok_exists [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
   letI : LeanSpec.Groups := syscallGroups C
   letI : LeanSpec.Pairing := syscallPairing C
   letI : LeanSpec.Deployment := ⟨programKey C⟩
-  exact handler_ok_exists_nd c C laws hashes succ sys key a s₁ v tree config spent proof ext fee
+  exact handler_ok_exists_nd c C laws hashes succ sys key a s₁ v tree config accts addr proof ext fee
     out1 out2 hshape hhist hsub hd hw hm hsigner hfit hL1 hA0 (PreExceptDistinct.of_pre hpre)
 
 
@@ -1080,7 +1089,8 @@ theorem handler_complete_exact' [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
     (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
     (hashes : HashesAgree c) (succ : HashesSucceed c) (sys : SyscallsSucceed C) (key : KeyG2Decodes C)
     (a : TransactAccounts) (s₁ : State) (v : U64) (tree : merkle_tree.MerkleTreeAccount)
-    (config : admin.GlobalConfig) (spent : Finset LeanSpec.F) (proof : transact.Proof)
+    (config : admin.GlobalConfig) (accts : Finset LeanSpec.Pubkey)
+    (addr : Fin 2 → LeanSpec.Bytes → LeanSpec.Pubkey) (proof : transact.Proof)
     (ext : I64) (fee : U64) (out1 out2 : Slice U8)
     (hshape : TreeShape tree) (hhist : ∀ j : Fin 100, Canonical tree.root_history.val[j.val]!)
     (hsub : ∀ j : Fin 26, Canonical tree.subtrees.val[j.val]!)
@@ -1093,7 +1103,7 @@ theorem handler_complete_exact' [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
     letI : LeanSpec.Pairing := syscallPairing C
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     let inputs := toInputs signers a proof ext fee out1 out2
-    let W := handlerWorld a s₁ v tree config spent
+    let W := handlerWorld a s₁ v tree config accts addr
     LeanSpec.transactPreconditions inputs W →
     ∃ ap env' tree', transact.transact c.hasher arkFr c.sha256 c.proofVerifier solRuntime
       (handlerEnv a s₁ v) tree config proof ext fee a.recipient a.feeRecipientAccount out1 out2
@@ -1104,7 +1114,7 @@ theorem handler_complete_exact' [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
   letI : LeanSpec.Groups := syscallGroups C
   letI : LeanSpec.Pairing := syscallPairing C
   letI : LeanSpec.Deployment := ⟨programKey C⟩
-  obtain ⟨ap, e', t', hres⟩ := handler_ok_exists c C laws hashes succ sys key a s₁ v tree config spent
+  obtain ⟨ap, e', t', hres⟩ := handler_ok_exists c C laws hashes succ sys key a s₁ v tree config accts addr
     proof ext fee out1 out2 hshape hhist hsub hd hw hm hsigner
     (fits_of_encOutsFit h64 rfl rfl hpre.encOutLength) hL1 hA0 hpre
   have hok := handler_ok c (handlerEnv a s₁ v) tree config proof ext fee a.recipient a.feeRecipientAccount
@@ -1112,7 +1122,7 @@ theorem handler_complete_exact' [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
   refine ⟨ap, e', t', hres, ?_, ?_⟩
   · -- balances
     obtain ⟨v', hv', hdep, hwd, -⟩ := hok.rent
-    obtain ⟨hsP, hAP, htP⟩ := hpre.poolSeparate
+    obtain ⟨hAP, htP⟩ := hpre.poolNotRecipient
     have htP' : fee.val > 0 → a.feeRecipientAccount ≠ a.treeTokenAccount := fun hf e =>
       htP hf (by show toPubkey a.feeRecipientAccount = toPubkey a.treeTokenAccount; rw [e])
     have hAP' : ext.val < 0 → a.recipient ≠ a.treeTokenAccount := fun hn e =>
@@ -1126,26 +1136,25 @@ theorem handler_complete_exact' [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
     have hpool : W.state.pool = toPubkey a.treeTokenAccount := rfl
     have hnr : W.nullifierRent = 0 := rfl
     have hext' : inputs.extAmt ≠ 0 := hL1
-    set Q : Pubkey → ℕ := Function.update B a.signer (B a.signer - 2 * 0) with hQdef
-    have hQ : Q = B := by simp [hQdef]
     have hspec : (LeanSpec.transactEffects inputs W).balances = fun x => moveN
-        (if ext.val > 0 then moveN Q a.signer a.treeTokenAccount ext.val.natAbs
-          else moveN Q a.treeTokenAccount a.recipient ext.val.natAbs)
+        (if ext.val > 0 then moveN B a.signer a.treeTokenAccount ext.val.natAbs
+          else moveN B a.treeTokenAccount a.recipient ext.val.natAbs)
         a.treeTokenAccount a.feeRecipientAccount fee.val (fromPubkey x) := by
-      simp only [LeanSpec.transactEffects, LeanSpec.transferEffects, LeanSpec.nullifierRentEffects,
-        if_neg hext', hWb, hpool, hnr]
+      simp only [LeanSpec.transactEffects]
+      rw [nullifierRentEffects_noRent inputs W hnr]
+      simp only [LeanSpec.transferEffects, if_neg hext', hWb, hpool]
       have hs : inputs.s = toPubkey a.signer := rfl
       have hA : inputs.A = toPubkey a.recipient := rfl
       have ht : inputs.t = toPubkey a.feeRecipientAccount := rfl
       have hf : inputs.f = fee.val := rfl
       have he : inputs.extAmt = ext.val := rfl
-      rw [hs, hA, ht, hf, he, fromPubkey_toPubkey, ← update_fromPubkey]
+      rw [hs, hA, ht, hf, he]
       split
       · rw [moveLamports_fromPubkey, moveLamports_fromPubkey]
       · rw [moveLamports_fromPubkey, moveLamports_fromPubkey]
     intro k
     rw [hspec]
-    simp only [fromPubkey_toPubkey, hQ]
+    simp only [fromPubkey_toPubkey]
     by_cases hp : ext.val > 0
     · have he : (fun k => (e'.balances k).val) = payN (moveN B a.signer a.treeTokenAccount
           ext.val.natAbs) a.treeTokenAccount a.feeRecipientAccount fee.val := (hdep hp).2.2.2.2

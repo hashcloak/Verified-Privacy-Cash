@@ -251,6 +251,27 @@ theorem pk_ne {m n : U8} (h : m ≠ n) : pk m ≠ pk n := by
   simp [pk, Std.Array.make] at this
   exact h this
 
+
+/-- The nullifier accounts' addresses the handler examples give the spec: the transaction's own
+    two nullifier accounts. -/
+def handlerAddr (a : TransactAccounts) : Fin 2 → LeanSpec.Bytes → LeanSpec.Pubkey :=
+  fun i _ => toPubkey (![a.nullifier0, a.nullifier1] i)
+
+/-- In a handler example, the new nullifier accounts are the transaction's own, so the spec's
+    address checks are the accounts' distinctness. -/
+theorem handlerAddr_facts
+    (signers : List Pubkey) (a : TransactAccounts) (proof : transact.Proof) (ext : I64) (fee : U64)
+    (out1 out2 : Slice U8) (s₁ : State) (v : U64) (tree : merkle_tree.MerkleTreeAccount)
+    (config : admin.GlobalConfig) (accts : Finset LeanSpec.Pubkey)
+    (h01 : a.nullifier0 ≠ a.nullifier1) (h0p : a.nullifier0 ≠ a.treeTokenAccount)
+    (h1p : a.nullifier1 ≠ a.treeTokenAccount) (hs0 : a.signer ≠ a.nullifier0)
+    (hs1 : a.signer ≠ a.nullifier1) (hsp : a.signer ≠ a.treeTokenAccount) :
+    LeanSpec.nullifierAccountsCreatable (handlerWorld a s₁ v tree config accts (handlerAddr a)).state
+        (toInputs signers a proof ext fee out1 out2) ∧
+      LeanSpec.signerNotPoolNotNullifiers (toInputs signers a proof ext fee out1 out2)
+        (handlerWorld a s₁ v tree config accts (handlerAddr a)).state := by
+  have inj : ∀ {x y : Pubkey}, x ≠ y → toPubkey x ≠ toPubkey y := fun h e => h (toPubkey_inj e)
+  exact ⟨⟨inj h01, inj h0p, inj h1p⟩, inj hsp, inj hs0, inj hs1⟩
 theorem toyFit : emptySlice.length + emptySlice.length + 120 ≤ Usize.max := by
   simp [emptySlice, Slice.length]; scalar_tac
 
@@ -269,18 +290,23 @@ def HandlerPre (G1 G2 GT : Type) [AddCommGroup G1] [Module LeanSpec.F G1] [AddCo
     [Module LeanSpec.F G2] [CommGroup GT] [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
     (signers : List Pubkey) (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT)
     (a : TransactAccounts) (s₁ : State) (v : U64) (tree : merkle_tree.MerkleTreeAccount)
-    (config : admin.GlobalConfig) (spent : Finset LeanSpec.F) (proof : transact.Proof)
+    (config : admin.GlobalConfig) (accts : Finset LeanSpec.Pubkey)
+    (addr : Fin 2 → LeanSpec.Bytes → LeanSpec.Pubkey) (proof : transact.Proof)
     (ext : I64) (fee : U64) (out1 out2 : Slice U8) : Prop :=
   @LeanSpec.transactPreconditions _ (syscallGroups C) (inferInstanceAs (AddCommGroup G1))
     (inferInstanceAs (Module LeanSpec.F G1))
     (inferInstanceAs (CommGroup GT))
     (syscallPairing C) (@LeanSpec.Deployment.mk (syscallGroups C) (programKey C)) (toInputs signers a proof ext fee out1 out2)
-    (handlerWorld a s₁ v tree config spent)
+    (handlerWorld a s₁ v tree config accts addr)
 
 theorem toy_pre_L1 : HandlerPre Unit Unit Unit toySigners toyCrypto toyC toyAccounts (toyState 0#u64)
-    0#u64 toyTree toyConfig ∅ (toyProof verifying_key.VERIFYING_KEY.vk_alpha_g1 zeros32) 0#i64 0#u64
+    0#u64 toyTree toyConfig ∅ (handlerAddr toyAccounts) (toyProof verifying_key.VERIFYING_KEY.vk_alpha_g1 zeros32) 0#i64 0#u64
     emptySlice emptySlice := by
   unfold HandlerPre
+  have hfacts := handlerAddr_facts toySigners toyAccounts
+    (toyProof verifying_key.VERIFYING_KEY.vk_alpha_g1 zeros32) 0#i64 0#u64 emptySlice emptySlice
+    (toyState 0#u64) 0#u64 toyTree toyConfig ∅ (pk_ne (by decide)) (pk_ne (by decide))
+    (pk_ne (by decide)) (pk_ne (by decide)) (pk_ne (by decide)) (pk_ne (by decide))
   have hdec := decode_toInputs (signers := toySigners) toyC (toyProof verifying_key.VERIFYING_KEY.vk_alpha_g1 zeros32)
     toyAccounts 0#i64 0#u64 emptySlice emptySlice toy_alpha_decodes rfl toy_zeros_decodes
   have hk0 : (toyProof verifying_key.VERIFYING_KEY.vk_alpha_g1 zeros32).input_nullifiers.val[0]! = zeros32 := rfl
@@ -294,7 +320,7 @@ theorem toy_pre_L1 : HandlerPre Unit Unit Unit toySigners toyCrypto toyC toyAcco
     (inferInstanceAs (Module LeanSpec.F Unit))
     (inferInstanceAs (CommGroup Unit))
     (syscallPairing toyC) (@LeanSpec.Deployment.mk (syscallGroups toyC) (programKey toyC)) _ _
-    ?_ ?_ ?_ ?_ ⟨_, hdec, rfl⟩ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_
+    ?_ ?_ ?_ ?_ ⟨_, hdec, rfl⟩ ?_ ?_ hfacts.1 ?_ ?_ ?_ ?_ hfacts.2 ?_ ?_ ?_ ?_ ?_ ?_
   · show LeanSpec.rootBytesKnown (toTree toyTree) (toBytes one32.val)
     rw [rootBytesKnown_iff]
     refine ⟨canonical_one32, ⟨⟨0, ?_⟩, by rw [toF_one32]; exact h10⟩⟩
@@ -306,18 +332,18 @@ theorem toy_pre_L1 : HandlerPre Unit Unit Unit toySigners toyCrypto toyC toyAcco
   · unfold LeanSpec.pubAmtConsistent; rw [he, hf]
     refine ⟨fun h => by omega, ?_⟩
     show toF zeros32 = _; rw [toF_zeros32]; simp
-  · simp [LeanSpec.nullifiersFresh, handlerWorld]
+  · simp [LeanSpec.nullifiersFresh, LeanSpec.State.spent, handlerWorld]
   · show toF _ ≠ toF _
     rw [hk0, hk1, toF_zeros32, toF_one32]; exact h10.symm
   · intro h; rw [he] at h; omega
   · unfold LeanSpec.poolSolvent; rw [he, hf]
     exact ⟨fun h => by omega, fun h => by omega⟩
-  · unfold LeanSpec.signerSolvent; rw [he]; simp [handlerWorld]
+  · unfold LeanSpec.signerSolvent; rw [he]; simp [handlerWorld, LeanSpec.World.nullifierTopUp]
   · exact List.mem_map_of_mem (f := toPubkey) (List.mem_singleton.mpr rfl)
   · show toyTree.next_index.val ≤ 2 ^ 26 - 2; simp [toyTree]
   · unfold LeanSpec.amountsInRange; rw [he, hf]; norm_num
   · simp [LeanSpec.encOutsFit, toInputs, emptySlice, toBytes]
-  · refine ⟨fun e => pk_ne (by decide : (1#u8 : U8) ≠ 2#u8) (toPubkey_inj e), fun h => ?_, fun h => ?_⟩
+  · refine ⟨fun h => ?_, fun h => ?_⟩
     · rw [he] at h; omega
     · rw [hf] at h; omega
   · intro i
@@ -333,15 +359,18 @@ theorem toy_pre_L1 : HandlerPre Unit Unit Unit toySigners toyCrypto toyC toyAcco
     · exact ⟨canonical_zeros32, rfl⟩
   · refine ⟨fun k hk => ?_, fun h => by rw [he] at h; omega⟩
     exfalso
-    unfold LeanSpec.balanceDelta at hk
+    rw [balanceDelta_noRent _ _ rfl] at hk
     rw [he, hf] at hk
     simp at hk
 /-- The spec allows the toy deposit (amount 1, fee 0) for any `proof_a` the syscalls decode. -/
 theorem toy_pre_deposit (pa : Std.Array U8 64#usize) (hpa : toyC.decodeG1 pa = some ()) :
     HandlerPre Unit Unit Unit toySigners toyCrypto toyC toyAccounts (toyState 1#u64)
-    0#u64 toyTree toyConfig ∅ (toyProof pa one32) 1#i64 0#u64
+    0#u64 toyTree toyConfig ∅ (handlerAddr toyAccounts) (toyProof pa one32) 1#i64 0#u64
     emptySlice emptySlice := by
   unfold HandlerPre
+  have hfacts := handlerAddr_facts toySigners toyAccounts (toyProof pa one32) 1#i64 0#u64
+    emptySlice emptySlice (toyState 1#u64) 0#u64 toyTree toyConfig ∅ (pk_ne (by decide))
+    (pk_ne (by decide)) (pk_ne (by decide)) (pk_ne (by decide)) (pk_ne (by decide)) (pk_ne (by decide))
   have hdec := decode_toInputs (signers := toySigners) toyC (toyProof pa one32)
     toyAccounts 1#i64 0#u64 emptySlice emptySlice hpa rfl toy_zeros_decodes
   have hk0 : (toyProof pa one32).input_nullifiers.val[0]! = zeros32 := rfl
@@ -355,7 +384,7 @@ theorem toy_pre_deposit (pa : Std.Array U8 64#usize) (hpa : toyC.decodeG1 pa = s
     (inferInstanceAs (Module LeanSpec.F Unit))
     (inferInstanceAs (CommGroup Unit))
     (syscallPairing toyC) (@LeanSpec.Deployment.mk (syscallGroups toyC) (programKey toyC)) _ _
-    ?_ ?_ ?_ ?_ ⟨_, hdec, rfl⟩ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_
+    ?_ ?_ ?_ ?_ ⟨_, hdec, rfl⟩ ?_ ?_ hfacts.1 ?_ ?_ ?_ ?_ hfacts.2 ?_ ?_ ?_ ?_ ?_ ?_
   · show LeanSpec.rootBytesKnown (toTree toyTree) (toBytes one32.val)
     rw [rootBytesKnown_iff]
     refine ⟨canonical_one32, ⟨⟨0, ?_⟩, by rw [toF_one32]; exact h10⟩⟩
@@ -367,18 +396,18 @@ theorem toy_pre_deposit (pa : Std.Array U8 64#usize) (hpa : toyC.decodeG1 pa = s
   · unfold LeanSpec.pubAmtConsistent; rw [he, hf]
     refine ⟨fun _ => by omega, ?_⟩
     show toF one32 = _; rw [toF_one32]; simp
-  · simp [LeanSpec.nullifiersFresh, handlerWorld]
+  · simp [LeanSpec.nullifiersFresh, LeanSpec.State.spent, handlerWorld]
   · show toF _ ≠ toF _
     rw [hk0, hk1, toF_zeros32, toF_one32]; exact h10.symm
   · intro _; rw [he]; show (1 : ℤ) ≤ (toyTree.max_deposit_amount.val : ℤ); simp [toyTree]
   · unfold LeanSpec.poolSolvent; rw [he, hf]
     exact ⟨fun h => by omega, fun h => by omega⟩
-  · unfold LeanSpec.signerSolvent; rw [he]; simp [handlerWorld, toyState]
+  · unfold LeanSpec.signerSolvent; rw [he]; simp [handlerWorld, toyState, LeanSpec.World.nullifierTopUp]
   · exact List.mem_map_of_mem (f := toPubkey) (List.mem_singleton.mpr rfl)
   · show toyTree.next_index.val ≤ 2 ^ 26 - 2; simp [toyTree]
   · unfold LeanSpec.amountsInRange; rw [he, hf]; norm_num
   · simp [LeanSpec.encOutsFit, toInputs, emptySlice, toBytes]
-  · refine ⟨fun e => pk_ne (by decide : (1#u8 : U8) ≠ 2#u8) (toPubkey_inj e), fun h => ?_, fun h => ?_⟩
+  · refine ⟨fun h => ?_, fun h => ?_⟩
     · rw [he] at h; omega
     · rw [hf] at h; omega
   · intro i
@@ -393,19 +422,21 @@ theorem toy_pre_deposit (pa : Std.Array U8 64#usize) (hpa : toyC.decodeG1 pa = s
     · exact ⟨canonical_zeros32, rfl⟩
     · exact ⟨canonical_zeros32, rfl⟩
   · refine ⟨fun k _ => ?_, fun _ => ?_⟩
-    · have hb : (handlerWorld toyAccounts (toyState 1#u64) 0#u64 toyTree toyConfig ∅).balances k = 1 := by
+    · have hb : (handlerWorld toyAccounts (toyState 1#u64) 0#u64 toyTree toyConfig ∅
+          (handlerAddr toyAccounts)).balances k = 1 := by
         simp [handlerWorld, toyState]
       rw [hb]
-      unfold LeanSpec.balanceDelta
+      rw [balanceDelta_noRent _ _ rfl]
       rw [he, hf]
       split_ifs <;> norm_num
-    · show ((handlerWorld toyAccounts (toyState 1#u64) 0#u64 toyTree toyConfig ∅).balances _ : ℤ) + _ < _
+    · show ((handlerWorld toyAccounts (toyState 1#u64) 0#u64 toyTree toyConfig ∅
+        (handlerAddr toyAccounts)).balances _ : ℤ) + _ < _
       rw [he]; simp [handlerWorld, toyState]
 
 
 
 theorem toy_pre_A0 : HandlerPre Unit Unit Unit toySigners toyCrypto toyC toyAccounts (toyState 1#u64)
-    0#u64 toyTree toyConfig ∅ (toyProof zeros64 one32) 1#i64 0#u64
+    0#u64 toyTree toyConfig ∅ (handlerAddr toyAccounts) (toyProof zeros64 one32) 1#i64 0#u64
     emptySlice emptySlice :=
   toy_pre_deposit zeros64 toy_zeros_decodes
 
@@ -414,7 +445,7 @@ theorem toy_pre_A0 : HandlerPre Unit Unit Unit toySigners toyCrypto toyC toyAcco
 abbrev okProof : transact.Proof := toyProof verifying_key.VERIFYING_KEY.vk_alpha_g1 one32
 
 theorem toy_pre_ok : HandlerPre Unit Unit Unit toySigners toyCrypto toyC toyAccounts (toyState 1#u64)
-    0#u64 toyTree toyConfig ∅ okProof 1#i64 0#u64 emptySlice emptySlice :=
+    0#u64 toyTree toyConfig ∅ (handlerAddr toyAccounts) okProof 1#i64 0#u64 emptySlice emptySlice :=
   toy_pre_deposit _ toy_alpha_decodes
 
 theorem okProof_notA0 : okProof.proof_a.val ≠ List.replicate 64 0#u8 := by
@@ -450,7 +481,8 @@ theorem toy_A0_rejects (ap : transact.Appended) (e : SolEnv) (t : merkle_tree.Me
 /-- The faithful statement, instantiated at the L1 toy transaction, is false. -/
 theorem toy_refutes_L1 {Q : transact.Appended → SolEnv → merkle_tree.MerkleTreeAccount → Prop}
     (h : HandlerPre Unit Unit Unit toySigners toyCrypto toyC toyAccounts (toyState 0#u64) 0#u64 toyTree
-      toyConfig ∅ (toyProof verifying_key.VERIFYING_KEY.vk_alpha_g1 zeros32) 0#i64 0#u64 emptySlice emptySlice →
+      toyConfig ∅ (handlerAddr toyAccounts) (toyProof verifying_key.VERIFYING_KEY.vk_alpha_g1 zeros32) 0#i64 0#u64
+      emptySlice emptySlice →
       ∃ ap e t, transact.transact toyCrypto.hasher arkFr toyCrypto.sha256 toyCrypto.proofVerifier solRuntime
         (handlerEnv toyAccounts (toyState 0#u64) 0#u64) toyTree toyConfig
         (toyProof verifying_key.VERIFYING_KEY.vk_alpha_g1 zeros32) 0#i64 0#u64
@@ -462,7 +494,7 @@ theorem toy_refutes_L1 {Q : transact.Appended → SolEnv → merkle_tree.MerkleT
 /-- The statement excluding only L1, instantiated at the A0 toy transaction, is false. -/
 theorem toy_refutes_A0 {Q : transact.Appended → SolEnv → merkle_tree.MerkleTreeAccount → Prop}
     (h : HandlerPre Unit Unit Unit toySigners toyCrypto toyC toyAccounts (toyState 1#u64) 0#u64 toyTree
-      toyConfig ∅ (toyProof zeros64 one32) 1#i64 0#u64 emptySlice emptySlice →
+      toyConfig ∅ (handlerAddr toyAccounts) (toyProof zeros64 one32) 1#i64 0#u64 emptySlice emptySlice →
       ∃ ap e t, transact.transact toyCrypto.hasher arkFr toyCrypto.sha256 toyCrypto.proofVerifier solRuntime
         (handlerEnv toyAccounts (toyState 1#u64) 0#u64) toyTree toyConfig
         (toyProof zeros64 one32) 1#i64 0#u64

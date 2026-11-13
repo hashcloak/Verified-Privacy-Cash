@@ -7,29 +7,23 @@ REVIEW SURFACE. Besides "the code model accepted the transaction", the connectio
 (`Connection/ConnectionTheorems.lean`) take hypotheses of three sources, each in its own place:
 - about the spec: its trusted assumptions T0–T3 (`Spec/Statements.lean`);
 - about the code alone: `CodeModelAssumptions.lean`, and core-model's own (`core-model/README.md`);
-- linking the two, or leaving a detail out by design: this file.
+- linking the two: this file.
 
 1. `HashesAgree` (ASSUMED, links the models): the spec's abstract `H2` and `sha256` are the code's
    Poseidon and SHA-256 wherever the code returns a hash; the code's zero hashes are the spec's
    `Z` (computed from `H2`); Poseidon's outputs and the zero hashes are canonical bytes (below
    the field modulus).
 2. `SameRent` (ASSUMED, links the models): the code and the spec use the same rent.
-   `run_connection` takes it for every program instruction of the execution.
-3. `OutsideSpecDetail` (BY DESIGN): Solana details the spec deliberately does not model, as
-   it is written at the level of the documentation. Each field rules one out;
-   `transact_connection` does not cover transactions where such a detail matters. Not a
-   defect of the code or the spec. It also carries `SameRent` for the transaction.
-   `run_connection` does not take it: there the other details are changes the spec allows
-   between transactions.
-4. For handler completeness only: `HandlerContext` (invariants and a premise at the handler's
+   `transact_connection` takes it for its transaction, `run_connection` for every program
+   instruction of the execution.
+3. For handler completeness only: `HandlerContext` (invariants and a premise at the handler's
    start).
-5. For G3a and G3b for the code only: `ReachesProgram`, bundling `AccountsCorrect` (the owner's
+4. For G3a and G3b for the code only: `ReachesProgram`, bundling `AccountsCorrect` (the owner's
    choice), the code-model assumptions `ProgramAccountsInPlace`, `NullifierAddressesFree`,
-   positive rent and `SolanaFacts`, the same rent on both sides (`SameRent`, assumed), and
-   `SignerCreditFits` (a limit).
+   positive rent and `SolanaFacts`, and the same rent on both sides (`SameRent`, assumed).
 
-No code/spec difference is currently excluded by `transact_connection` or `run_connection`. G3a
-for the code excludes L1 and A0 by name, and G3b A0: see `Findings.lean`.
+No code/spec difference and no Solana detail is excluded by `transact_connection` or
+`run_connection`. G3a for the code excludes L1 and A0 by name, and G3b A0: see `Findings.lean`.
 
 Not a hypothesis here, but relied on: core-model's `EnvStep` (outside actions cannot change the
 owner or data of an account the program owns, and the program never closes one). The
@@ -68,28 +62,6 @@ structure HashesAgree (c : Crypto) : Prop where
     sees a different rent, or none. -/
 def SameRent (rent : Nat → U64) (tx : TxEnv) : Prop := tx.minimumBalance = some rent
 
-/-- `OutsideSpecDetail d rent s tx a proof` (by design): Solana details the Lean Spec
-    does not model. Each field rules one out; transactions where it matters are not covered. -/
-structure OutsideSpecDetail (d : Deployment) (rent : Nat → U64) (s : State) (tx : TxEnv)
-    (a : TransactAccounts) (proof : zkcash_core.transact.Proof) : Prop where
-  /-- The code and the spec use the same rent (`SameRent`). -/
-  sameRent : SameRent rent tx
-  /-- Pre-funded nullifier addresses. Anyone can send lamports to the address of a nullifier
-      account before it exists; Anchor then only tops it up, so the signer pays less than the
-      spec's `2 * nullifierRent`. Ruled out: both addresses hold nothing beforehand. -/
-  nullifierAddressesEmpty :
-    (s (d.pda (nullifier0Seeds proof.input_nullifiers.val[0]!))).lamports.val = 0 ∧
-    (s (d.pda (nullifier1Seeds proof.input_nullifiers.val[1]!))).lamports.val = 0
-  /-- Payees that are nullifier accounts. The spec does not count nullifier accounts as public
-      accounts; a payment to one (an existing one, or one this transaction creates) is locked
-      there. Ruled out: neither payee is a nullifier account. -/
-  payeesNotNullifierAccounts :
-    (∀ b, (s a.recipient).data ≠ .nullifier b) ∧ (∀ b, (s a.feeRecipientAccount).data ≠ .nullifier b) ∧
-    a.recipient ≠ d.pda (nullifier0Seeds proof.input_nullifiers.val[0]!) ∧
-    a.recipient ≠ d.pda (nullifier1Seeds proof.input_nullifiers.val[1]!) ∧
-    a.feeRecipientAccount ≠ d.pda (nullifier0Seeds proof.input_nullifiers.val[0]!) ∧
-    a.feeRecipientAccount ≠ d.pda (nullifier1Seeds proof.input_nullifiers.val[1]!)
-
 /-! ## For handler completeness only -/
 
 /-- `HandlerContext a s₁ tree config` (handler completeness only): what holds when
@@ -120,8 +92,8 @@ structure HandlerContext (a : TransactAccounts) (s₁ : State)
 /-- `AccountsCorrect d s a proof` (the owner's choice): the sender lists the right accounts.
 
     Fixes the addresses Anchor checks: the tree, the pool, the config, the four nullifier addresses
-    of the proof's nullifiers and the system program. Then the owner's own accounts: the signer
-    and the payees. Nothing here is a claim about the program. -/
+    of the proof's nullifiers and the system program. Then the owner's own account: the signer
+    of the transaction. Nothing here is a claim about the program. -/
 structure AccountsCorrect (d : Deployment) (s : State) (a : TransactAccounts)
     (proof : zkcash_core.transact.Proof) : Prop where
   tree : a.treeAccount = treeAddr d
@@ -134,20 +106,6 @@ structure AccountsCorrect (d : Deployment) (s : State) (a : TransactAccounts)
   systemProg : a.systemProgram = systemProgram
   /-- The signer is a plain system account, as a wallet is. -/
   signerPlain : (s a.signer).owner = systemProgram ∧ (s a.signer).data.isEmpty
-  /-- The recipient isn't a nullifier account (as `OutsideSpecDetail.payeesNotNullifierAccounts`). -/
-  recipient : (∀ b, (s a.recipient).data ≠ .nullifier b) ∧
-    a.recipient ≠ a.nullifier0 ∧ a.recipient ≠ a.nullifier1
-  /-- The fee recipient isn't a nullifier account (likewise). -/
-  feeRecipient : (∀ b, (s a.feeRecipientAccount).data ≠ .nullifier b) ∧
-    a.feeRecipientAccount ≠ a.nullifier0 ∧ a.feeRecipientAccount ≠ a.nullifier1
-
-/-- `SignerCreditFits d s a inputs` (a limit): what the signer gets from the transaction doesn't
-    overflow a `u64`, measured from its balance before it pays rent (unreachable in practice:
-    2^64 lamports exceeds the total SOL supply). Separate from the spec's `balancesFit`, which
-    counts the rent, because a pre-funded nullifier address can make the signer pay less. -/
-def SignerCreditFits (d : Deployment) (s : State) (a : TransactAccounts) (inputs : LeanSpec.TxInputs) : Prop :=
-  ((s a.signer).lamports.val : ℤ) + LeanSpec.balanceDelta inputs (toPubkey (poolAddr d)) 0
-    (toPubkey a.signer) < 2^64
 
 /-- `ReachesProgram …`: everything G3a and G3b for the code take about getting a `transact` past
     Anchor and into the program. -/
@@ -168,7 +126,5 @@ structure ReachesProgram (d : Deployment) (rent : Nat → U64) (s : State) (tx :
   rentPositive : tx.RentPositive
   /-- [assumed] The Solana facts. -/
   solana : SolanaFacts d tx
-  /-- [limit] The signer's credit fits. -/
-  signerCredit : SignerCreditFits d s a (toInputs tx.signers a proof ext fee out1 out2)
 
 end Connection

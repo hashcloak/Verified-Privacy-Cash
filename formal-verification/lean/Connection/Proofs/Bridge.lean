@@ -18,14 +18,6 @@ variable {signers : List Pubkey}
 variable {G1 G2 GT : Type} [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGroup G2]
   [Module LeanSpec.F G2] [CommGroup GT] {s : AltBn128}
 
-/-- A code array, as the spec's bytes and back. -/
-theorem toArray_toBytes {n : Usize} (b : Std.Array U8 n) : toArray n (toBytes b.val) = some b := by
-  unfold toArray
-  rw [dif_pos (by simp [toBytes, Std.Array.length_eq])]
-  congr 1
-  apply Std.Array.ext
-  simp [toBytes, List.map_map, Function.comp_def]
-
 /-- The spec decodes the mapped proof's bytes as the syscalls decode the proof's points. -/
 theorem decode_toInputs (C : AltBn128Contracts s G1 G2 GT) (proof : zkcash_core.transact.Proof)
     (a : TransactAccounts) (ext : I64) (fee : U64) (out1 out2 : Slice U8)
@@ -102,38 +94,37 @@ theorem verifier_bridge (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT)
 
 /-- `transact_refines` with the verifier bridge in place of the temporary `hProofValid`. -/
 theorem transact_refines_verified [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
-    {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSpec.F} {s s' : State} {tx : TxEnv}
+    {d : Deployment} {rent : Nat → U64} {s s' : State} {tx : TxEnv}
     {a : TransactAccounts} {proof : zkcash_core.transact.Proof} {extAmount : I64} {fee : U64}
     {out1 out2 : Slice U8} {events : List CommitmentData}
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
     (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
     (hashes : HashesAgree d.crypto)
-    (wf : WellFormed d spent s)
+    (wf : WellFormed d s)
     (solana : SolanaFacts d tx) (hrentPos : tx.RentPositive)
     (crypto : CryptoFacts d proof) (circuit : CircuitFacts d {proof})
-    (outside : OutsideSpecDetail d rent s tx a proof) :
+    (rentFixed : SameRent rent tx) :
     letI : LeanSpec.Groups := syscallGroups C
     letI : LeanSpec.Pairing := syscallPairing C
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     let inputs := toInputs tx.signers a proof extAmount fee out1 out2
-    let spent' := spent ∪ {inputs.k0, inputs.k1}
-    LeanSpec.transact inputs (toWorld d rent spent s) (toWorld d rent spent' s') ∧
-      WellFormed d spent' s' := by
+    LeanSpec.transact inputs (toWorld d rent s) (toWorld d rent s') ∧
+      WellFormed d s' := by
   letI : LeanSpec.Groups := syscallGroups C
   letI : LeanSpec.Pairing := syscallPairing C
   letI : LeanSpec.Deployment := ⟨programKey C⟩
-  exact transact_refines hstep hashes wf solana hrentPos crypto circuit outside
+  exact transact_refines hstep hashes wf solana hrentPos crypto circuit rentFixed
     (fun hv => verifier_bridge d.crypto C laws proof hv a extAmount fee out1 out2)
 
 /-- `transact_refines_between` with the verifier bridge in place of `hProofValid`. -/
 theorem transact_refines_between_verified [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
-    {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSpec.F} {s s' : State} {tx : TxEnv}
+    {d : Deployment} {rent : Nat → U64} {s s' : State} {tx : TxEnv}
     {a : TransactAccounts} {proof : zkcash_core.transact.Proof} {extAmount : I64} {fee : U64}
     {out1 out2 : Slice U8} {events : List CommitmentData}
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
     (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
     (hashes : HashesAgree d.crypto)
-    (wf : WellFormed d spent s)
+    (wf : WellFormed d s)
     (solana : SolanaFacts d tx) (hrentPos : tx.RentPositive)
     (crypto : CryptoFacts d proof) (circuit : CircuitFacts d {proof})
     (rentFixed : tx.minimumBalance = some rent) :
@@ -141,17 +132,16 @@ theorem transact_refines_between_verified [LeanSpec.PoseidonHashes] [LeanSpec.Sh
     letI : LeanSpec.Pairing := syscallPairing C
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     let inputs := toInputs tx.signers a proof extAmount fee out1 out2
-    let spent' := spent ∪ {inputs.k0, inputs.k1}
-    ∃ b₁ : LeanSpec.UpdatedValuesBetweenTransacts, b₁.Allowed (toWorld d rent spent s) ∧
+    ∃ b₁ : LeanSpec.UpdatedValuesBetweenTransacts, b₁.Allowed (toWorld d rent s) ∧
       ∃ b₂ : LeanSpec.UpdatedValuesBetweenTransacts,
-      LeanSpec.transact inputs ((toWorld d rent spent s).withUpdatedValues b₁)
-        ((toWorld d rent spent' s').withUpdatedValues b₂) ∧
-      (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent spent' s')).Allowed
-        ((toWorld d rent spent' s').withUpdatedValues b₂) ∧
-      WellFormed d spent' s' ∧ b₁.adminChanges = [] ∧
-      b₁.balances (toPubkey (poolAddr d)) = publicBalance s (poolAddr d) ∧
-      b₂.config = (toWorld d rent spent' s').state.config ∧
-      b₂.balances (toPubkey (poolAddr d)) = publicBalance s' (poolAddr d) := by
+      LeanSpec.transact inputs ((toWorld d rent s).withUpdatedValues b₁)
+        ((toWorld d rent s').withUpdatedValues b₂) ∧
+      (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent s')).Allowed
+        ((toWorld d rent s').withUpdatedValues b₂) ∧
+      WellFormed d s' ∧ b₁.adminChanges = [] ∧
+      b₁.balances (toPubkey (poolAddr d)) = lamportsOf s (poolAddr d) ∧
+      b₂.config = (toWorld d rent s').state.config ∧
+      b₂.balances (toPubkey (poolAddr d)) = lamportsOf s' (poolAddr d) := by
   letI : LeanSpec.Groups := syscallGroups C
   letI : LeanSpec.Pairing := syscallPairing C
   letI : LeanSpec.Deployment := ⟨programKey C⟩

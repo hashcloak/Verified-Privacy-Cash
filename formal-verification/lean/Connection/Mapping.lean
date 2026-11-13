@@ -10,7 +10,7 @@ meaning depends on these definitions, so each is short and should be checked by 
 
 A mapping that throws information away could make the theorem easier to prove but weaker.
 Every map below is injective on the values that matter, except where its comment says
-otherwise (field elements are read mod p; nullifier accounts are left out of the balances).
+otherwise (field elements are read mod p).
 -/
 
 namespace Connection
@@ -41,6 +41,15 @@ def toPubkey (k : Pubkey) : LeanSpec.Pubkey := BitVec.ofNat 256 (leNatOfList k.v
 /-- `fromPubkey x`: the inverse of `toPubkey`. -/
 def fromPubkey (x : LeanSpec.Pubkey) : Pubkey :=
   Std.Array.from (leBytes32 x.toNat) (by simp [leBytes32])
+
+/-- `toArray n bs`: the spec's bytes as an `n`-byte code array, if there are exactly `n`. -/
+def toArray (n : Usize) (bs : LeanSpec.Bytes) : Option (Std.Array U8 n) :=
+  if h : bs.length = n.val then
+    some (Std.Array.from (bs.map (fun b => (⟨b⟩ : U8))) (by simp [h]))
+  else none
+
+/-- Every address, as a finite set. -/
+def allPubkeys : Finset LeanSpec.Pubkey := (Finset.univ : Finset (Fin (2^256))).image BitVec.ofFin
 
 /-! ## The program's accounts -/
 
@@ -91,27 +100,42 @@ def toConfig (c : zkcash_core.admin.GlobalConfig)
 
 /-! ## Worlds -/
 
-/-- `publicBalance s k`: the balance the spec sees for account `k`: its lamports, except
-    that nullifier accounts count as 0. MAPPING DECISION: the spec's balances are those of public accounts, and the
-    signer's nullifier rent leaves them (spec `nullifierRentEffects`). On-chain that rent goes to the two new nullifier accounts. -/
-def publicBalance (s : State) (k : Pubkey) : ℕ :=
-  match (s k).data with
-  | .nullifier _ => 0
-  | _ => (s k).lamports.val
+/-- `lamportsOf s k`: the balance of account `k`: its lamports. -/
+def lamportsOf (s : State) (k : Pubkey) : ℕ := (s k).lamports.val
 
-/-- `toWorld d rent spent s`: the spec world the chain state `s` stands for.
+/-- `IsNullifierAccount d s k`: the account at `k` is one of the program's nullifier accounts:
+    the program owns it and it holds nullifier data. -/
+def IsNullifierAccount (d : Deployment) (s : State) (k : Pubkey) : Prop :=
+  (s k).owner = d.programId ∧ ∃ b, (s k).data = .nullifier b
+
+instance (d : Deployment) (s : State) (k : Pubkey) : Decidable (IsNullifierAccount d s k) := by
+  unfold IsNullifierAccount
+  cases (s k).data <;> simp <;> infer_instance
+
+/-- `nullifierAccountsOf d s`: the addresses of the program's nullifier accounts in `s`. -/
+def nullifierAccountsOf (d : Deployment) (s : State) : Finset LeanSpec.Pubkey :=
+  allPubkeys.filter fun x => IsNullifierAccount d s (fromPubkey x)
+
+/-- `nullifierAddrOf d i b`: the address of the nullifier account for the nullifier with bytes
+    `b`, spent as input `i`: the program's PDA with seeds `[b"nullifier0", b]` or
+    `[b"nullifier1", b]`. Bytes that are not 32 long are no nullifier; they get address `0`. -/
+def nullifierAddrOf (d : Deployment) (i : Fin 2) (b : LeanSpec.Bytes) : LeanSpec.Pubkey :=
+  match toArray 32#usize b with
+  | some n => toPubkey (d.pda (if i = 0 then nullifier0Seeds n else nullifier1Seeds n))
+  | none => 0
+
+/-- `toWorld d rent s`: the spec world the chain state `s` stands for.
     - **`rent`:** Solana's rent-exempt minimum for an account of a given size. The spec fixes
       the two amounts it uses; `SameRent` assumes each transaction sees this.
-    - **`spent`:** the spent nullifiers, tracked alongside the chain. On-chain a nullifier is
-      spent when its nullifier account exists; `WellFormed.spentRecorded` links the two. -/
-def toWorld (d : Deployment) (rent : Nat → U64) (spent : Finset LeanSpec.F) (s : State) :
-    LeanSpec.World where
+    - **nullifier accounts:** the program's nullifier accounts in `s`, at the program's PDAs. -/
+def toWorld (d : Deployment) (rent : Nat → U64) (s : State) : LeanSpec.World where
   state :=
     { tree := toTree (treeAt s (treeAddr d))
-      nullifiers := spent
+      nullifierAccounts := nullifierAccountsOf d s
       pool := toPubkey (poolAddr d)
+      nullifierAddr := nullifierAddrOf d
       config := toConfig (configAt s (configAddr d)) (treeAt s (treeAddr d)) }
-  balances x := publicBalance s (fromPubkey x)
+  balances x := lamportsOf s (fromPubkey x)
   rentExemptMin := (rent treeTokenAccountSpace).val
   nullifierRent := (rent nullifierAccountSpace).val
 
@@ -158,17 +182,6 @@ def runTxs : List Event → List LeanSpec.TxInputs
   | .program tx ix _ :: es => stepTxs tx ix ++ runTxs es
   | .env :: es => runTxs es
 
-/-- The nullifiers one instruction spends (only `transact` spends any). -/
-def stepSpent : Instruction → Finset LeanSpec.F
-  | .transact _ proof _ _ _ _ => {toF proof.input_nullifiers.val[0]!, toF proof.input_nullifiers.val[1]!}
-  | _ => ∅
-
-/-- The nullifiers an execution spends: those of its `transact` instructions. -/
-def runSpent : List Event → Finset LeanSpec.F
-  | [] => ∅
-  | .program _ ix _ :: es => stepSpent ix ∪ runSpent es
-  | .env :: es => runSpent es
-
 /-- `ExecutionPath d s evs states s'`: the execution `evs` from `s` to `s'`, with the state after
     each event (`states`). Core-model's `Run` with the states recorded: `Run` is a `Prop` and so
     can't tell a theorem which states it went through. The steps and their premises are `Run`'s
@@ -209,15 +222,13 @@ structure InitRecord where
     - `closedGaps`: for each transaction so far, the admin changes since the one before it;
     - `openGap`: the admin changes since the last transaction;
     - `poolBeforeTx`: just before each transaction so far, the chain's pool balance;
-    - `afterTx`: after each transaction so far, the chain's spec state and pool balance;
-    - `spent`: the nullifiers spent so far. -/
+    - `afterTx`: after each transaction so far, the chain's spec state and pool balance. -/
 structure ExecutionView where
   init : Option InitRecord := none
   closedGaps : List (List LeanSpec.AdminChange) := []
   openGap : List LeanSpec.AdminChange := []
   poolBeforeTx : List ℕ := []
   afterTx : List (LeanSpec.State × ℕ) := []
-  spent : Finset LeanSpec.F := ∅
 
 /-- `v.afterEvent d rent before e after`: the view `v` after event `e` took the chain from
     `before` to `after`. Outside actions change nothing the view records. -/
@@ -229,16 +240,14 @@ def ExecutionView.afterEvent (v : ExecutionView) (d : Deployment) (rent : Nat �
     match ix with
     | .initialize a =>
       { v with init := some ⟨toPubkey a.authority, tx.signers.map toPubkey,
-          toWorld d rent v.spent after⟩ }
+          toWorld d rent after⟩ }
     | .transact .. =>
-      let spent' := v.spent ∪ stepSpent ix
       { v with
         closedGaps := v.closedGaps ++ [v.openGap]
         openGap := []
-        poolBeforeTx := v.poolBeforeTx ++ [publicBalance before (poolAddr d)]
-        afterTx := v.afterTx ++ [((toWorld d rent spent' after).state,
-          publicBalance after (poolAddr d))]
-        spent := spent' }
+        poolBeforeTx := v.poolBeforeTx ++ [lamportsOf before (poolAddr d)]
+        afterTx := v.afterTx ++ [((toWorld d rent after).state,
+          lamportsOf after (poolAddr d))] }
     | _ => { v with openGap := v.openGap ++ (toAdminChange d before tx ix).toList }
 
 /-- `v.afterEvents d rent before evs states`: the view `v` after the events `evs`, from `before`
@@ -260,24 +269,26 @@ def Initialized (d : Deployment) (s : State) : Prop :=
   (∃ t, HoldsTree d.programId s (treeAddr d) t) ∧ (∃ p, HoldsTreeToken d.programId s (poolAddr d) p) ∧
     (∃ c, HoldsGlobalConfig d.programId s (configAddr d) c)
 
-/-- `NoProgramAccounts d s`: no account is the program's tree, pool or config. -/
+/-- `NoProgramAccounts d s`: no account is the program's tree, pool, config or nullifier
+    account. -/
 def NoProgramAccounts (d : Deployment) (s : State) : Prop :=
   (∀ k t, ¬ HoldsTree d.programId s k t) ∧ (∀ k p, ¬ HoldsTreeToken d.programId s k p) ∧
-    ∀ k c, ¬ HoldsGlobalConfig d.programId s k c
+    (∀ k c, ¬ HoldsGlobalConfig d.programId s k c) ∧ ∀ k, ¬ IsNullifierAccount d s k
 
 section
 variable [LeanSpec.PoseidonHashes] [LeanSpec.Sha] [LeanSpec.Groups] [AddCommGroup LeanSpec.G1]
   [Module LeanSpec.F LeanSpec.G1] [AddCommGroup LeanSpec.G2] [Module LeanSpec.F LeanSpec.G2]
   [CommGroup LeanSpec.GT] [LeanSpec.Pairing] [LeanSpec.Deployment]
 
-/-- `RunMatchesView d rent v spent txs s params r`: the spec run `r` is what the view `v` records,
+/-- `RunMatchesView d rent v txs s params r`: the spec run `r` is what the view `v` records,
     and it ends at the code state `s`. The conditions are explained at `IsRunOf`, which applies this
     to a whole execution. -/
-def RunMatchesView (d : Deployment) (rent : Nat → U64) (v : ExecutionView) (spent : Finset LeanSpec.F)
+def RunMatchesView (d : Deployment) (rent : Nat → U64) (v : ExecutionView)
     (txs : List LeanSpec.TxInputs) (s : State) (params : LeanSpec.InitParams)
     (r : LeanSpec.Run (LeanSpec.initWorld params)) : Prop :=
   -- the start
-  params.pool = toPubkey (poolAddr d) ∧ params.rentExemptMin = (rent treeTokenAccountSpace).val ∧
+  params.pool = toPubkey (poolAddr d) ∧ params.nullifierAddr = nullifierAddrOf d ∧
+    params.rentExemptMin = (rent treeTokenAccountSpace).val ∧
     params.nullifierRent = (rent nullifierAccountSpace).val ∧
     params.admin = d.adminPubkey.map toPubkey ∧
     (∃ i : InitRecord, v.init = some i ∧ params.initializer = i.initializer ∧
@@ -297,29 +308,28 @@ def RunMatchesView (d : Deployment) (rent : Nat → U64) (v : ExecutionView) (sp
     (∀ j (_ : j < r.txs.length), v.closedGaps[j]? = some (r.updatedValues j).adminChanges) ∧
     -- the end
     ∃ b : LeanSpec.UpdatedValuesBetweenTransacts, b.Allowed r.final ∧
-      b.adminChanges = v.openGap ∧ toWorld d rent spent s = r.final.withUpdatedValues b
+      b.adminChanges = v.openGap ∧ toWorld d rent s = r.final.withUpdatedValues b
 
 /-- `IsRunOf d rent s₀ evs states s params r`: `r` is the spec run of this execution: the one
     `evs` went through, from `s₀` to `s`, by the `states` of its `ExecutionPath`.
 
     - **the start:** `r` starts at the world `initialize` set up (`view.init`): its config and
       balances, its signing authority and the signers of its transaction; and `params` holds the
-      deployment's pool address, rents and admin key;
+      deployment's pool address, nullifier account addresses, rents and admin key;
     - **the transactions:** its transactions are the execution's (`runTxs evs`);
     - **the pool before each transaction:** `r` has the chain's pool balance, so the SOL `r` counts
       as sent to the pool (`r.donated`) is what the chain received;
-    - **each transaction's result:** after each transaction, `r` has the chain's tree, nullifiers,
-      pool address, config and pool balance. Other balances may differ (see
-      `OutsideSpecDetail`: a pre-funded nullifier address, or a payee that is a nullifier account);
+    - **each transaction's result:** after each transaction, `r` has the chain's tree, nullifier
+      accounts, pool address, config and pool balance. Other balances may differ: `r` takes them
+      from the spec's `transact`, and the chain's are what the next allowed change starts from;
     - **the admin changes:** before each transaction, `r` records exactly the admin instructions
       executed since the last one, with the signers of their transactions;
-    - **the end:** the code state `s`, with the nullifiers the execution spent, is its final world
-      after an allowed change that records the admin instructions executed since the last
-      transaction. -/
+    - **the end:** the code state `s` is its final world after an allowed change that records the
+      admin instructions executed since the last transaction. -/
 def IsRunOf (d : Deployment) (rent : Nat → U64) (s₀ : State) (evs : List Event)
     (states : List State) (s : State) (params : LeanSpec.InitParams)
     (r : LeanSpec.Run (LeanSpec.initWorld params)) : Prop :=
-  RunMatchesView d rent (executionView d rent s₀ evs states) (runSpent evs) (runTxs evs) s params r
+  RunMatchesView d rent (executionView d rent s₀ evs states) (runTxs evs) s params r
 
 /-- `IsSpecRun d rent s₀ evs states s`: the execution is a spec run (some `r` with `IsRunOf`). -/
 def IsSpecRun (d : Deployment) (rent : Nat → U64) (s₀ : State) (evs : List Event)
@@ -343,10 +353,10 @@ def handlerEnv (a : TransactAccounts) (s₁ : State) (v : U64) : SolEnv :=
     treeToken := a.treeTokenAccount, recipient := a.recipient,
     feeRecipient := a.feeRecipientAccount, rentExemptMinimum := some v }
 
-/-- `handlerWorld a s₁ v tree config spent`: the spec world the handler sees (used only by
-    handler completeness): every account's lamports in `s₁`, the tree and config it is
-    given, the pool's address, the rent-exempt minimum `v`, and the nullifiers `spent` (the
-    handler does not read them).
+/-- `handlerWorld a s₁ v tree config accts addr`: the spec world the handler sees (used only
+    by handler completeness): every account's lamports in `s₁`, the tree and config it is
+    given, the pool's address, the rent-exempt minimum `v`, and the nullifier accounts `accts`
+    at addresses `addr` (the handler reads neither).
 
     MAPPING DECISION: `nullifierRent := 0`, because Anchor has already paid the two
     nullifier accounts' rent before the handler runs; the handler's effects are the spec's
@@ -354,17 +364,17 @@ def handlerEnv (a : TransactAccounts) (s₁ : State) (v : U64) : SolEnv :=
 
     How it differs from `toWorld` (the connection theorems' world):
     - **when:** after Anchor's two `init`s, not before;
-    - **balances:** every account's raw lamports, nullifier accounts included (`toWorld`
-      counts those as 0, `publicBalance`), since the handler never pays them in the cases it
-      covers;
+    - **nullifier accounts:** given, not read from `s₁`;
     - **rent:** the handler's own `v`. -/
 def handlerWorld (a : TransactAccounts) (s₁ : State) (v : U64)
     (tree : zkcash_core.merkle_tree.MerkleTreeAccount) (config : zkcash_core.admin.GlobalConfig)
-    (spent : Finset LeanSpec.F) : LeanSpec.World where
+    (accts : Finset LeanSpec.Pubkey) (addr : Fin 2 → LeanSpec.Bytes → LeanSpec.Pubkey) :
+    LeanSpec.World where
   state :=
     { tree := toTree tree
-      nullifiers := spent
+      nullifierAccounts := accts
       pool := toPubkey a.treeTokenAccount
+      nullifierAddr := addr
       config := toConfig config tree }
   balances x := (s₁ (fromPubkey x)).lamports.val
   rentExemptMin := v.val
@@ -375,12 +385,6 @@ def handlerWorld (a : TransactAccounts) (s₁ : State) (v : U64)
 The spec's groups, point decoding, pairing and deployed key, for the verifier bridge. The
 groups `G1 G2 GT` and the point decoding come from the syscall contracts `C` (core-model's
 `AltBn128Contracts`); the key is the program's extracted `VERIFYING_KEY`. -/
-
-/-- `toArray n bs`: the spec's bytes as an `n`-byte code array, if there are exactly `n`. -/
-def toArray (n : Usize) (bs : LeanSpec.Bytes) : Option (Std.Array U8 n) :=
-  if h : bs.length = n.val then
-    some (Std.Array.from (bs.map (fun b => (⟨b⟩ : U8))) (by simp [h]))
-  else none
 
 section
 variable {G1 G2 GT : Type} [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGroup G2]

@@ -13,7 +13,7 @@ invariant is a hypothesis: `WellFormed` is proved for every reachable state.
 
 | Theorem | Says | Hypotheses (kind) |
 |---|---|---|
-| `transact_connection` | every `transact` the code accepts satisfies the spec's `transact` (all preconditions, exact effects) | execution, then the transaction as one more step (core-model `Run`) (premise); `DeploymentFacts`, `HashesAgree`, `SolanaFacts`, `CryptoFacts`, `CircuitFacts`, syscall contracts, `PairingLaws` (asm); `OutsideSpecDetail` (design) |
+| `transact_connection` | every `transact` the code accepts satisfies the spec's `transact` (all preconditions, exact effects) | execution, then the transaction as one more step (core-model `Run`) (premise); `DeploymentFacts`, `HashesAgree`, `SolanaFacts`, `CryptoFacts`, `CircuitFacts`, syscall contracts, `PairingLaws`, `SameRent` (asm) |
 | `run_connection` | every execution is a run of the spec (`IsSpecRun`), or has not initialized the pool | execution (premise); `DeploymentFacts`, `HashesAgree`, syscall contracts, `PairingLaws` (asm); `ExecutionAssumptions` (asm); `SameRent` for every program instruction (asm) |
 | `execution_path_iff_run` | `ExecutionPath` (which `run_connection` takes) has exactly the executions of core-model's `Run` | none |
 | `handler_complete_except_L1_A0` | completeness at the handler: every transaction the spec allows, the handler accepts with the spec's effects | `HandlerContext`, `HandlerSpecAllows` (premise); `HashesAgree`, `CompletenessAssumptions`, syscall contracts, `PairingLaws` (asm); not L1, not A0 (finding) |
@@ -29,7 +29,7 @@ invariant is a hypothesis: `WellFormed` is proved for every reachable state.
 | `transact_connection_nonvacuous` | every hypothesis of `transact_connection` (so of G2a, G4a, G4b for the code) holds for an accepted deposit and an accepted withdrawal in one toy deployment | none |
 
 `ReachesProgram`: `AccountsCorrect` (owner); `ProgramAccountsInPlace`, `NullifierAddressesFree`,
-`SolanaFacts`, positive rent (`TxEnv.RentPositive`, as core-model's `Run`) (asm); rent fixed (design); `SignerCreditFits` (limit).
+`SolanaFacts`, positive rent (`TxEnv.RentPositive`, as core-model's `Run`), `SameRent` (asm).
 
 Not carried over: G2b (about circuit witnesses only). The build has no `sorry`. Axioms are machine-checked for the spec only (`Spec/Axioms.lean`); for the connection, check with `#print axioms` (`REVIEWING.md`).
 
@@ -52,7 +52,7 @@ Documentation notes (the spec includes the rule, marked ADDED MANUALLY (docs sil
 What each says is in its docstring. Linking the code to the spec (`Hypotheses.lean`):
 
 - `HashesAgree`: the deployment's hashes are the spec's.
-- By design: `OutsideSpecDetail` (Solana details the spec does not model). Assumed: `SameRent` (code and spec use the same rent).
+- `SameRent`: code and spec use the same rent. No Solana detail is excluded by design: the spec models nullifier accounts (pre-funded addresses, payments into them).
 
 About the code alone (`CodeModelAssumptions.lean`; core-model does not state them):
 

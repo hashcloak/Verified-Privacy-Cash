@@ -41,8 +41,8 @@ theorem toy_init_authority {s₁ : State} {tree : merkle_tree.MerkleTreeAccount}
     tree.authority = pk 1#u8 := by
   have hpid : toyD.programId ≠ systemProgram := by unfold toyD; decide +kernel
   have hdist := singleton_pdas_distinct _ _ _ toy_fixed_addresses
-  obtain ⟨-, params, -, -, -, -, hI, -, hcfg, -⟩ :=
-    init_between (rent := toyRent) hdist hpid rfl toyHashesAgree.zeroBytes hinit
+  obtain ⟨-, params, -, -, -, -, -, hI, -, hcfg, -⟩ :=
+    init_between (rent := toyRent) hdist hpid rfl (fun k h => toyGenesis k h.1) toyHashesAgree.zeroBytes hinit
   have h1 := params.limitAuthority_init
   rw [hcfg, hI] at h1
   have h2 : toPubkey tree.authority = toPubkey (pk 1#u8) := by
@@ -89,7 +89,7 @@ theorem toy_admin_change_nonvacuous :
   have wf₁ := wf_reachable toyGenesis (.program h1 toyTx_rentPositive (.nil _)) hpid toyHashesAgree
   have wf₂ := wf_reachable toyGenesis (.program h1 toyTx_rentPositive (.program h2 toyTx_rentPositive (.nil _))) hpid toyHashesAgree
   obtain ⟨hi₁, -⟩ := init_between (rent := toyRent) (singleton_pdas_distinct _ _ _ toy_fixed_addresses)
-    hpid rfl toyHashesAgree.zeroBytes hinit
+    hpid rfl (fun k h => toyGenesis k h.1) toyHashesAgree.zeroBytes hinit
   obtain ⟨s₂', h2', h2e⟩ := PrivacyCash.Model.Except.bind_ok h2
   cases h2e
   obtain ⟨hi₂, -, -⟩ := udl_between (rent := toyRent) wf₁ hi₁ h2'
@@ -106,7 +106,7 @@ theorem toy_admin_change_nonvacuous :
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
     rcases hm with h | h | h <;> cases h <;> rfl
   · intro params r hr
-    obtain ⟨-, -, -, -, -, -, -, -, -, -, hgl, hgaps, -⟩ := hr
+    obtain ⟨-, -, -, -, -, -, -, -, -, -, -, hgl, hgaps, -⟩ := hr
     have hv : (executionView toyD toyRent toyS0 [.program toyTx (.initialize toyInitA) [],
         .program toyTx (.updateDepositLimit ⟨treeA, pk 1#u8⟩ 7#u64) [],
         .program toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) e₃]

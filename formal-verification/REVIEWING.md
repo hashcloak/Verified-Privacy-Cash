@@ -138,7 +138,7 @@ says?
 
 **`Mapping.lean`**
 - Do the maps match the program? Field elements big-endian and read mod p; addresses
-  little-endian; nullifier accounts count as 0 in balances (`publicBalance`).
+  little-endian; nullifier accounts count as 0 in balances (`lamportsOf`).
 - Is the spec's verifying key the program's (`programKey`)?
 - `IsRunOf`: is the spec run the execution's own? Check the start (pool address, rents, admin, what
   `initialize` set up), each transaction's pool balance before and state after, and the admin

@@ -60,8 +60,8 @@ theorem after_inits {pid : Pubkey} {s s₁ : State} {mb : Nat → U64} {signer n
     (s₁ signer).lamports.val ≤ (s signer).lamports.val ∧
     ∀ k, k ≠ signer → k ≠ n0 → k ≠ n1 → (s₁ k).lamports.val = (s k).lamports.val := by
   obtain ⟨sA, hA1, hA2⟩ := Option.bind_eq_some_iff.mp h
-  obtain ⟨top0, _, _, _, hlamA, _, _, hotherA⟩ := initAccount_spec hs0 hA1
-  obtain ⟨top1, _, _, _, hlam1, _, _, hother1⟩ := initAccount_spec hs1 hA2
+  obtain ⟨top0, _, _, _, _, hlamA, _, _, hotherA⟩ := initAccount_spec hs0 hA1
+  obtain ⟨top1, _, _, _, _, hlam1, _, _, hother1⟩ := initAccount_spec hs1 hA2
   have g0 := initAccount_payer_ge hs0 hA1
   have g1 := initAccount_payer_ge hs1 hA2
   have l0 := congrFun hlamA signer
@@ -92,36 +92,47 @@ structure ReachedHandler (d : Deployment) (rent : Nat → U64) (s : State) (tx :
   inits : (s.initAccount d.programId rent a.signer a.nullifier0 nullifierAccountSpace (.nullifier 0#u8)).bind
     (·.initAccount d.programId rent a.signer a.nullifier1 nullifierAccountSpace (.nullifier 0#u8)) = some s₁
 
-/-- `OwnerAccounts s a`: account choices the honest owner makes: the signer is a plain system
-    account, and neither payee is a nullifier account. -/
-structure OwnerAccounts (s : State) (a : TransactAccounts) : Prop where
-  signerSystem : (s a.signer).owner = systemProgram ∧ (s a.signer).data.isEmpty
-  recipient : (∀ b, (s a.recipient).data ≠ .nullifier b) ∧ a.recipient ≠ a.nullifier0 ∧ a.recipient ≠ a.nullifier1
-  feeRecipient : (∀ b, (s a.feeRecipientAccount).data ≠ .nullifier b) ∧
-    a.feeRecipientAccount ≠ a.nullifier0 ∧ a.feeRecipientAccount ≠ a.nullifier1
-
 section
 variable [LeanSpec.PoseidonHashes] [LeanSpec.Sha] [LeanSpec.Groups] [AddCommGroup LeanSpec.G1]
   [Module LeanSpec.F LeanSpec.G1] [AddCommGroup LeanSpec.G2] [Module LeanSpec.F LeanSpec.G2]
   [CommGroup LeanSpec.GT] [LeanSpec.Pairing] [LeanSpec.Deployment]
 
+/-- A world `H` whose balances are those of `W` after the rent step, with no rent of its own and
+    the same pool: every account ends where it ends from `W`. -/
+theorem balanceDelta_after_rent (inputs : LeanSpec.TxInputs) (W H : LeanSpec.World)
+    (hb : H.balances = (LeanSpec.nullifierRentEffects inputs W).balances)
+    (hp : H.state.pool = W.state.pool) (hr : H.nullifierRent = 0)
+    (hSolv : W.nullifierTopUp inputs 0 + W.nullifierTopUp inputs 1 ≤ W.balances inputs.s)
+    (hs0 : inputs.s ≠ W.state.newNullifierAccount inputs 0)
+    (hs1 : inputs.s ≠ W.state.newNullifierAccount inputs 1)
+    (h01 : W.state.newNullifierAccount inputs 0 ≠ W.state.newNullifierAccount inputs 1)
+    (x : LeanSpec.Pubkey) :
+    (H.balances x : ℤ) + LeanSpec.balanceDelta inputs H x
+      = W.balances x + LeanSpec.balanceDelta inputs W x := by
+  rw [hb, LeanSpec.nullifierRentEffects_balances inputs W hSolv hs0 hs1 h01 x,
+    balanceDelta_noRent inputs H hr, hp]
+  unfold LeanSpec.balanceDelta
+  push_cast
+  ring
+
 /-- The spec's preconditions in the code's world give them in the world the handler sees. -/
 theorem preconditions_at_handler
-    {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSpec.F} {s s₁ : State} {tx : TxEnv}
+    {d : Deployment} {rent : Nat → U64} {s s₁ : State} {tx : TxEnv}
     {a : TransactAccounts} {proof : zkcash_core.transact.Proof} {ext : I64} {fee : U64}
     {out1 out2 : Slice U8} {tree : zkcash_core.merkle_tree.MerkleTreeAccount}
     {tt : zkcash_core.admin.TreeTokenAccount} {config : zkcash_core.admin.GlobalConfig}
-    (wf : WellFormed d spent s)
+    (wf : WellFormed d s)
     (reached : ReachedHandler d rent s tx a proof tree tt config s₁)
-    (hs0 : a.signer ≠ a.nullifier0) (hs1 : a.signer ≠ a.nullifier1)
-    (owner : OwnerAccounts s a)
-    (hfit : ((s a.signer).lamports.val : ℤ) + LeanSpec.balanceDelta (toInputs tx.signers a proof ext fee out1 out2)
-      (toPubkey (poolAddr d)) 0 (toPubkey a.signer) < 2^64)
-    (pre : LeanSpec.transactPreconditions (toInputs tx.signers a proof ext fee out1 out2) (toWorld d rent spent s)) :
+    (hnr : 0 < (rent nullifierAccountSpace).val)
+    (pre : LeanSpec.transactPreconditions (toInputs tx.signers a proof ext fee out1 out2) (toWorld d rent s)) :
     LeanSpec.transactPreconditions (toInputs tx.signers a proof ext fee out1 out2)
-      (handlerWorld a s₁ (rent treeTokenAccountSpace) tree config spent) := by
+      (handlerWorld a s₁ (rent treeTokenAccountSpace) tree config (nullifierAccountsOf d s)
+        (nullifierAddrOf d)) := by
+  set inputs := toInputs tx.signers a proof ext fee out1 out2 with hinputs
+  set W := toWorld d rent s with hWdef
+  set H := handlerWorld a s₁ (rent treeTokenAccountSpace) tree config (nullifierAccountsOf d s)
+    (nullifierAddrOf d) with hHdef
   have hvalid := reached.accounts
-  obtain ⟨_, _, hge, hle, hoth⟩ := after_inits hs0 hs1 reached.inits
   obtain ⟨htreeAddr, _⟩ := wf.tree _ _ hvalid.treeAccount.1
   have hpoolAddr := wf.pool _ _ hvalid.treeTokenAccount.1
   obtain ⟨hcfgAddr, _⟩ := wf.config _ _ hvalid.globalConfig.1
@@ -129,41 +140,52 @@ theorem preconditions_at_handler
     simp only [treeAt, ← htreeAddr, hvalid.treeAccount.1.2]
   have hcfgAt : configAt s (configAddr d) = config := by
     simp only [configAt, ← hcfgAddr, hvalid.globalConfig.1.2]
-  have hT : (toWorld d rent spent s).state.tree = toTree tree := by
+  have hT : W.state.tree = toTree tree := by
     show toTree (treeAt s (treeAddr d)) = _; rw [htreeAt]
-  have hC : (toWorld d rent spent s).state.config = toConfig config tree := by
+  have hC : W.state.config = toConfig config tree := by
     show toConfig (configAt s (configAddr d)) (treeAt s (treeAddr d)) = _; rw [htreeAt, hcfgAt]
-  have hP : (toWorld d rent spent s).state.pool = toPubkey a.treeTokenAccount := by
-    show toPubkey (poolAddr d) = _; rw [hpoolAddr]
-  have hsep := pre.poolSeparate
-  rw [hP] at hsep
-  have hsigPool : a.signer ≠ a.treeTokenAccount := fun e => hsep.1 (by show toPubkey a.signer = _; rw [e])
-  have hpool0 : a.treeTokenAccount ≠ a.nullifier0 := fun e => wf.programNotSystem (by
-    rw [← hvalid.treeTokenAccount.1.1, e]; exact hvalid.nullifier0.2.1)
-  have hpool1 : a.treeTokenAccount ≠ a.nullifier1 := fun e => wf.programNotSystem (by
-    rw [← hvalid.treeTokenAccount.1.1, e]; exact hvalid.nullifier1.2.1)
-  have hraw : ∀ c, c ≠ a.signer → c ≠ a.nullifier0 → c ≠ a.nullifier1 →
-      (∀ b, (s c).data ≠ .nullifier b) → (s₁ c).lamports.val = publicBalance s c := by
-    intro c h1 h2 h3 h4
-    rw [hoth c h1 h2 h3, publicBalance_of h4]
-  have hpoolData : ∀ b, (s a.treeTokenAccount).data ≠ .nullifier b := by
-    intro b; rw [hvalid.treeTokenAccount.1.2]; simp
-  have hpb : (handlerWorld a s₁ (rent treeTokenAccountSpace) tree config spent).poolBalance
-      = (toWorld d rent spent s).poolBalance := by
-    show (s₁ (fromPubkey (toPubkey a.treeTokenAccount))).lamports.val
-      = publicBalance s (fromPubkey (toPubkey (poolAddr d)))
-    rw [fromPubkey_toPubkey, fromPubkey_toPubkey, ← hpoolAddr]
-    exact hraw _ (Ne.symm hsigPool) hpool0 hpool1 hpoolData
-  have hsigData : ∀ b, (s a.signer).data ≠ .nullifier b := by
-    intro b hb
-    have := owner.signerSystem.2
-    rw [hb] at this
-    simp [AccountData.isEmpty] at this
-  have hsigPub : publicBalance s a.signer = (s a.signer).lamports.val := publicBalance_of hsigData
-  have hsigH : (handlerWorld a s₁ (rent treeTokenAccountSpace) tree config spent).balances (toPubkey a.signer)
-      = (s₁ a.signer).lamports.val := by
-    show (s₁ (fromPubkey (toPubkey a.signer))).lamports.val = _
-    rw [fromPubkey_toPubkey]
+  have hP : W.state.pool = H.state.pool := by
+    show toPubkey (poolAddr d) = toPubkey a.treeTokenAccount; rw [hpoolAddr]
+  have hstate : H.state = { W.state with tree := toTree tree, config := toConfig config tree } := by
+    show LeanSpec.State.mk (toTree tree) (nullifierAccountsOf d s) (toPubkey a.treeTokenAccount)
+        (nullifierAddrOf d) (toConfig config tree)
+      = LeanSpec.State.mk (toTree tree) (nullifierAccountsOf d s) (toPubkey (poolAddr d))
+        (nullifierAddrOf d) (toConfig config tree)
+    rw [hpoolAddr]
+  -- the addresses of the new nullifier accounts
+  obtain ⟨ha0, ha1⟩ := newNullifierAccount_toWorld d rent s tx.signers a proof ext fee out1 out2
+  have hnf0 : a.nullifier0 = d.pda (nullifier0Seeds proof.input_nullifiers.val[0]!) := hvalid.nullifier0.1
+  have hnf1 : a.nullifier1 = d.pda (nullifier1Seeds proof.input_nullifiers.val[1]!) := hvalid.nullifier1.1
+  rw [← hnf0] at ha0; rw [← hnf1] at ha1
+  obtain ⟨hsP, hs0, hs1⟩ := pre.signerNotPoolNotNullifiers
+  obtain ⟨h01, -, -⟩ := pre.nullifierAccountsNew
+  have hs0' : a.signer ≠ a.nullifier0 := fun e => hs0 (by rw [ha0]; show toPubkey a.signer = _; rw [e])
+  have hs1' : a.signer ≠ a.nullifier1 := fun e => hs1 (by rw [ha1]; show toPubkey a.signer = _; rw [e])
+  have h01' : a.nullifier0 ≠ a.nullifier1 := fun e => h01 (by rw [ha0, ha1, e])
+  -- the handler's balances are the spec's after the rent step
+  have hR := rentEffects_of_inits (signers := tx.signers) (ext := ext) (fee := fee) (out1 := out1)
+    (out2 := out2) hnf0 hnf1 hs0' hs1' h01' hnr reached.inits
+  have hHb : H.balances = (LeanSpec.nullifierRentEffects inputs W).balances := by
+    rw [hR]; rfl
+  have hHr : H.nullifierRent = 0 := rfl
+  have hsolv := pre.signerSolvency
+  unfold LeanSpec.signerSolvent at hsolv
+  have hSolv : W.nullifierTopUp inputs 0 + W.nullifierTopUp inputs 1 ≤ W.balances inputs.s := by
+    split_ifs at hsolv <;> omega
+  have hrentB := LeanSpec.nullifierRentEffects_balances inputs W hSolv hs0 hs1 h01
+  have hdelta := balanceDelta_after_rent inputs W H hHb hP.symm hHr hSolv hs0 hs1 h01
+  -- the pool keeps its balance
+  have hpb : H.poolBalance = W.poolBalance := by
+    unfold LeanSpec.World.poolBalance
+    rw [← hP, hHb]
+    have := hrentB W.state.pool
+    rw [if_neg (fun e => hsP e.symm), if_neg (fun e => pre.nullifierAccountsNew.2.1 e.symm),
+      if_neg (fun e => pre.nullifierAccountsNew.2.2 e.symm)] at this
+    omega
+  -- the signer pays the top-ups first
+  have hsig : (H.balances inputs.s : ℤ)
+      = W.balances inputs.s - (W.nullifierTopUp inputs 0 + W.nullifierTopUp inputs 1) := by
+    rw [hHb, hrentB, if_pos rfl, if_neg hs0, if_neg hs1]; ring
   have hfits := pre.balancesFit
   exact {
     knownRoot := by have h := pre.knownRoot; rw [hT] at h; exact h
@@ -171,70 +193,34 @@ theorem preconditions_at_handler
     minimumFee := by have h := pre.minimumFee; rw [hC] at h; exact h
     pubAmtConsistency := pre.pubAmtConsistency
     validZKP := pre.validZKP
-    newNullifiers := pre.newNullifiers
+    newNullifiers := by
+      have h := pre.newNullifiers; rw [show H.state = _ from hstate]; exact h
     distinctNullifiers := pre.distinctNullifiers
+    nullifierAccountsNew := by
+      have h := pre.nullifierAccountsNew; rw [show H.state = _ from hstate]; exact h
     depositLimit := by have h := pre.depositLimit; rw [hC] at h; exact h
     poolSolvency := by rw [hpb]; exact pre.poolSolvency
     signerSolvency := by
-      have h := pre.signerSolvency
-      show (handlerWorld a s₁ (rent treeTokenAccountSpace) tree config spent).balances (toPubkey a.signer)
-        ≥ 2 * 0 + (if (toInputs tx.signers a proof ext fee out1 out2).extAmt > 0
-            then (toInputs tx.signers a proof ext fee out1 out2).extAmt.natAbs else 0)
-      rw [hsigH]
-      have h' : publicBalance s (fromPubkey (toPubkey a.signer))
-          ≥ 2 * (rent nullifierAccountSpace).val + (if (toInputs tx.signers a proof ext fee out1 out2).extAmt > 0
-            then (toInputs tx.signers a proof ext fee out1 out2).extAmt.natAbs else 0) := h
-      rw [fromPubkey_toPubkey, hsigPub] at h'
-      omega
+      unfold LeanSpec.signerSolvent
+      rw [nullifierTopUp_noRent inputs H hHr, nullifierTopUp_noRent inputs H hHr]
+      have hs := hsig
+      split_ifs at hsolv ⊢ <;> omega
+    signerSignature := pre.signerSignature
+    signerNotPoolNotNullifiers := by
+      have h := pre.signerNotPoolNotNullifiers; rw [show H.state = _ from hstate]; exact h
     treeNotFull := by have h := pre.treeNotFull; rw [hT] at h; exact h
     amountRange := pre.amountRange
     encOutLength := pre.encOutLength
-    poolSeparate := hsep
+    poolNotRecipient := by rw [← hP]; exact pre.poolNotRecipient
     canonicalInputs := pre.canonicalInputs
-    signerSignature := pre.signerSignature
     balancesFit := by
-      refine ⟨fun k hpos => ?_, fun hext => ?_⟩
-      · set inputs := toInputs tx.signers a proof ext fee out1 out2 with hinputs
-        have hkey : toPubkey (fromPubkey k) = k := toPubkey_fromPubkey k
-        show ((s₁ (fromPubkey k)).lamports.val : ℤ)
-          + LeanSpec.balanceDelta inputs (toPubkey a.treeTokenAccount) 0 k < 2^64
-        have hpos' : 0 < LeanSpec.balanceDelta inputs (toPubkey a.treeTokenAccount) 0 k := hpos
-        by_cases hks : k = toPubkey a.signer
-        · subst hks
-          rw [fromPubkey_toPubkey]
-          rw [← hpoolAddr] at hfit
-          have : ((s₁ a.signer).lamports.val : ℤ) ≤ (s a.signer).lamports.val := by exact_mod_cast hle
-          linarith
-        have hcs : fromPubkey k ≠ a.signer := fun e => hks (by rw [← hkey, e])
-        have hdelta : LeanSpec.balanceDelta inputs (toWorld d rent spent s).state.pool
-            (toWorld d rent spent s).nullifierRent k
-            = LeanSpec.balanceDelta inputs (toPubkey a.treeTokenAccount) 0 k := by
-          rw [hP]
-          have hks' : k ≠ inputs.s := hks
-          simp [LeanSpec.balanceDelta, hks']
-        have hW := hfits.1 k (by rw [hdelta]; exact hpos')
-        rw [hdelta] at hW
-        have hWb : (toWorld d rent spent s).balances k = publicBalance s (fromPubkey k) := rfl
-        rw [hWb] at hW
-        suffices h : (s₁ (fromPubkey k)).lamports.val = publicBalance s (fromPubkey k) by
-          rw [h]; exact hW
-        by_cases hkA : k = toPubkey a.recipient
-        · have e : fromPubkey k = a.recipient := by rw [hkA, fromPubkey_toPubkey]
-          rw [e] at hcs ⊢
-          exact hraw _ hcs owner.recipient.2.1 owner.recipient.2.2 owner.recipient.1
-        by_cases hkt : k = toPubkey a.feeRecipientAccount
-        · have e : fromPubkey k = a.feeRecipientAccount := by rw [hkt, fromPubkey_toPubkey]
-          rw [e] at hcs ⊢
-          exact hraw _ hcs owner.feeRecipient.2.1 owner.feeRecipient.2.2 owner.feeRecipient.1
-        by_cases hkp : k = toPubkey a.treeTokenAccount
-        · have e : fromPubkey k = a.treeTokenAccount := by rw [hkp, fromPubkey_toPubkey]
-          rw [e] at hcs ⊢
-          exact hraw _ hcs hpool0 hpool1 hpoolData
-        exfalso
-        have hA' : k ≠ inputs.A := hkA
-        have ht' : k ≠ inputs.t := hkt
-        have hs' : k ≠ inputs.s := hks
-        simp [LeanSpec.balanceDelta, hA', ht', hs', hkp] at hpos'
+      refine ⟨fun x hpos => ?_, fun hext => ?_⟩
+      · rw [hdelta x]
+        by_cases hW : 0 < LeanSpec.balanceDelta inputs W x
+        · exact hfits.1 x hW
+        · have : (W.balances x : ℤ) < 2 ^ 64 := by
+            exact_mod_cast lamportsOf_lt s (fromPubkey x)
+          omega
       · rw [hpb]; exact hfits.2 hext }
 
 end
@@ -258,17 +244,17 @@ theorem systemTransfer_some {s : State} {src dst : Pubkey} {x : U64} (hne : src 
   simp only [hf, if_true, Option.map_some]
   exact ⟨_, rfl⟩
 
-/-- Anchor's `init` succeeds when the payer is a different, plain system account holding the
-    rent. Whatever the address already holds, it needs at most the rent. -/
+/-- Anchor's `init` succeeds when the payer is a different, plain system account holding what
+    the address is missing to hold the rent. -/
 theorem initAccount_some {pid : Pubkey} {s : State} {mb : Nat → U64} {payer key : Pubkey}
     {space : Nat} {data : AccountData} (hne : payer ≠ key)
     (ho : (s payer).owner = systemProgram) (hd : (s payer).data.isEmpty)
-    (hle : (mb space).val ≤ (s payer).lamports.val) (hpos : 0 < (mb space).val) :
+    (hle : (mb space).val - (s key).lamports.val ≤ (s payer).lamports.val) (hpos : 0 < (mb space).val) :
     ∃ s', s.initAccount pid mb payer key space data = some s' := by
   have hmax : (mb space).val ≤ U64.max := by scalar_tac
   unfold State.initAccount
   by_cases hz : (s key).lamports.val = 0
-  · obtain ⟨s', h⟩ := systemTransfer_some (x := mb space) hne ho hd hle (by omega)
+  · obtain ⟨s', h⟩ := systemTransfer_some (x := mb space) hne ho hd (by omega) (by omega)
     simp only [hz, if_true, h, Option.map_some]
     exact ⟨_, rfl⟩
   · simp only [hz, if_false, hne]
@@ -290,21 +276,28 @@ theorem initAccount_some {pid : Pubkey} {s : State} {mb : Nat → U64} {payer ke
       exact ⟨_, rfl⟩
 
 /-- The two `init`s of a `transact` succeed when the signer is a plain system account holding
-    both rents. -/
+    what the two nullifier addresses are missing to hold the rent. -/
 theorem inits_some {pid : Pubkey} {s : State} {mb : Nat → U64} {signer n0 n1 : Pubkey}
     {space : Nat} {data : AccountData} (hpos : 0 < (mb space).val)
-    (h0 : signer ≠ n0) (h1 : signer ≠ n1)
+    (h0 : signer ≠ n0) (h1 : signer ≠ n1) (h01 : n0 ≠ n1)
     (ho : (s signer).owner = systemProgram) (hd : (s signer).data.isEmpty)
-    (hle : 2 * (mb space).val ≤ (s signer).lamports.val) :
+    (hle : ((mb space).val - (s n0).lamports.val) + ((mb space).val - (s n1).lamports.val)
+      ≤ (s signer).lamports.val) :
     ∃ s₁, (s.initAccount pid mb signer n0 space data).bind
       (·.initAccount pid mb signer n1 space data) = some s₁ := by
   obtain ⟨sA, hA⟩ := initAccount_some (pid := pid) (space := space) (data := data) h0 ho hd
     (by omega) hpos
-  obtain ⟨_, _, _, _, _, _, _, hother⟩ := initAccount_spec h0 hA
-  have hge := initAccount_payer_ge h0 hA
+  obtain ⟨top0, _, _, _, hex0, hlamA, _, _, hother⟩ := initAccount_spec h0 hA
+  have hsA : (sA signer).lamports.val = (s signer).lamports.val - top0 := by
+    have := congrFun hlamA signer
+    simp only [moveN, Function.update_of_ne h0, Function.update_self] at this; exact this
+  have hzA : (sA n1).lamports.val = (s n1).lamports.val := by
+    have := congrFun hlamA n1
+    rw [moveN_other _ _ (Ne.symm h1) (Ne.symm h01)] at this; exact this
+  have ht0 := hex0 hpos
   obtain ⟨s₁, h₁⟩ := initAccount_some (s := sA) (pid := pid) (mb := mb) (key := n1) (space := space)
     (data := data) h1 (by rw [(hother _ h0).1]; exact ho) (by rw [(hother _ h0).2]; exact hd)
-    (by omega) hpos
+    (by rw [hsA, hzA]; omega) hpos
   exact ⟨s₁, by simp [hA, h₁]⟩
 
 /-! ## The runtime's lamport check passes -/
@@ -316,17 +309,18 @@ variable [LeanSpec.PoseidonHashes] [LeanSpec.Sha] [LeanSpec.Groups] [AddCommGrou
 
 /-- Over a set of accounts containing every party, the spec's balance changes sum to zero, when
     no rent is charged. -/
-theorem sum_balanceDelta_zero (inputs : LeanSpec.TxInputs) (a : TransactAccounts) (F : Finset Pubkey)
+theorem sum_balanceDelta_zero (inputs : LeanSpec.TxInputs) (W : LeanSpec.World) (a : TransactAccounts)
+    (F : Finset Pubkey) (hW : W.nullifierRent = 0) (hp : W.state.pool = toPubkey a.treeTokenAccount)
     (hA : inputs.A = toPubkey a.recipient) (ht : inputs.t = toPubkey a.feeRecipientAccount)
     (hs : inputs.s = toPubkey a.signer)
     (mA : a.recipient ∈ F) (mt : a.feeRecipientAccount ∈ F) (ms : a.signer ∈ F)
     (mp : a.treeTokenAccount ∈ F) :
-    ∑ k ∈ F, LeanSpec.balanceDelta inputs (toPubkey a.treeTokenAccount) 0 (toPubkey k) = 0 := by
+    ∑ k ∈ F, LeanSpec.balanceDelta inputs W (toPubkey k) = 0 := by
   have hinj : ∀ {x y : Pubkey}, toPubkey x = toPubkey y ↔ x = y :=
     fun {x y} => ⟨fun h => toPubkey_inj h, fun h => by rw [h]⟩
-  unfold LeanSpec.balanceDelta
+  simp only [balanceDelta_noRent inputs W hW, hp]
   rw [hA, ht, hs]
-  simp only [hinj, Nat.cast_zero, mul_zero, ite_self, sub_zero]
+  simp only [hinj]
   rw [Finset.sum_add_distrib, Finset.sum_sub_distrib, Finset.sum_add_distrib]
   simp only [ite_and, Finset.sum_ite_eq', mA, mt, ms, mp, if_true]
   by_cases h1 : inputs.extAmt < 0
@@ -411,63 +405,74 @@ variable {G1 G2 GT : Type} [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGrou
     hold in the code's world, Anchor's `init`s, the handler and the runtime's lamport check all
     succeed. L1 and A0 are excluded by name. -/
 theorem execTransact_complete
-    {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSpec.F} {s : State} {tx : TxEnv}
+    {d : Deployment} {rent : Nat → U64} {s : State} {tx : TxEnv}
     {a : TransactAccounts} {proof : zkcash_core.transact.Proof} {ext : I64} {fee : U64}
     {out1 out2 : Slice U8} {tree : zkcash_core.merkle_tree.MerkleTreeAccount}
     {tt : zkcash_core.admin.TreeTokenAccount} {config : zkcash_core.admin.GlobalConfig}
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
     (hashes : HashesAgree d.crypto) (assume : CompletenessAssumptions d.crypto C)
-    (wf : WellFormed d spent s)
+    (wf : WellFormed d s)
     (hnr : 0 < (rent nullifierAccountSpace).val)
     (hvalid : TransactAccountsValid d.toAddresses s tx.toTxContext a proof.input_nullifiers.val[0]!
       proof.input_nullifiers.val[1]! tree tt config)
     (hrent : tx.minimumBalance = some rent)
-    (owner : OwnerAccounts s a)
-    (hs0 : a.signer ≠ a.nullifier0) (hs1 : a.signer ≠ a.nullifier1)
+    (hsigSys : (s a.signer).owner = systemProgram ∧ (s a.signer).data.isEmpty)
     (notL1 : ext.val ≠ 0)
     (notA0 : proof.proof_a.val ≠ List.replicate 64 0#u8) :
     letI : LeanSpec.Groups := syscallGroups C
     letI : LeanSpec.Pairing := syscallPairing C
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     let inputs := toInputs tx.signers a proof ext fee out1 out2
-    ((s a.signer).lamports.val : ℤ) + LeanSpec.balanceDelta inputs (toPubkey (poolAddr d)) 0
-      (toPubkey a.signer) < 2^64 →
-    LeanSpec.transactPreconditions inputs (toWorld d rent spent s) →
+    LeanSpec.transactPreconditions inputs (toWorld d rent s) →
     ∃ s' evs, execTransact d s tx a proof ext fee out1 out2 = .ok (s', evs) := by
   letI : LeanSpec.Groups := syscallGroups C
   letI : LeanSpec.Pairing := syscallPairing C
   letI : LeanSpec.Deployment := ⟨programKey C⟩
-  intro inputs hfit pre
-  -- the signer pays both rents
-  have hsigData : ∀ b, (s a.signer).data ≠ .nullifier b := by
-    intro b hb
-    have := owner.signerSystem.2
-    rw [hb] at this
-    simp [AccountData.isEmpty] at this
-  have hfunds : 2 * (rent nullifierAccountSpace).val ≤ (s a.signer).lamports.val := by
-    have h : publicBalance s (fromPubkey (toPubkey a.signer))
-        ≥ 2 * (rent nullifierAccountSpace).val + (if inputs.extAmt > 0 then inputs.extAmt.natAbs else 0) :=
-      pre.signerSolvency
-    rw [fromPubkey_toPubkey, publicBalance_of hsigData] at h
-    omega
+  intro inputs pre
+  -- the signer and the two nullifier addresses, as the spec sees them
+  obtain ⟨ha0, ha1⟩ := newNullifierAccount_toWorld d rent s tx.signers a proof ext fee out1 out2
+  rw [← hvalid.nullifier0.1] at ha0; rw [← hvalid.nullifier1.1] at ha1
+  obtain ⟨-, hs0, hs1⟩ := pre.signerNotPoolNotNullifiers
+  obtain ⟨h01, -, -⟩ := pre.nullifierAccountsNew
+  have hs0' : a.signer ≠ a.nullifier0 := fun e => hs0 (by rw [ha0]; show toPubkey a.signer = _; rw [e])
+  have hs1' : a.signer ≠ a.nullifier1 := fun e => hs1 (by rw [ha1]; show toPubkey a.signer = _; rw [e])
+  have h01' : a.nullifier0 ≠ a.nullifier1 := fun e => h01 (by rw [ha0, ha1, e])
+  -- the signer pays what the two addresses are missing
+  have hfunds : ((rent nullifierAccountSpace).val - (s a.nullifier0).lamports.val)
+      + ((rent nullifierAccountSpace).val - (s a.nullifier1).lamports.val) ≤ (s a.signer).lamports.val := by
+    have hT0 : (toWorld d rent s).nullifierTopUp inputs 0
+        = (rent nullifierAccountSpace).val - (s a.nullifier0).lamports.val := by
+      unfold LeanSpec.World.nullifierTopUp; rw [ha0]
+      show _ - (s (fromPubkey (toPubkey a.nullifier0))).lamports.val = _; rw [fromPubkey_toPubkey]; rfl
+    have hT1 : (toWorld d rent s).nullifierTopUp inputs 1
+        = (rent nullifierAccountSpace).val - (s a.nullifier1).lamports.val := by
+      unfold LeanSpec.World.nullifierTopUp; rw [ha1]
+      show _ - (s (fromPubkey (toPubkey a.nullifier1))).lamports.val = _; rw [fromPubkey_toPubkey]; rfl
+    have hsb : (toWorld d rent s).balances inputs.s = (s a.signer).lamports.val := by
+      show (s (fromPubkey (toPubkey a.signer))).lamports.val = _; rw [fromPubkey_toPubkey]
+    have h := pre.signerSolvency
+    unfold LeanSpec.signerSolvent at h
+    rw [hT0, hT1, hsb] at h
+    split_ifs at h <;> omega
   obtain ⟨s₁, hinits⟩ := inits_some (pid := d.programId) (space := nullifierAccountSpace)
-    (data := .nullifier 0#u8) hnr hs0 hs1 owner.signerSystem.1 owner.signerSystem.2 hfunds
+    (data := .nullifier 0#u8) hnr hs0' hs1' h01' hsigSys.1 hsigSys.2 hfunds
   have reached : ReachedHandler d rent s tx a proof tree tt config s₁ := ⟨hvalid, hrent, hinits⟩
-  have allows := preconditions_at_handler wf reached hs0 hs1 owner hfit pre
+  have allows := preconditions_at_handler wf reached hnr pre
   -- the handler accepts
-  obtain ⟨ho, hd, _, _, _⟩ := after_inits hs0 hs1 hinits
+  obtain ⟨ho, hd, _, _, _⟩ := after_inits hs0' hs1' hinits
   obtain ⟨_, hshape⟩ := wf.tree _ _ hvalid.treeAccount.1
   obtain ⟨_, hdr, hwr, hmr⟩ := wf.config _ _ hvalid.globalConfig.1
   obtain ⟨ap, env', tree', hrun, hbal, -⟩ :=
     handler_complete_exact' d.crypto C laws hashes assume.hashesSucceed assume.syscallsSucceed
-      assume.keyDecodes a s₁ (rent treeTokenAccountSpace) tree config spent proof ext fee out1 out2 hshape
+      assume.keyDecodes a s₁ (rent treeTokenAccountSpace) tree config (nullifierAccountsOf d s)
+      (nullifierAddrOf d) proof ext fee out1 out2 hshape
       (wf.storedRoots _ _ hvalid.treeAccount.1) (wf.storedSubtrees _ _ hvalid.treeAccount.1) hdr hwr hmr
-      ⟨ho.trans owner.signerSystem.1, by rw [hd]; exact owner.signerSystem.2⟩ assume.usize64 notL1 notA0 allows
+      ⟨ho.trans hsigSys.1, by rw [hd]; exact hsigSys.2⟩ assume.usize64 notL1 notA0 allows
   -- the runtime's lamport check
   let s₂ := s₁.withBalances env'.balances
   let s₃ := s₂.set a.treeAccount { s₂ a.treeAccount with data := .treeAccount tree' }
-  have hkeys : ∀ k ∈ [a.recipient, a.feeRecipientAccount, a.signer, a.treeTokenAccount], k ∈ txKeys a := by
-    simp [txKeys]
+  set H := handlerWorld a s₁ (rent treeTokenAccountSpace) tree config (nullifierAccountsOf d s)
+    (nullifierAddrOf d) with hH
   have hcons : s₃.totalLamports (txKeys a) = s.totalLamports (txKeys a) := by
     have e₃ : (fun k => (s₃ k).lamports.val) = fun k => (env'.balances k).val := by
       funext k
@@ -478,25 +483,25 @@ theorem execTransact_complete
         = TL (txKeys a) (fun k => (s₁ k).lamports.val) := by
       unfold TL
       have hk : ∀ k, ((env'.balances k).val : ℤ) = (s₁ k).lamports.val
-          + LeanSpec.balanceDelta inputs (toPubkey a.treeTokenAccount) 0 (toPubkey k) := by
+          + LeanSpec.balanceDelta inputs H (toPubkey k) := by
         intro k
         rw [hbal k]
-        have := LeanSpec.transactEffects_balances inputs (handlerWorld a s₁ (rent treeTokenAccountSpace) tree config spent)
-          allows.signerSolvency allows.poolSolvency allows.poolSeparate (toPubkey k)
+        have := LeanSpec.transactEffects_balances inputs H
+          allows.signerSolvency allows.poolSolvency allows.poolNotRecipient
+          allows.signerNotPoolNotNullifiers allows.nullifierAccountsNew (toPubkey k)
         rw [this]
         show (((s₁ (fromPubkey (toPubkey k))).lamports.val : ℕ) : ℤ) + _ = _
         rw [fromPubkey_toPubkey]
-        rfl
       simp only [hk]
       rw [Finset.sum_add_distrib,
-        sum_balanceDelta_zero inputs a _ rfl rfl rfl
+        sum_balanceDelta_zero inputs H a _ rfl rfl rfl rfl rfl
           (List.mem_toFinset.mpr (by simp [txKeys])) (List.mem_toFinset.mpr (by simp [txKeys]))
           (List.mem_toFinset.mpr (by simp [txKeys])) (List.mem_toFinset.mpr (by simp [txKeys])), add_zero]
     have hTLinit : TL (txKeys a) (fun k => (s₁ k).lamports.val)
         = TL (txKeys a) (fun k => (s k).lamports.val) := by
       obtain ⟨sA, hA1, hA2⟩ := Option.bind_eq_some_iff.mp hinits
-      obtain ⟨t0, hle0, _, _, hlam0, _⟩ := initAccount_spec hs0 hA1
-      obtain ⟨t1, hle1, _, _, hlam1, _⟩ := initAccount_spec hs1 hA2
+      obtain ⟨t0, hle0, _, _, _, hlam0, _⟩ := initAccount_spec hs0' hA1
+      obtain ⟨t1, hle1, _, _, _, hlam1, _⟩ := initAccount_spec hs1' hA2
       rw [hlam1, TL_moveN (by simp [txKeys]) (by simp [txKeys]) _ hle1, hlam0,
         TL_moveN (by simp [txKeys]) (by simp [txKeys]) _ hle0]
     have : (s₃.totalLamports (txKeys a) : ℤ) = s.totalLamports (txKeys a) := by
@@ -531,18 +536,18 @@ theorem ReachesProgram.valid
 
 /-- A spec acceptance at the code's world is a code acceptance. L1 and A0 are excluded by name. -/
 theorem step_accepts_of_spec
-    {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSpec.F} {s : State} {tx : TxEnv}
+    {d : Deployment} {rent : Nat → U64} {s : State} {tx : TxEnv}
     {a : TransactAccounts} {proof : zkcash_core.transact.Proof} {ext : I64} {fee : U64}
     {out1 out2 : Slice U8} {tree : zkcash_core.merkle_tree.MerkleTreeAccount}
     {tt : zkcash_core.admin.TreeTokenAccount} {config : zkcash_core.admin.GlobalConfig}
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
-    (hashes : HashesAgree d.crypto) (assume : CompletenessAssumptions d.crypto C) (wf : WellFormed d spent s)
+    (hashes : HashesAgree d.crypto) (assume : CompletenessAssumptions d.crypto C) (wf : WellFormed d s)
     (reach : ReachesProgram d rent s tx a proof ext fee out1 out2 tree tt config)
     (notL1 : ext.val ≠ 0) (notA0 : proof.proof_a.val ≠ List.replicate 64 0#u8) :
     letI : LeanSpec.Groups := syscallGroups C
     letI : LeanSpec.Pairing := syscallPairing C
     letI : LeanSpec.Deployment := ⟨programKey C⟩
-    ∀ w : LeanSpec.World, toWorld d rent spent s = w →
+    ∀ w : LeanSpec.World, toWorld d rent s = w →
       LeanSpec.CanBeAccepted (toInputs tx.signers a proof ext fee out1 out2) w →
       ∃ s' evs, step d s tx (.transact a proof ext fee out1 out2) = .ok (s', evs) := by
   letI : LeanSpec.Groups := syscallGroups C
@@ -550,18 +555,13 @@ theorem step_accepts_of_spec
   letI : LeanSpec.Deployment := ⟨programKey C⟩
   intro w hw haccept
   have pre : LeanSpec.transactPreconditions (toInputs tx.signers a proof ext fee out1 out2)
-      (toWorld d rent spent s) := by
+      (toWorld d rent s) := by
     rw [hw]; exact haccept.1
   have hsigned : a.signer ∈ tx.signers := by
     obtain ⟨k, hk, he⟩ := List.mem_map.mp pre.signerSignature
     rwa [← toPubkey_inj he]
-  have hA := reach.accounts
-  have owner : OwnerAccounts s a := ⟨hA.signerPlain, hA.recipient, hA.feeRecipient⟩
-  -- the signer is not a nullifier account: a PDA does not sign
-  have hs0 : a.signer ≠ a.nullifier0 := fun e => reach.solana.pdasDoNotSign _ (by rw [← hA.nullifier0, ← e]; exact hsigned)
-  have hs1 : a.signer ≠ a.nullifier1 := fun e => reach.solana.pdasDoNotSign _ (by rw [← hA.nullifier1, ← e]; exact hsigned)
   exact execTransact_complete C laws hashes assume wf (reach.rentPositive rent reach.sameRent _)
-    (reach.valid hsigned) reach.sameRent owner hs0 hs1 notL1 notA0 reach.signerCredit pre
+    (reach.valid hsigned) reach.sameRent reach.accounts.signerPlain notL1 notA0 pre
 
 end
 

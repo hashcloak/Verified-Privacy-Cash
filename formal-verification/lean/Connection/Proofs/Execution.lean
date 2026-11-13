@@ -18,11 +18,11 @@ namespace Connection
 
 theorem genesis_noProgramAccounts {d : Deployment} {s : State} (h : Genesis d.programId s) :
     NoProgramAccounts d s :=
-  ⟨fun k _ hk => h k hk.1, fun k _ hk => h k hk.1, fun k _ hk => h k hk.1⟩
+  ⟨fun k _ hk => h k hk.1, fun k _ hk => h k hk.1, fun k _ hk => h k hk.1, fun k hk => h k hk.1⟩
 
 /-! ## Outside actions -/
 
-/-- Outside actions never make an account the program's tree, pool or config. -/
+/-- Outside actions never make an account the program's tree, pool, config or nullifier account. -/
 theorem env_noProgramAccounts {d : Deployment} {s s' : State} (h : EnvStep d.programId s s')
     (hn : NoProgramAccounts d s) : NoProgramAccounts d s' := by
   have back : ∀ k x, (s' k).owner = d.programId → (s' k).data = x → x.isProgramData = true →
@@ -31,10 +31,11 @@ theorem env_noProgramAccounts {d : Deployment} {s s' : State} (h : EnvStep d.pro
     by_cases hk : (s k).owner = d.programId
     · exact ⟨hk, ((h k).1 hk).2.1 ▸ hd⟩
     · have := (h k).2 hk; rw [hd] at this; simp [hx] at this
-  refine ⟨fun k t ht => ?_, fun k p hp => ?_, fun k c hc => ?_⟩
+  refine ⟨fun k t ht => ?_, fun k p hp => ?_, fun k c hc => ?_, fun k ⟨ho, b, hd⟩ => ?_⟩
   · exact hn.1 k t (back k _ ht.1 ht.2 rfl)
   · exact hn.2.1 k p (back k _ hp.1 hp.2 rfl)
-  · exact hn.2.2 k c (back k _ hc.1 hc.2 rfl)
+  · exact hn.2.2.1 k c (back k _ hc.1 hc.2 rfl)
+  · obtain ⟨o, dd⟩ := back k _ ho hd rfl; exact hn.2.2.2 k ⟨o, b, dd⟩
 
 /-- Outside actions keep the program's tree, pool and config. -/
 theorem env_initialized {d : Deployment} {s s' : State} (h : EnvStep d.programId s s')
@@ -45,40 +46,71 @@ theorem env_initialized {d : Deployment} {s s' : State} (h : EnvStep d.programId
   · obtain ⟨o, dd, -⟩ := (h _).1 hp.1; exact ⟨o, dd.trans hp.2⟩
   · obtain ⟨o, dd, -⟩ := (h _).1 hc.1; exact ⟨o, dd.trans hc.2⟩
 
-/-- Two states with the same spec tree map to worlds that differ only in their balances and
-    config. -/
+/-- Two states with the same spec tree and the same nullifier accounts map to worlds that
+    differ only in their balances and config. -/
 theorem toWorld_withUpdatedValues_of_same_tree {d : Deployment} {rent : Nat → U64}
-    {spent : Finset LeanSpec.F}
-    {s s' : State} (ht : toTree (treeAt s' (treeAddr d)) = toTree (treeAt s (treeAddr d))) :
-    toWorld d rent spent s' = (toWorld d rent spent s).withUpdatedValues
-      (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent spent s')) := by
+    {s s' : State} (ht : toTree (treeAt s' (treeAddr d)) = toTree (treeAt s (treeAddr d)))
+    (hn : nullifierAccountsOf d s' = nullifierAccountsOf d s) :
+    toWorld d rent s' = (toWorld d rent s).withUpdatedValues
+      (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent s')) := by
   simp only [toWorld, LeanSpec.World.withUpdatedValues,
-    LeanSpec.UpdatedValuesBetweenTransacts.unchanged, ht]
+    LeanSpec.UpdatedValuesBetweenTransacts.unchanged, ht, hn]
+
+/-- Outside actions keep the program's nullifier accounts: they keep the owner and data of every
+    account the program owns, and give no other account the program's data. -/
+theorem env_nullifierAccounts {d : Deployment} {s s' : State} (h : EnvStep d.programId s s') :
+    nullifierAccountsOf d s' = nullifierAccountsOf d s := by
+  ext x
+  rw [mem_nullifierAccountsOf, mem_nullifierAccountsOf]
+  constructor
+  · rintro ⟨ho, b, hd⟩
+    by_cases hk : (s (fromPubkey x)).owner = d.programId
+    · obtain ⟨-, dd, -⟩ := (h _).1 hk
+      exact ⟨hk, b, dd ▸ hd⟩
+    · have := (h _).2 hk; rw [hd] at this; simp [AccountData.isProgramData] at this
+  · rintro ⟨ho, b, hd⟩
+    obtain ⟨o, dd, -⟩ := (h _).1 ho
+    exact ⟨o, b, dd.trans hd⟩
+
+/-- Writing one account's data keeps the nullifier accounts, if neither the old nor the new data
+    is a nullifier account's. -/
+theorem set_data_nullifierAccounts {d : Deployment} {s : State} {key : Pubkey} {dt : AccountData}
+    (hold : ∀ b, (s key).data ≠ .nullifier b) (hnew : ∀ b, dt ≠ .nullifier b) :
+    nullifierAccountsOf d (s.set key { s key with data := dt }) = nullifierAccountsOf d s := by
+  ext x
+  rw [mem_nullifierAccountsOf, mem_nullifierAccountsOf]
+  by_cases hk : fromPubkey x = key
+  · rw [hk]
+    simp only [IsNullifierAccount, State.set, if_pos rfl]
+    constructor
+    · rintro ⟨-, b, hb⟩; exact absurd hb (hnew b)
+    · rintro ⟨-, b, hb⟩; exact absurd hb (hold b)
+  · simp only [IsNullifierAccount, State.set, if_neg hk]
 
 /-- **Outside actions are changes allowed between transactions.** The program's data is
     untouched, and the pool only gains lamports. -/
-theorem env_between {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSpec.F} {s s' : State}
+theorem env_between {d : Deployment} {rent : Nat → U64} {s s' : State}
     (h : EnvStep d.programId s s') (hi : Initialized d s) :
-    toWorld d rent spent s' = (toWorld d rent spent s).withUpdatedValues
-        (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent spent s')) ∧
-      (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent spent s')).Allowed
-        (toWorld d rent spent s) := by
+    toWorld d rent s' = (toWorld d rent s).withUpdatedValues
+        (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent s')) ∧
+      (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent s')).Allowed
+        (toWorld d rent s) := by
   obtain ⟨⟨t, ht⟩, ⟨p, hp⟩, ⟨c, hc⟩⟩ := hi
   have dt := ((h _).1 ht.1).2.1
   have dc := ((h _).1 hc.1).2.1
-  have hw := toWorld_withUpdatedValues_of_same_tree (d := d) (rent := rent) (spent := spent)
+  have hw := toWorld_withUpdatedValues_of_same_tree (d := d) (rent := rent)
     (s := s) (s' := s')
-    (by simp only [treeAt, dt])
+    (by simp only [treeAt, dt]) (env_nullifierAccounts h)
   refine ⟨hw, ⟨?_, ?_⟩⟩
   · obtain ⟨-, dp, lp⟩ := (h _).1 hp.1
-    show publicBalance s (fromPubkey (toPubkey (poolAddr d)))
-      ≤ publicBalance s' (fromPubkey (toPubkey (poolAddr d)))
+    show lamportsOf s (fromPubkey (toPubkey (poolAddr d)))
+      ≤ lamportsOf s' (fromPubkey (toPubkey (poolAddr d)))
     rw [fromPubkey_toPubkey]
-    simp only [publicBalance, dp, hp.2]
+    simp only [lamportsOf, dp, hp.2]
     exact lp
-  · have : (toWorld d rent spent s').state.config = (toWorld d rent spent s).state.config := by
+  · have : (toWorld d rent s').state.config = (toWorld d rent s).state.config := by
       simp only [toWorld, treeAt, configAt, dt, dc]
-    show LeanSpec.ReachableByAdminChanges [] _ (toWorld d rent spent s').state.config
+    show LeanSpec.ReachableByAdminChanges [] _ (toWorld d rent s').state.config
     rw [this]; exact .noChange _
 
 /-! ## Admin instructions -/
@@ -114,15 +146,15 @@ theorem set_data_lamports {s : State} {key : Pubkey} {dt : AccountData} (k : Pub
 
 /-- **`update_global_config` is an allowed admin change.** It sets the fee settings, signed by
     the config's authority, with a fee error margin of at most 10000; nothing else changes. -/
-theorem ugc_between {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSpec.F} {s s' : State}
+theorem ugc_between {d : Deployment} {rent : Nat → U64} {s s' : State}
     {tx : TxEnv} {a : UpdateGlobalConfigAccounts} {dep wd m : Option U16}
-    (wf : WellFormed d spent s) (hi : Initialized d s)
+    (wf : WellFormed d s) (hi : Initialized d s)
     (h : execUpdateGlobalConfig d s tx a dep wd m = .ok s') :
     Initialized d s' ∧
-      toWorld d rent spent s' = (toWorld d rent spent s).withUpdatedValues
-        (recordChanges (toWorld d rent spent s') (toAdminChange d s tx (.updateGlobalConfig a dep wd m)).toList) ∧
-      (recordChanges (toWorld d rent spent s') (toAdminChange d s tx (.updateGlobalConfig a dep wd m)).toList).Allowed
-        (toWorld d rent spent s) := by
+      toWorld d rent s' = (toWorld d rent s).withUpdatedValues
+        (recordChanges (toWorld d rent s') (toAdminChange d s tx (.updateGlobalConfig a dep wd m)).toList) ∧
+      (recordChanges (toWorld d rent s') (toAdminChange d s tx (.updateGlobalConfig a dep wd m)).toList).Allowed
+        (toWorld d rent s) := by
   unfold execUpdateGlobalConfig at h
   split at h
   swap; · cases h
@@ -149,12 +181,14 @@ theorem ugc_between {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSp
   have htree : treeAt s' (treeAddr d) = treeAt s (treeAddr d) := by
     simp only [treeAt, keep _ hne]
   refine ⟨⟨⟨t, by unfold HoldsTree; rw [keep _ hne]; exact ht⟩, ⟨p, by unfold HoldsTreeToken; rw [keep _ hpne]; exact hp⟩,
-    ⟨config', ?_⟩⟩, toWorld_withUpdatedValues_of_same_tree (by rw [htree]), ⟨?_, ?_⟩⟩
+    ⟨config', ?_⟩⟩, toWorld_withUpdatedValues_of_same_tree (by rw [htree])
+      (set_data_nullifierAccounts (by rw [hval.globalConfig.1.2]; intro b h; cases h)
+        (by intro b h; cases h)), ⟨?_, ?_⟩⟩
   · unfold HoldsGlobalConfig; rw [← hka, hkey]; exact ⟨hval.globalConfig.1.1, rfl⟩
   · -- balances: unchanged
-    show publicBalance s (fromPubkey (toPubkey (poolAddr d)))
-      ≤ publicBalance s' (fromPubkey (toPubkey (poolAddr d)))
-    simp only [fromPubkey_toPubkey, publicBalance, keep _ hpne, le_refl]
+    show lamportsOf s (fromPubkey (toPubkey (poolAddr d)))
+      ≤ lamportsOf s' (fromPubkey (toPubkey (poolAddr d)))
+    simp only [fromPubkey_toPubkey, lamportsOf, keep _ hpne, le_refl]
   · -- config: one allowed admin change
     have hcfg : configAt s (configAddr d) = config := by
       simp only [configAt, ← hka, hval.globalConfig.1.2]
@@ -183,15 +217,15 @@ theorem ugc_between {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSp
 
 /-- **`update_deposit_limit` is an allowed admin change.** It sets the deposit limit, signed by
     the tree's authority; the spec's tree and everything else are unchanged. -/
-theorem udl_between {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSpec.F} {s s' : State}
+theorem udl_between {d : Deployment} {rent : Nat → U64} {s s' : State}
     {tx : TxEnv} {a : UpdateDepositLimitAccounts} {newLimit : U64}
-    (wf : WellFormed d spent s) (hi : Initialized d s)
+    (wf : WellFormed d s) (hi : Initialized d s)
     (h : execUpdateDepositLimit d s tx a newLimit = .ok s') :
     Initialized d s' ∧
-      toWorld d rent spent s' = (toWorld d rent spent s).withUpdatedValues
-        (recordChanges (toWorld d rent spent s') (toAdminChange d s tx (.updateDepositLimit a newLimit)).toList) ∧
-      (recordChanges (toWorld d rent spent s') (toAdminChange d s tx (.updateDepositLimit a newLimit)).toList).Allowed
-        (toWorld d rent spent s) := by
+      toWorld d rent s' = (toWorld d rent s).withUpdatedValues
+        (recordChanges (toWorld d rent s') (toAdminChange d s tx (.updateDepositLimit a newLimit)).toList) ∧
+      (recordChanges (toWorld d rent s') (toAdminChange d s tx (.updateDepositLimit a newLimit)).toList).Allowed
+        (toWorld d rent s) := by
   unfold execUpdateDepositLimit at h
   split at h
   swap; · cases h
@@ -220,11 +254,13 @@ theorem udl_between {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSp
   have hC : configAt s' (configAddr d) = configAt s (configAddr d) := by
     simp only [configAt, keep _ hcne]
   refine ⟨⟨⟨tree', ?_⟩, ⟨p, by unfold HoldsTreeToken; rw [keep _ hpne]; exact hp⟩, ⟨c, by unfold HoldsGlobalConfig; rw [keep _ hcne]; exact hc⟩⟩,
-    toWorld_withUpdatedValues_of_same_tree (by rw [hT, hT', ht']; rfl), ⟨?_, ?_⟩⟩
+    toWorld_withUpdatedValues_of_same_tree (by rw [hT, hT', ht']; rfl)
+      (set_data_nullifierAccounts (by rw [hval.treeAccount.1.2]; intro b h; cases h)
+        (by intro b h; cases h)), ⟨?_, ?_⟩⟩
   · unfold HoldsTree; rw [← hka, hkey]; exact ⟨hval.treeAccount.1.1, rfl⟩
-  · show publicBalance s (fromPubkey (toPubkey (poolAddr d)))
-      ≤ publicBalance s' (fromPubkey (toPubkey (poolAddr d)))
-    simp only [fromPubkey_toPubkey, publicBalance, keep _ hpne, le_refl]
+  · show lamportsOf s (fromPubkey (toPubkey (poolAddr d)))
+      ≤ lamportsOf s' (fromPubkey (toPubkey (poolAddr d)))
+    simp only [fromPubkey_toPubkey, lamportsOf, keep _ hpne, le_refl]
   · show LeanSpec.ReachableByAdminChanges [⟨tx.signers.map toPubkey, .depositLimit newLimit.val⟩]
       (toConfig (configAt s (configAddr d)) (treeAt s (treeAddr d)))
       (toConfig (configAt s' (configAddr d)) (treeAt s' (treeAddr d)))
@@ -238,10 +274,10 @@ theorem udl_between {d : Deployment} {rent : Nat → U64} {spent : Finset LeanSp
 
 /-- `transact` keeps the program's tree, pool and config (it rewrites the tree's data and creates
     two nullifier accounts elsewhere). -/
-theorem transact_initialized {d : Deployment} {spent : Finset LeanSpec.F} {s s' : State} {tx : TxEnv}
+theorem transact_initialized {d : Deployment} {s s' : State} {tx : TxEnv}
     {a : TransactAccounts} {proof : zkcash_core.transact.Proof} {ext : I64} {fee : U64}
     {out1 out2 : Slice U8} {evs : List CommitmentData}
-    (wf : WellFormed d spent s) (hi : Initialized d s)
+    (wf : WellFormed d s) (hi : Initialized d s)
     (h : step d s tx (.transact a proof ext fee out1 out2) = .ok (s', evs)) : Initialized d s' := by
   obtain ⟨tree, tt, config, mb, s₁, env', tree', ap, hvalid, -, hs₁, -, hs', -⟩ := execTransact_ok h
   obtain ⟨⟨t, ht⟩, ⟨p, hp⟩, ⟨c, hc⟩⟩ := hi
@@ -544,18 +580,20 @@ theorem init_between [LeanSpec.PoseidonHashes] {d : Deployment} {rent : Nat → 
     {tx : TxEnv} {a : InitializeAccounts}
     (hdist : treeAddr d ≠ poolAddr d ∧ treeAddr d ≠ configAddr d ∧ poolAddr d ≠ configAddr d)
     (hpid : d.programId ≠ systemProgram) (hrent : tx.minimumBalance = some rent)
+    (hnoNull : ∀ k, ¬ IsNullifierAccount d s k)
     (hz : ∃ z, d.crypto.hasher.zero_bytes = ok z ∧ ∀ i, i ≤ 26 → toF (z.val[i]!) = LeanSpec.Z i)
     (h : execInitialize d s tx a = .ok s') :
     Initialized d s' ∧ ∃ params : LeanSpec.InitParams,
-      params.pool = toPubkey (poolAddr d) ∧ params.rentExemptMin = (rent treeTokenAccountSpace).val ∧
+      params.pool = toPubkey (poolAddr d) ∧ params.nullifierAddr = nullifierAddrOf d ∧
+      params.rentExemptMin = (rent treeTokenAccountSpace).val ∧
       params.nullifierRent = (rent nullifierAccountSpace).val ∧
       params.admin = d.adminPubkey.map toPubkey ∧
       params.initializer = toPubkey a.authority ∧ params.signers = tx.signers.map toPubkey ∧
-      params.cfg = (toWorld d rent ∅ s').state.config ∧
-      params.balances = (toWorld d rent ∅ s').balances ∧
-      toWorld d rent ∅ s' = (LeanSpec.initWorld params).withUpdatedValues
-        (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent ∅ s')) ∧
-      (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent ∅ s')).Allowed
+      params.cfg = (toWorld d rent s').state.config ∧
+      params.balances = (toWorld d rent s').balances ∧
+      toWorld d rent s' = (LeanSpec.initWorld params).withUpdatedValues
+        (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent s')) ∧
+      (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent s')).Allowed
         (LeanSpec.initWorld params) := by
   unfold execInitialize at h
   split at h
@@ -627,7 +665,18 @@ theorem init_between [LeanSpec.PoseidonHashes] {d : Deployment} {rent : Nat → 
     · rw [← htA, (hs'k _).1]; exact own1
     · rw [← hpA, (hs'k _).1]; exact own2
     · rw [← hcA, (hs'k _).1]; exact own3
-  have hcfg : (toWorld d rent ∅ s').state.config = toConfig config tree := by
+  -- no nullifier account yet
+  have hnull' : nullifierAccountsOf d s' = ∅ := by
+    ext x
+    simp only [Finset.notMem_empty, iff_false]
+    rw [mem_nullifierAccountsOf]
+    rintro ⟨ho, b, hd⟩
+    rw [(hs'k _).2.2] at hd
+    split_ifs at hd with e1 e2 e3 <;> (try cases hd)
+    rw [(hs'k _).1, (k3 _ e1).1, (k2 _ e2).1, (k1 _ e3).1] at ho
+    rw [(k3 _ e1).2, (k2 _ e2).2, (k1 _ e3).2] at hd
+    exact hnoNull _ ⟨ho, b, hd⟩
+  have hcfg : (toWorld d rent s').state.config = toConfig config tree := by
     simp only [toWorld, hT, hC]
   have pa : (toConfig config tree).authority = toPubkey a.authority := by simp [toConfig, hc]
   have pl : (toConfig config tree).limitAuthority = toPubkey a.authority := by simp [toConfig, hauth]
@@ -640,20 +689,20 @@ theorem init_between [LeanSpec.PoseidonHashes] {d : Deployment} {rent : Nat → 
   have pwr : (toConfig config tree).withdrawalFeeRate ≤ 10000 := by simp [toConfig, hc]
   have psg : toPubkey a.authority ∈ tx.signers.map toPubkey :=
     List.mem_map_of_mem hvalid.authority
-  refine ⟨hinit, ⟨toConfig config tree, (toWorld d rent ∅ s').balances, (rent treeTokenAccountSpace).val,
-    (rent nullifierAccountSpace).val, toPubkey (poolAddr d), toPubkey a.authority,
+  refine ⟨hinit, ⟨toConfig config tree, (toWorld d rent s').balances, (rent treeTokenAccountSpace).val,
+    (rent nullifierAccountSpace).val, toPubkey (poolAddr d), nullifierAddrOf d, toPubkey a.authority,
     tx.signers.map toPubkey, psg, d.adminPubkey.map toPubkey, pa, pl, pad, pm, pdr, pwr⟩,
-    rfl, rfl, rfl, rfl, rfl, rfl, hcfg.symm, rfl, ?_, ?_, ?_⟩
+    rfl, rfl, rfl, rfl, rfl, rfl, rfl, hcfg.symm, rfl, ?_, ?_, ?_⟩
   · simp only [toWorld, LeanSpec.initWorld, LeanSpec.World.withUpdatedValues,
-      LeanSpec.UpdatedValuesBetweenTransacts.unchanged, hT,
+      LeanSpec.UpdatedValuesBetweenTransacts.unchanged, hT, hnull',
       htree]
   · -- the pool gained at least nothing
-    show (LeanSpec.initWorld _).poolBalance ≤ publicBalance s' (fromPubkey (toPubkey (poolAddr d)))
+    show (LeanSpec.initWorld _).poolBalance ≤ lamportsOf s' (fromPubkey (toPubkey (poolAddr d)))
     simp only [LeanSpec.World.poolBalance, LeanSpec.initWorld, Function.update_self,
-      fromPubkey_toPubkey, publicBalance, dP]
+      fromPubkey_toPubkey, lamportsOf, dP]
     rw [← hpA, (hs'k _).2.1]; exact hpl
   · show LeanSpec.ReachableByAdminChanges [] (toConfig config tree)
-      (toWorld d rent ∅ s').state.config
+      (toWorld d rent s').state.config
     rw [hcfg]; exact .noChange _
 
 /-! ## Before and after `initialize` -/
@@ -684,7 +733,7 @@ theorem noProgram_step {d : Deployment} {s s' : State} {tx : TxEnv} {ix : Instru
     split at h1
     · cases h1
     rename_i hv
-    exact hn.2.2 _ _ (not_not.mp hv).globalConfig.1
+    exact hn.2.2.1 _ _ (not_not.mp hv).globalConfig.1
   | transact a proof ext fee out1 out2 =>
     exfalso
     have hx : execTransact d s tx a proof ext fee out1 out2 = .ok (s', em) := h
@@ -714,44 +763,44 @@ variable [LeanSpec.PoseidonHashes] [LeanSpec.Sha] {G1 G2 GT : Type} [AddCommGrou
 
 /-- What the bridge keeps along an execution. -/
 def BridgeInv (d : Deployment) (rent : Nat → U64) (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT)
-    (v : ExecutionView) (spent : Finset LeanSpec.F)
+    (v : ExecutionView)
     (txs : List LeanSpec.TxInputs) (s : State) : Prop :=
-  WellFormed d spent s ∧ v.spent = spent ∧
-    ((NoProgramAccounts d s ∧ txs = [] ∧ spent = ∅ ∧ v = {}) ∨
+  WellFormed d s ∧
+    ((NoProgramAccounts d s ∧ txs = [] ∧ v = {}) ∨
       (Initialized d s ∧
         letI : LeanSpec.Groups := syscallGroups C
         letI : LeanSpec.Pairing := syscallPairing C
         letI : LeanSpec.Deployment := ⟨programKey C⟩
         ∃ (params : LeanSpec.InitParams) (r : LeanSpec.Run (LeanSpec.initWorld params)),
-          RunMatchesView d rent v spent txs s params r))
+          RunMatchesView d rent v txs s params r))
 
 /-- A change between transactions after the end of a spec run: the view's open gap gains the
     admin changes `chs`. -/
 theorem RunMatchesView.between {d : Deployment} {rent : Nat → U64}
     {C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT}
-    {v v' : ExecutionView} {spent : Finset LeanSpec.F} {txs : List LeanSpec.TxInputs} {s s' : State}
+    {v v' : ExecutionView} {txs : List LeanSpec.TxInputs} {s s' : State}
     {chs : List LeanSpec.AdminChange}
     (hv : v' = { v with openGap := v.openGap ++ chs })
     (h : letI : LeanSpec.Groups := syscallGroups C
       letI : LeanSpec.Pairing := syscallPairing C
       letI : LeanSpec.Deployment := ⟨programKey C⟩
       ∃ (params : LeanSpec.InitParams) (r : LeanSpec.Run (LeanSpec.initWorld params)),
-        RunMatchesView d rent v spent txs s params r)
-    (hw : toWorld d rent spent s' = (toWorld d rent spent s).withUpdatedValues
-      (recordChanges (toWorld d rent spent s') chs))
-    (ha : (recordChanges (toWorld d rent spent s') chs).Allowed (toWorld d rent spent s)) :
+        RunMatchesView d rent v txs s params r)
+    (hw : toWorld d rent s' = (toWorld d rent s).withUpdatedValues
+      (recordChanges (toWorld d rent s') chs))
+    (ha : (recordChanges (toWorld d rent s') chs).Allowed (toWorld d rent s)) :
     letI : LeanSpec.Groups := syscallGroups C
     letI : LeanSpec.Pairing := syscallPairing C
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     ∃ (params : LeanSpec.InitParams) (r : LeanSpec.Run (LeanSpec.initWorld params)),
-      RunMatchesView d rent v' spent txs s' params r := by
+      RunMatchesView d rent v' txs s' params r := by
   letI : LeanSpec.Groups := syscallGroups C
   letI : LeanSpec.Pairing := syscallPairing C
   letI : LeanSpec.Deployment := ⟨programKey C⟩
   subst hv
-  obtain ⟨params, r, h1, h2, h3, h4, hi, htx, hpl, hp, hal, ha', hgl, hg, b, hb, hgap, heq⟩ := h
-  refine ⟨params, r, h1, h2, h3, h4, hi, htx, hpl, hp, hal, ha', hgl, hg,
-    b.andThen (recordChanges (toWorld d rent spent s') chs), ?_, ?_, ?_⟩
+  obtain ⟨params, r, h1, h0, h2, h3, h4, hi, htx, hpl, hp, hal, ha', hgl, hg, b, hb, hgap, heq⟩ := h
+  refine ⟨params, r, h1, h0, h2, h3, h4, hi, htx, hpl, hp, hal, ha', hgl, hg,
+    b.andThen (recordChanges (toWorld d rent s') chs), ?_, ?_, ?_⟩
   · rw [heq] at ha
     exact hb.trans ha
   · show b.adminChanges ++ chs = v.openGap ++ chs
@@ -761,13 +810,13 @@ theorem RunMatchesView.between {d : Deployment} {rent : Nat → U64}
 /-- **Outside actions keep the invariant.** -/
 theorem bridge_env {d : Deployment} {rent : Nat → U64}
     {C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT}
-    {v : ExecutionView} {spent : Finset LeanSpec.F} {txs : List LeanSpec.TxInputs} {s s' : State}
-    (hinv : BridgeInv d rent C v spent txs s) (h : EnvStep d.programId s s') :
-    BridgeInv d rent C v spent txs s' := by
-  obtain ⟨wf, hsp, hn | ⟨hi, hr⟩⟩ := hinv
-  · exact ⟨wf_envStep wf h, hsp, Or.inl ⟨env_noProgramAccounts h hn.1, hn.2⟩⟩
-  · obtain ⟨hw, ha⟩ := env_between (rent := rent) (spent := spent) h hi
-    refine ⟨wf_envStep wf h, hsp, Or.inr ⟨env_initialized h hi, ?_⟩⟩
+    {v : ExecutionView} {txs : List LeanSpec.TxInputs} {s s' : State}
+    (hinv : BridgeInv d rent C v txs s) (h : EnvStep d.programId s s') :
+    BridgeInv d rent C v txs s' := by
+  obtain ⟨wf, hn | ⟨hi, hr⟩⟩ := hinv
+  · exact ⟨wf_envStep wf h, Or.inl ⟨env_noProgramAccounts h hn.1, hn.2⟩⟩
+  · obtain ⟨hw, ha⟩ := env_between (rent := rent) h hi
+    refine ⟨wf_envStep wf h, Or.inr ⟨env_initialized h hi, ?_⟩⟩
     exact RunMatchesView.between (chs := []) (by cases v; simp) hr hw ha
 
 /-- The program's three fixed accounts differ (from `ExecutionAssumptions.fixedAddressesDiffer`). -/
@@ -781,68 +830,66 @@ theorem fixed_addresses_differ {d : Deployment} {s₀ : State} {evs : List Event
     allowed changes between transactions, recorded with their signers. -/
 theorem bridge_step {d : Deployment} {rent : Nat → U64}
     {C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT} {laws : PairingLaws C.e}
-    {v : ExecutionView} {spent : Finset LeanSpec.F} {txs : List LeanSpec.TxInputs} {s s' : State}
+    {v : ExecutionView} {txs : List LeanSpec.TxInputs} {s s' : State}
     {tx : TxEnv} {ix : Instruction} {em : List CommitmentData}
-    (hinv : BridgeInv d rent C v spent txs s)
+    (hinv : BridgeInv d rent C v txs s)
     (hpid : d.programId ≠ systemProgram) (hashes : HashesAgree d.crypto)
     (hdist : treeAddr d ≠ poolAddr d ∧ treeAddr d ≠ configAddr d ∧ poolAddr d ≠ configAddr d)
     (hstepA : StepAssumptions d tx ix) (hrentA : SameRent rent tx)
     (h : step d s tx ix = .ok (s', em)) (hrentPos : tx.RentPositive) :
-    BridgeInv d rent C (v.afterEvent d rent s (.program tx ix em) s')
-      (spent ∪ stepSpent ix) (txs ++ stepTxs tx ix) s' := by
+    BridgeInv d rent C (v.afterEvent d rent s (.program tx ix em) s') (txs ++ stepTxs tx ix) s' := by
   letI : LeanSpec.Groups := syscallGroups C
   letI : LeanSpec.Pairing := syscallPairing C
   letI : LeanSpec.Deployment := ⟨programKey C⟩
-  obtain ⟨wf, hsp, hn | ⟨hi, hr⟩⟩ := hinv
+  obtain ⟨wf, hn | ⟨hi, hr⟩⟩ := hinv
   · -- before initialization: only `initialize` succeeds, and it starts the spec run
     have wf' := wf_step hashes.poseidonCanonical hashes.zeroBytesCanonical wf h
     obtain ⟨a, rfl⟩ := noProgram_step hn.1 h
     obtain ⟨s₁, h1, h2⟩ := PrivacyCash.Model.Except.bind_ok h
     cases h2
-    obtain ⟨hi', params, hp1, hp2, hp3, hp4, hp5, hp6, hp7, hp8, heq, ha⟩ := init_between hdist
-      hpid hrentA hashes.zeroBytes h1
-    obtain ⟨-, rfl, rfl, rfl⟩ := hn
-    refine ⟨wf', by simp [ExecutionView.afterEvent, stepSpent], Or.inr ⟨hi', ?_⟩⟩
-    refine ⟨params, LeanSpec.Run.empty _, hp1, hp2, hp3, hp4,
+    obtain ⟨hi', params, hp1, hp0, hp2, hp3, hp4, hp5, hp6, hp7, hp8, heq, ha⟩ := init_between hdist
+      hpid hrentA hn.1.2.2.2 hashes.zeroBytes h1
+    obtain ⟨-, rfl, rfl⟩ := hn
+    refine ⟨wf', Or.inr ⟨hi', ?_⟩⟩
+    refine ⟨params, LeanSpec.Run.empty _, hp1, hp0, hp2, hp3, hp4,
       ⟨_, rfl, hp5, hp6, hp7, hp8⟩, by simp [stepTxs], rfl, ?_, rfl, ?_, rfl, ?_,
-      LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent ∅ s'), ha, rfl, ?_⟩
+      LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent s'), ha, rfl, ?_⟩
     · intro j hj; exact absurd hj (by simp [LeanSpec.Run.empty])
     · intro j hj; exact absurd hj (by simp [LeanSpec.Run.empty])
     · intro j hj; exact absurd hj (by simp [LeanSpec.Run.empty])
-    · simpa [stepSpent] using heq
-  · subst hsp
-    cases ix with
+    · exact heq
+  · cases ix with
     | «initialize» a => exact (initialized_no_initialize hpid hi h).elim
     | updateDepositLimit a l =>
       have wf' := wf_step hashes.poseidonCanonical hashes.zeroBytesCanonical wf h
       obtain ⟨s₁, h1, h2⟩ := PrivacyCash.Model.Except.bind_ok h
       cases h2
       obtain ⟨hi', hw, ha⟩ := udl_between (rent := rent) wf hi h1
-      simp only [stepSpent, Finset.union_empty, stepTxs, List.append_nil] at wf' ⊢
-      exact ⟨wf', rfl, Or.inr ⟨hi', RunMatchesView.between rfl hr hw ha⟩⟩
+      simp only [stepTxs, List.append_nil]
+      exact ⟨wf', Or.inr ⟨hi', RunMatchesView.between rfl hr hw ha⟩⟩
     | updateGlobalConfig a dep wd m =>
       have wf' := wf_step hashes.poseidonCanonical hashes.zeroBytesCanonical wf h
       obtain ⟨s₁, h1, h2⟩ := PrivacyCash.Model.Except.bind_ok h
       cases h2
       obtain ⟨hi', hw, ha⟩ := ugc_between (rent := rent) wf hi h1
-      simp only [stepSpent, Finset.union_empty, stepTxs, List.append_nil] at wf' ⊢
-      exact ⟨wf', rfl, Or.inr ⟨hi', RunMatchesView.between rfl hr hw ha⟩⟩
+      simp only [stepTxs, List.append_nil]
+      exact ⟨wf', Or.inr ⟨hi', RunMatchesView.between rfl hr hw ha⟩⟩
     | transact a proof ext fee out1 out2 =>
       obtain ⟨solana, crypto, circuit⟩ := hstepA
       have hrent : tx.minimumBalance = some rent := hrentA
       obtain ⟨b₁, hb₁, b₂, htx, hb₂, wf', hb₁nil, hb₁pool, hb₂cfg, hb₂pool⟩ :=
         transact_refines_between_verified C laws h hashes wf solana hrentPos crypto circuit hrent
       have hi' := transact_initialized wf hi h
-      obtain ⟨params, r, hp1, hp2, hp3, hp4, hinit, htxs, hpl, hpb, hal, hafter, hgl, hgaps, b, hb, hgap, heq⟩ := hr
+      obtain ⟨params, r, hp1, hp0, hp2, hp3, hp4, hinit, htxs, hpl, hpb, hal, hafter, hgl, hgaps, b, hb, hgap, heq⟩ := hr
       rw [heq] at htx hb₁
       rw [LeanSpec.World.withUpdatedValues_twice] at htx
       obtain ⟨r', hr'tx, hr'f, hws, hup, hlast⟩ := r.snoc _ (hb.trans hb₁) _ _ htx
       have hlen : r'.txs.length = r.txs.length + 1 := by rw [hr'tx]; simp
       have hfinal : r'.ws (r.txs.length + 1) = r'.final := by
         unfold LeanSpec.Run.final; rw [hlen]
-      refine ⟨wf', rfl, Or.inr ⟨hi', params, r', hp1, hp2, hp3, hp4, hinit, ?_, ?_, ?_, ?_, ?_, ?_, ?_,
+      refine ⟨wf', Or.inr ⟨hi', params, r', hp1, hp0, hp2, hp3, hp4, hinit, ?_, ?_, ?_, ?_, ?_, ?_, ?_,
         LeanSpec.UpdatedValuesBetweenTransacts.unchanged
-        (toWorld d rent (v.spent ∪ stepSpent (.transact a proof ext fee out1 out2)) s'), ?_, rfl, ?_⟩⟩
+        (toWorld d rent s'), ?_, rfl, ?_⟩⟩
       · rw [hr'tx, htxs]; rfl
       · simp only [ExecutionView.afterEvent, List.length_append, List.length_singleton]
         omega
@@ -866,9 +913,9 @@ theorem bridge_step {d : Deployment} {rent : Nat → U64}
           rw [List.getElem?_append_right (by omega), hal, Nat.sub_self, hfinal, hr'f]
           simp only [List.length_singleton, List.getElem?_cons_zero, Option.some.injEq, Prod.mk.injEq]
           refine ⟨?_, ?_⟩
-          · show _ = { (toWorld d rent (v.spent ∪ stepSpent (.transact a proof ext fee out1 out2)) s').state with
+          · show _ = { (toWorld d rent s').state with
               config := b₂.config }
-            rw [hb₂cfg]; rfl
+            rw [hb₂cfg]
           · exact hb₂pool.symm
       · simp only [ExecutionView.afterEvent, List.length_append, List.length_singleton]
         omega
@@ -916,25 +963,24 @@ theorem bridge_run {d : Deployment} {rent : Nat → U64}
     (hashes : HashesAgree d.crypto) (assume : ExecutionAssumptions d s₀ all)
     (sameRent : ∀ tx ix em, .program tx ix em ∈ all → SameRent rent tx) :
     ∀ {s s' : State} {evs pre : List Event} {states : List State} {v : ExecutionView}
-      {spent : Finset LeanSpec.F} {txs : List LeanSpec.TxInputs},
-      all = pre ++ evs → Run d s₀ pre s → BridgeInv d rent C v spent txs s →
+      {txs : List LeanSpec.TxInputs},
+      all = pre ++ evs → Run d s₀ pre s → BridgeInv d rent C v txs s →
       ExecutionPath d s evs states s' →
-      BridgeInv d rent C (ExecutionView.afterEvents d rent v s evs states)
-        (spent ∪ runSpent evs) (txs ++ runTxs evs) s' := by
-  intro s s' evs pre states v spent txs hall hpre hinv hrun
-  induction hrun generalizing pre v spent txs with
-  | nil => simpa [runSpent, runTxs, ExecutionView.afterEvents] using hinv
+      BridgeInv d rent C (ExecutionView.afterEvents d rent v s evs states) (txs ++ runTxs evs) s' := by
+  intro s s' evs pre states v txs hall hpre hinv hrun
+  induction hrun generalizing pre v txs with
+  | nil => simpa [runTxs, ExecutionView.afterEvents] using hinv
   | @program s₁ s₂ s₃ tx ix emitted events states hstep hrentPos hrest ih =>
     have hA := assume.eachStep pre events s₁ tx ix emitted hall hpre
     have hR := sameRent tx ix emitted (by rw [hall]; simp)
     have hinv' := bridge_step (laws := laws) hinv hpid hashes (fixed_addresses_differ assume) hA hR hstep hrentPos
     have := ih (pre := pre ++ [.program tx ix emitted]) (by rw [hall]; simp)
       (hpre.append (.program hstep hrentPos (.nil _))) hinv'
-    simpa [runSpent, runTxs, ExecutionView.afterEvents, Finset.union_assoc, List.append_assoc] using this
+    simpa [runTxs, ExecutionView.afterEvents, List.append_assoc] using this
   | @env s₁ s₂ s₃ events states henv hrest ih =>
     have := ih (pre := pre ++ [.env]) (by rw [hall]; simp) (hpre.append (.env henv (.nil _)))
       (bridge_env hinv henv)
-    simpa [runSpent, runTxs, ExecutionView.afterEvents, ExecutionView.afterEvent] using this
+    simpa [runTxs, ExecutionView.afterEvents, ExecutionView.afterEvent] using this
 
 /-- **The bridge.** Every execution of the code model from genesis either has not initialized
     the pool, or is (read through `toWorld`, `runTxs` and `executionView`) a run of the spec from
@@ -951,11 +997,11 @@ theorem execution_is_spec_run_pf {d : Deployment} {rent : Nat → U64} {s₀ s :
        letI : LeanSpec.Pairing := syscallPairing C
        letI : LeanSpec.Deployment := ⟨programKey C⟩
        IsSpecRun d rent s₀ evs states s) := by
-  have h0 : BridgeInv d rent C {} ∅ [] s₀ :=
-    ⟨wf_genesis hgen hpid, rfl, Or.inl ⟨genesis_noProgramAccounts hgen, rfl, rfl, rfl⟩⟩
+  have h0 : BridgeInv d rent C {} [] s₀ :=
+    ⟨wf_genesis hgen hpid, Or.inl ⟨genesis_noProgramAccounts hgen, rfl, rfl⟩⟩
   have := bridge_run (C := C) (laws := laws) hpid hashes assume sameRent (pre := []) (by simp) (.nil _) h0 hrun
-  simp only [Finset.empty_union, List.nil_append] at this
-  rcases this.2.2 with ⟨hn, ht, -⟩ | ⟨-, hr⟩
+  simp only [List.nil_append] at this
+  rcases this.2 with ⟨hn, ht, -⟩ | ⟨-, hr⟩
   · exact Or.inl ⟨hn, ht⟩
   · exact Or.inr hr
 
@@ -1012,16 +1058,15 @@ theorem transact_connection_pf {d : Deployment} {rent : Nat → U64} {s₀ s s' 
     (hstep : Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s')
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
     (hashes : HashesAgree d.crypto) (solana : SolanaFacts d tx)
-    (crypto : CryptoFacts d proof) (circuit : CircuitFacts d {proof}) (outside : OutsideSpecDetail d rent s tx a proof) :
+    (crypto : CryptoFacts d proof) (circuit : CircuitFacts d {proof}) (sameRent : SameRent rent tx) :
     letI : LeanSpec.Groups := syscallGroups C
     letI : LeanSpec.Pairing := syscallPairing C
     letI : LeanSpec.Deployment := ⟨programKey C⟩
     let inputs := toInputs tx.signers a proof extAmount fee out1 out2
-    LeanSpec.transact inputs (toWorld d rent (runSpent evs) s)
-      (toWorld d rent (runSpent evs ∪ {inputs.k0, inputs.k1}) s') :=
+    LeanSpec.transact inputs (toWorld d rent s) (toWorld d rent s') :=
   have ⟨hs, hrentPos⟩ := Run.single_inv hstep
   (transact_refines_verified C laws hs hashes (wf_reachable hgen hrun hpid hashes) solana hrentPos crypto circuit
-    outside).1
+    sameRent).1
 
 end
 

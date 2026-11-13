@@ -14,14 +14,18 @@ the only wrong rejections there. Completeness through Anchor and the runtime is 
 code model is a run of the spec, so the spec's invariants (no double spending, every note
 backed, only the owner spends, only the authorities change the config) hold for the code.
 Between transactions the spec allows what Solana allows: SOL sent to any account (the pool only
-gains), other accounts spent from, and admin changes signed by the right authority. The two
-Solana details `transact_connection` excludes (a pre-funded nullifier address, a payee that is
-a nullifier account) are covered here: they are such allowed changes.
+gains), other accounts spent from, and admin changes signed by the right authority.
+
+**Nullifier accounts are modelled.** The spec records a spent nullifier as its nullifier
+account (one address per input slot); a nullifier is spent when its account exists in either
+slot. The signer pays each new account only what its address is missing to hold the rent, so
+pre-funded addresses and payments into nullifier accounts are ordinary balance changes.
+`transact_connection` excludes no Solana detail.
 
 **The run is the execution's own.** `IsRunOf` fixes the spec run to what the execution did:
 what `initialize` set up, each transaction, the chain's state and pool balance around each
 transaction, and each admin instruction with the signers of its transaction. The one thing it leaves
-open mid-run is the balances of other accounts, which can differ for the two Solana details above. So
+open mid-run is the balances of accounts other than the pool, which the next allowed change sets. So
 `onlyAuthoritiesChangeConfig_code` (G5a) says of the execution's own admin instructions that each was
 signed by the initializer, and a missing signer check would make it false.
 
@@ -78,7 +82,7 @@ theorems. The other goals
 rule only if it needs one, marked ADDED MANUALLY (docs silent) (a rule the docs should state)
 or SOLANA FACT (how Solana behaves). Each such rule is either enforced by the code (the
 connection proves it) or by Solana (proved from the runtime model). Example:
-`poolIsSeparate` (the pool is not the signer, the recipient of a withdrawal or the fee
+`poolNotRecipient` (the pool is not the recipient of a withdrawal or the fee
 recipient of a non-zero fee) is needed for G1c and G4. The program does not check it. For the
 payees, the runtime's lamport-conservation check enforces it, and the connection proves this
 from the model of that check. For the signer, it follows from the assumed Solana fact that a
@@ -107,15 +111,24 @@ Each is how Solana works, not a rule of the program; keep this list in sync with
   check enforces both.
 - **Rent.** An account must hold a rent-exempt minimum, which grows with its size: the pool's
   (`rentExemptMin`) and a nullifier account's (`nullifierRent`) differ. The pool is created
-  holding exactly its minimum; the signer pays one nullifier rent per nullifier account.
+  holding exactly its minimum; the signer pays each new nullifier account what its address
+  is missing to hold the rent (`nullifierTopUp`): anyone can send lamports to an address before
+  an account exists there.
+- **Nullifier accounts** (`State.nullifierAccounts`, `nullifierAddr`). A spent nullifier is an
+  account at a program-derived address, one per input slot; only the program creates such an
+  account, and it never closes one, so the accounts stay between transactions.
+- **Anchor's `init` fails where an account exists** (`nullifierAccountsCreatable`): the two
+  new nullifier accounts are not the pool and not each other.
 - **Zero-filled accounts.** A new account's bytes are zero, so the root history slots other
   than the first hold `0` after initialization (`initTree`).
 - **Balances are `u64`** (`balancesFit`). No real transaction is affected: `2^64` lamports
   exceeds the total SOL supply.
 - **Encrypted outputs are shorter than `2^32` bytes** (`encOutsFit`). Borsh writes vector
   lengths as `u32`; the transaction size limit (1232 bytes) keeps them far below anyway.
-- **The pool is separate from the signer and the payees** (`poolIsSeparate`). A program
-  address can't sign, and the runtime rejects an instruction that doesn't conserve lamports.
+- **Program-derived addresses can't sign** (`signerNotPoolNotNullifiers`): the signer is not
+  the pool or a new nullifier account.
+- **The pool is not paid as a payee** (`poolNotRecipient`). The runtime rejects an instruction
+  that doesn't conserve lamports.
 
 ## Background to the spec's trusted assumptions (T0–T3, `Spec/Statements.lean`)
 

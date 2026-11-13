@@ -11,10 +11,9 @@ theorems do not assume it: their proofs derive it from the execution. Not for re
 
 namespace Connection
 
-/-- `WellFormed d spent s` (invariant, proved): facts about the program's own accounts. They hold in every state
-    an execution reaches from genesis, with `spent` the nullifiers that execution spent
-    (proved in `Proofs/WellFormed.lean`). -/
-structure WellFormed (d : Deployment) (spent : Finset LeanSpec.F) (s : State) : Prop where
+/-- `WellFormed d s` (invariant, proved): facts about the program's own accounts. They hold in
+    every state an execution reaches from genesis (proved in `Proofs/WellFormed.lean`). -/
+structure WellFormed (d : Deployment) (s : State) : Prop where
   /-- The program is not the System Program (`DeploymentFacts.programNotSystem`, carried along
       so the invariant is self-contained). -/
   programNotSystem : d.programId ≠ systemProgram
@@ -29,11 +28,6 @@ structure WellFormed (d : Deployment) (spent : Finset LeanSpec.F) (s : State) : 
   config : ∀ k c, HoldsGlobalConfig d.programId s k c → k = configAddr d ∧
     c.deposit_fee_rate.val ≤ 10000 ∧ c.withdrawal_fee_rate.val ≤ 10000 ∧
     c.fee_error_margin.val ≤ 10000
-  /-- Every nullifier the connection tracks as spent is the field value of some canonical
-      32-byte nullifier whose nullifier account (slot 0 or slot 1) is owned by the program. -/
-  spentRecorded : ∀ x ∈ spent, ∃ n : Pubkey, Canonical n ∧ toF n = x ∧
-    ((s (d.pda (nullifier0Seeds n))).owner = d.programId ∨
-      (s (d.pda (nullifier1Seeds n))).owner = d.programId)
   /-- Every root stored in the history of a tree the program owns is canonical (big-endian
       value below the field modulus): the program stores only the zero hashes, zero bytes and
       Poseidon outputs there (`HashesAgree.zeroBytesCanonical`, `poseidonCanonical`). -/

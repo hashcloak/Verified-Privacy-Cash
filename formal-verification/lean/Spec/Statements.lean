@@ -17,8 +17,8 @@ T0 Deployment.
    - The circom circuit enforces exactly `RelationS`.
    - Nobody can replace the program.
    - The pool started from `initWorld`.
-   - The Solana runtime is as modelled: transactions are atomic, instructions conserve
-     lamports, and the per-slot nullifier accounts form one nullifier set.
+   - The Solana runtime is as modelled: transactions are atomic and instructions conserve
+     lamports.
    - Every G1 and G2 point has a byte encoding the program decodes.
 T1 Groth16. For the deployed key:
    - The trusted setup was honest: nobody knows its trapdoor.
@@ -26,8 +26,11 @@ T1 Groth16. For the deployed key:
      owner has the proof G3a takes as given (`validProof`).
    - Extraction; proofs show knowledge: whoever makes a proof that verifies knows a witness
      for it.
-T2 Hashes. Nobody can find a collision of `H1`–`H4`, an `H2` or `H4` preimage of `0`, or
-   two byte strings whose `sha256` digests are equal mod `p` (`Sha256Collision`).
+T2 Hashes. Nobody can find a collision of `H1`–`H4`, an `H2` or `H4` preimage of `0`,
+   two byte strings whose `sha256` digests are equal mod `p` (`Sha256Collision`), or two
+   different (input slot, nullifier bytes) whose nullifier accounts have the same address, or
+   one at the pool's address (`NullifierAddressCollision`; program-derived addresses are
+   SHA-256 hashes).
 T3 Keys. Secret keys are uniform and kept secret, and `H1 sk` together with the nullifiers
    (through `signature = H3 sk c idx`) reveal nothing usable about `sk`.
 
@@ -111,7 +114,8 @@ fail is infeasible too. The values must come from the history: "some two inputs 
 same hash" is always true (a hash compresses) and would make the theorem say nothing.
 
 The breaks are `H1Collision`, `H2Collision` (via `PathCollision`), `H2ZeroPreimage`,
-`H3Collision`, `H4Collision`, `H4ZeroPreimage` and `Sha256Collision`. G1a–G1d, G2a, G2b,
+`H3Collision`, `H4Collision`, `H4ZeroPreimage`, `Sha256Collision` and
+`NullifierAddressCollision`. G1a–G1d, G2a, G2b,
 G3a, G3b end in one; their titles mean "..., unless a hash break occurs". G4a, G4b, G5a and G5b
 need none: they hold outright.
 
@@ -468,7 +472,10 @@ Then either:
 - **nullifier used first** (`NullifierTakenByCollision`): an earlier spend revealed the owner's
   nullifier from different arguments, i.e. an `H3` collision;
 - **root is `0`** (`H2ZeroPreimage`): the tree's two top subtrees hash to `0`, i.e. an
-  `H2` preimage of `0`.
+  `H2` preimage of `0`;
+- **nullifier address taken** (`NullifierAddressCollision`): an address of the spend's
+  nullifier accounts is the address of another account (its other new nullifier account,
+  the pool, or another nullifier's account), i.e. a SHA-256 collision.
 
 Why the two hypotheses suffice: each check of `transact`, the fields of `HonestSpend` (`H`) and
 `LimitsNotHit` (`L`) that ensure it, and the break that occurs if they don't ("or else").
@@ -480,16 +487,18 @@ Why the two hypotheses suffice: each check of `transact`, the fields of `HonestS
 | `minimumFee` | `L.fee` |
 | `pubAmtConsistency` | `H.wellFormed.publicAmount` |
 | `validZKP` | `H.wellFormed.validProof` |
-| `newNullifiers` | `H.circuit`, `H.inputNotUsedBefore`, or else `NullifierTakenByCollision` |
+| `newNullifiers` | `H.circuit`, `H.inputNotUsedBefore`, `H.wellFormed.encodings`, or else `NullifierTakenByCollision` or `NullifierAddressCollision` |
 | `distinctNullifiers` | `H.circuit` |
+| `nullifierAccountsNew` | or else `NullifierAddressCollision` |
 | `depositLimit` | `L.depositLimit` |
 | `poolSolvency` | `H.genuine`, `H.notDoubleSpend`, `H.inputNotUsedBefore`, `H.root`, `H.circuit`, `H.wellFormed`, or else `BreakInSomeSpend` |
 | `signerSolvency` | `H.signerCanPay` |
 | `signerSignature` | `H.wellFormed.signed` |
+| `signerNotPoolNotNullifiers` | `H.signerNotPoolNotNullifiers` |
 | `treeNotFull` | `L.treeRoom` |
 | `amountRange` | `H.wellFormed.amountRange` |
 | `encOutLength` | `H.wellFormed.encOutLength` |
-| `poolSeparate` | `H.wellFormed.poolSeparate` |
+| `poolNotRecipient` | `H.wellFormed.poolNotRecipient` |
 | `canonicalInputs` | `H.wellFormed.encodings` |
 | `balancesFit` | `L.balancesFit` | -/
 
@@ -502,7 +511,7 @@ theorem honest_spend_is_accepted
                                                            --   secrets, the tree state it uses
     (hHonest : HonestSpend r wit inputs witness k)         -- [owner]: everything the owner controls
     (hLimits : LimitsNotHit r.final inputs) :              -- [limit]: what can block it
-    CanBeAccepted inputs r.final ∨ SpendBlockedByBreak r wit witness k :=
+    CanBeAccepted inputs r.final ∨ SpendBlockedByBreak r wit inputs witness k :=
   LeanSpec.honest_spend_is_accepted params r wit hwit inputs witness k hHonest hLimits
 
 /-! ### G3b. Admin config changes can't lock withdrawals
@@ -552,7 +561,7 @@ def WayIsAccepted {w0 : World} (r : Run w0) (wit : ℕ → Witness) (spentAmt pa
     (_hRoot : inputs.R ∈ Set.range r.final.state.tree.history) -- [limit] the root is still in the history
     (_hTree : treeHasRoom r.final.state.tree)              -- [limit] the tree is not full
     (_hFit : balancesFit inputs r.final),                  -- [limit] no credited balance overflows
-    CanBeAccepted inputs r.final ∨ SpendBlockedByBreak r wit witness k
+    CanBeAccepted inputs r.final ∨ SpendBlockedByBreak r wit inputs witness k
 
 /-- **G3b.** After any run, with any admin changes, a way to withdraw notes worth `spentAmt`
     lamports exists, at least half of `spentAmt` (rounded down) reaches the recipient, and an
@@ -609,21 +618,27 @@ by exactly what it should receive minus what it should pay.
 Guards against: underpaying or overpaying the recipient or the fee recipient, charging the
 signer the wrong amount, paying or charging any other account, and SOL created or lost.-/
 
-/-- `shouldReceive inputs k`: what the transaction should pay account `k`: `|extAmt|` if `k` is
-    the recipient of a withdrawal, plus the fee `f` if `k` is the fee recipient. -/
-def shouldReceive (inputs : TxInputs) (k : Pubkey) : ℤ :=
+/-- `shouldReceive inputs old k`: what the transaction should pay account `k`: `|extAmt|` if `k`
+    is the recipient of a withdrawal, plus the fee `f` if `k` is the fee recipient, plus its
+    top-up if `k` is the address of one of the two new nullifier accounts. `old`: the world
+    before the transaction. -/
+def shouldReceive (inputs : TxInputs) (old : World) (k : Pubkey) : ℤ :=
   -- withdrawal: the recipient `A` receives `|extAmt|`
   (if k = inputs.A ∧ inputs.extAmt < 0 then (inputs.extAmt.natAbs : ℤ) else 0)
   -- the fee recipient `t` receives the fee `f`
   + (if k = inputs.t then (inputs.f : ℤ) else 0)
+  -- each new nullifier account receives what it is missing to hold the rent
+  + (if k = old.state.newNullifierAccount inputs 0 then (old.nullifierTopUp inputs 0 : ℤ) else 0)
+  + (if k = old.state.newNullifierAccount inputs 1 then (old.nullifierTopUp inputs 1 : ℤ) else 0)
 
-/-- `shouldPay inputs rent k`: what account `k` should pay: the deposit `extAmt` if `k` is the
-    signer of a deposit, plus `rent` for each of the two nullifier accounts if `k` is the signer. -/
-def shouldPay (inputs : TxInputs) (rent : ℕ) (k : Pubkey) : ℤ :=
+/-- `shouldPay inputs old k`: what account `k` should pay: the deposit `extAmt` if `k` is the
+    signer of a deposit, plus the top-ups of the two new nullifier accounts if `k` is the signer.
+    `old`: the world before the transaction. -/
+def shouldPay (inputs : TxInputs) (old : World) (k : Pubkey) : ℤ :=
   -- deposit: the signer `s` pays `extAmt`
   (if k = inputs.s ∧ inputs.extAmt > 0 then inputs.extAmt else 0)
-  -- the signer `s` pays rent for the two nullifier accounts
-  + (if k = inputs.s then 2 * (rent : ℤ) else 0)
+  -- the signer `s` pays the rent the two new nullifier accounts are missing
+  + (if k = inputs.s then (old.nullifierTopUp inputs 0 + old.nullifierTopUp inputs 1 : ℤ) else 0)
 
 /-- The property G4b proves: `ExactPayouts inputs old new`: in the transaction from `old` to
     `new`, every account changes by exactly what it should receive minus what it should pay. -/
@@ -633,7 +648,7 @@ structure ExactPayouts (inputs : TxInputs) (old new : World) : Prop where
   /-- Every other account is credited what it should receive and debited what it should pay. -/
   others : ∀ k, k ≠ old.state.pool →
     (new.balances k : ℤ) =
-      old.balances k + shouldReceive inputs k - shouldPay inputs old.nullifierRent k
+      old.balances k + shouldReceive inputs old k - shouldPay inputs old k
 
 /-- **G4b.** `ExactPayouts` holds for every accepted transaction. -/
 theorem exact_payouts

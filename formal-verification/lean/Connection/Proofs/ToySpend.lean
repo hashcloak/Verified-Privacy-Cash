@@ -194,30 +194,34 @@ theorem spend_pre (sB : State) (tree₂ t1 : merkle_tree.MerkleTreeAccount) (con
     (hTn : tree₂.next_index.val = 2) (hwr : config.withdrawal_fee_rate.val = 25)
     (hpoolB : (sB tokenA).lamports.val = 3) (hrecB : (sB (pk 3#u8)).lamports.val = 0)
     (hfeeB : (sB (pk 4#u8)).lamports.val = 0) {ext : I64} {fee : U64} (hsplit : ToySplit ext fee) :
-    HandlerPre Unit Unit Unit toyTx.signers toyCrypto toyC spendA sB 1#u64 tree₂ config ∅ spendProof ext fee
+    HandlerPre Unit Unit Unit toyTx.signers toyCrypto toyC spendA sB 1#u64 tree₂ config ∅ (handlerAddr spendA)
+      spendProof ext fee
       emptySlice emptySlice := by
   unfold HandlerPre
   have hsp := hsplit; unfold ToySplit at hsp
   obtain ⟨-, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, hTP, -⟩ := dep_addr
+  obtain ⟨-, w0P, -, w01, -, -, -, w1P, -, w11, -, -, w0n1, -⟩ := spend_addr
+  have hfacts := handlerAddr_facts toyTx.signers spendA spendProof ext fee emptySlice emptySlice sB 1#u64
+    tree₂ config ∅ w0n1 w0P w1P (Ne.symm w01) (Ne.symm w11) (Ne.symm hTP)
   have hdec := decode_toInputs (signers := toyTx.signers) toyC spendProof spendA ext 0#u64 emptySlice emptySlice
     toy_alpha_decodes rfl toy_zeros_decodes
   have he : (toInputs toyTx.signers spendA spendProof ext fee emptySlice emptySlice).extAmt = ext.val := rfl
   have hf : (toInputs toyTx.signers spendA spendProof ext fee emptySlice emptySlice).f = fee.val := rfl
   have h3P : pk 3#u8 ≠ tokenA := by unfold tokenA; decide +kernel
   have h4P : pk 4#u8 ≠ tokenA := by unfold tokenA; decide +kernel
-  have hpool : (handlerWorld spendA sB 1#u64 tree₂ config ∅).state.pool = toPubkey tokenA := rfl
-  have hnr : (handlerWorld spendA sB 1#u64 tree₂ config ∅).nullifierRent = 0 := rfl
+  have hpool : (handlerWorld spendA sB 1#u64 tree₂ config ∅ (handlerAddr spendA)).state.pool = toPubkey tokenA := rfl
+  have hnr : (handlerWorld spendA sB 1#u64 tree₂ config ∅ (handlerAddr spendA)).nullifierRent = 0 := rfl
   have hA : (toInputs toyTx.signers spendA spendProof ext fee emptySlice emptySlice).A = toPubkey (pk 3#u8) := rfl
   have hs : (toInputs toyTx.signers spendA spendProof ext fee emptySlice emptySlice).s = toPubkey (pk 1#u8) := rfl
   have ht : (toInputs toyTx.signers spendA spendProof ext fee emptySlice emptySlice).t = toPubkey (pk 4#u8) := rfl
-  have hpb : (handlerWorld spendA sB 1#u64 tree₂ config ∅).balances (toPubkey tokenA) = 3 := by
+  have hpb : (handlerWorld spendA sB 1#u64 tree₂ config ∅ (handlerAddr spendA)).balances (toPubkey tokenA) = 3 := by
     show (sB (fromPubkey (toPubkey tokenA))).lamports.val = 3
     rw [fromPubkey_toPubkey, hpoolB]
   refine @LeanSpec.transactPreconditions.mk _ (syscallGroups toyC) (inferInstanceAs (AddCommGroup Unit))
     (inferInstanceAs (Module LeanSpec.F Unit))
     (inferInstanceAs (CommGroup Unit))
     (syscallPairing toyC) (@LeanSpec.Deployment.mk (syscallGroups toyC) (programKey toyC)) _ _
-    ?_ ?_ ?_ ?_ ⟨_, hdec, rfl⟩ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_
+    ?_ ?_ ?_ ?_ ⟨_, hdec, rfl⟩ ?_ ?_ hfacts.1 ?_ ?_ ?_ ?_ hfacts.2 ?_ ?_ ?_ ?_ ?_ ?_
   · -- the root: the deposit's last append stored the root `1`
     show LeanSpec.rootBytesKnown (toTree tree₂) (toBytes one32.val)
     rw [rootBytesKnown_iff]
@@ -231,22 +235,22 @@ theorem spend_pre (sB : State) (tree₂ t1 : merkle_tree.MerkleTreeAccount) (con
     refine ⟨fun h => by omega, ?_⟩
     show toF minusTwo32 = _; rw [toF_minusTwo32]
     rcases hsp with ⟨h1, h2⟩ | ⟨h1, h2⟩ <;> simp [h1, h2] <;> norm_num
-  · simp [LeanSpec.nullifiersFresh, handlerWorld]
+  · simp [LeanSpec.nullifiersFresh, LeanSpec.State.spent, handlerWorld]
   · show toF two32 ≠ toF three32
     rw [toF_two32, toF_three32]; decide
   · intro h; rw [he] at h; omega
   · unfold LeanSpec.poolSolvent; rw [he, hf]
     refine ⟨fun _ => ?_, fun h => by omega⟩
-    have hpb' : (handlerWorld spendA sB 1#u64 tree₂ config ∅).poolBalance = 3 := hpb
+    have hpb' : (handlerWorld spendA sB 1#u64 tree₂ config ∅ (handlerAddr spendA)).poolBalance = 3 := hpb
     rw [hpb']; simp [handlerWorld]
     rcases hsp with ⟨h1, h2⟩ | ⟨h1, h2⟩ <;> simp [h1, h2]
-  · unfold LeanSpec.signerSolvent; rw [he]; simp [handlerWorld]
+  · unfold LeanSpec.signerSolvent; rw [he]; simp [handlerWorld, LeanSpec.World.nullifierTopUp]
     rcases hsp with ⟨h1, -⟩ | ⟨h1, -⟩ <;> simp [h1]
   · exact List.mem_map_of_mem (f := toPubkey) (List.mem_singleton.mpr rfl)
   · show (toTree tree₂).nextIndex ≤ 2 ^ 26 - 2; simp [toTree, hTn]
   · unfold LeanSpec.amountsInRange; rw [he, hf]; omega
   · simp [LeanSpec.encOutsFit, toInputs, emptySlice, toBytes]
-  · exact ⟨fun e => (Ne.symm hTP) (toPubkey_inj e), fun _ e => h3P (toPubkey_inj e),
+  · exact ⟨fun _ e => h3P (toPubkey_inj e),
       fun _ e => h4P (toPubkey_inj e)⟩
   · intro i
     show LeanSpec.canonicalEncoding (toBytes ((publicInputs _)[i.val]!).val) _
@@ -261,11 +265,11 @@ theorem spend_pre (sB : State) (tree₂ t1 : merkle_tree.MerkleTreeAccount) (con
     · exact ⟨canonical_zeros32, rfl⟩
   · refine ⟨fun k hk => ?_, fun h => by rw [he] at h; omega⟩
     -- only the recipient and the fee recipient are credited, and they hold nothing
-    unfold LeanSpec.balanceDelta at hk ⊢
-    rw [he, hf, hpool, hnr, hA, hs, ht] at hk ⊢
+    rw [balanceDelta_noRent _ _ hnr] at hk ⊢
+    rw [he, hf, hpool, hA, hs, ht] at hk ⊢
     by_cases hk3 : k = toPubkey (pk 3#u8)
     · subst hk3
-      have hb : (handlerWorld spendA sB 1#u64 tree₂ config ∅).balances (toPubkey (pk 3#u8)) = 0 := by
+      have hb : (handlerWorld spendA sB 1#u64 tree₂ config ∅ (handlerAddr spendA)).balances (toPubkey (pk 3#u8)) = 0 := by
         show (sB (fromPubkey (toPubkey (pk 3#u8)))).lamports.val = 0
         rw [fromPubkey_toPubkey, hrecB]
       rw [hb]
@@ -274,7 +278,7 @@ theorem spend_pre (sB : State) (tree₂ t1 : merkle_tree.MerkleTreeAccount) (con
       split_ifs <;> omega
     by_cases hk4 : k = toPubkey (pk 4#u8)
     · subst hk4
-      have hb : (handlerWorld spendA sB 1#u64 tree₂ config ∅).balances (toPubkey (pk 4#u8)) = 0 := by
+      have hb : (handlerWorld spendA sB 1#u64 tree₂ config ∅ (handlerAddr spendA)).balances (toPubkey (pk 4#u8)) = 0 := by
         show (sB (fromPubkey (toPubkey (pk 4#u8)))).lamports.val = 0
         rw [fromPubkey_toPubkey, hfeeB]
       rw [hb]
@@ -337,7 +341,8 @@ theorem toy_spend_ok (s₂ : State) (tree₂ t1 : merkle_tree.MerkleTreeAccount)
     rw [hsB _ p41' q40 q41]; exact (hz _ p4T p4K p4C p41' p4a p4b).1
   -- the handler
   obtain ⟨ap, env', tree', hh⟩ := handler_ok_exists toyCrypto toyC toyLaws toyHashesAgree toyHashesSucceed
-    toySyscalls toyKey spendA sB 1#u64 tree₂ config ∅ spendProof ext fee emptySlice emptySlice hshape
+    toySyscalls toyKey spendA sB 1#u64 tree₂ config ∅ (handlerAddr spendA) spendProof ext fee emptySlice
+    emptySlice hshape
     hroots hsubs (by omega) (by omega) (by omega)
     ⟨by rw [oB, oA, hPs], by rw [dB, dA, hPs]; rfl⟩ toyFit (by rcases hsplit with ⟨h, -⟩ | ⟨h, -⟩ <;> rw [h] <;> decide) alpha_ne_zeros
     (spend_pre sB tree₂ t1 config c htree hTn hwr hpoolB hrecB hfeeB hsplit)
@@ -398,7 +403,8 @@ theorem toy_spend_execution {ext : I64} {fee : U64} (hsplit : ToySplit ext fee) 
       step toyD s₁ toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) = .ok (s₂, e₂) ∧
       step toyD s₂ toyTx (.transact spendA spendProof ext fee emptySlice emptySlice) = .ok (s₃, e₃) ∧
       Initialized toyD s₁ ∧ (CryptoFacts toyD spendProof ∧ CircuitFacts toyD {spendProof}) ∧
-      OutsideSpecDetail toyD toyRent s₂ toyTx spendA spendProof := by
+      SameRent toyRent toyTx ∧
+      (s₂ (pk 1#u8)).owner = systemProgram ∧ (s₂ (pk 1#u8)).data.isEmpty := by
   obtain ⟨s₁, tree, token, config, hinit, hT, hK, hC, hP, hO, hshape, hroots, hsubs, hT0, hTn, hTb, hTm,
     hkb, hcb, hdr, hwr, hmr⟩ := toy_init_ok
   obtain ⟨s₂, e₂, tree₂, hstep₂, hT2, hK2, hC2, hP2, hO2, p1, p2, t1, hap1, hap2⟩ :=
@@ -429,7 +435,7 @@ theorem toy_spend_execution {ext : I64} {fee : U64} (hsplit : ToySplit ext fee) 
     ⟨⟨tree, by unfold HoldsTree; rw [show treeAddr toyD = treeA from rfl, hT]; exact ⟨rfl, rfl⟩⟩,
      ⟨token, by unfold HoldsTreeToken; rw [show poolAddr toyD = tokenA from rfl, hK]; exact ⟨rfl, rfl⟩⟩,
      ⟨config, by unfold HoldsGlobalConfig; rw [show configAddr toyD = configA from rfl, hC]; exact ⟨rfl, rfl⟩⟩⟩,
-    ⟨⟨?_⟩, CircuitFacts.of_distinct ?_⟩, ⟨rfl, ?_, ?_⟩⟩
+    ⟨⟨?_⟩, CircuitFacts.of_distinct ?_⟩, rfl, by rw [hP2], by rw [hP2]; rfl⟩
   · intro x hx y hy hxy
     simp only [Set.mem_insert_iff, Set.mem_singleton_iff] at hx hy
     rcases hx with rfl | rfl <;> rcases hy with rfl | rfl
@@ -438,16 +444,6 @@ theorem toy_spend_execution {ext : I64} {fee : U64} (hsplit : ToySplit ext fee) 
     · exact absurd hxy.symm w0n1
     · rfl
   · show two32 ≠ three32; decide +kernel
-  · refine ⟨?_, ?_⟩
-    · show (s₂ nf0W).lamports.val = 0
-      rw [hO2 nf0W w01 w02 w03 w04 w05 w06]; unfold toyS0; decide +kernel
-    · show (s₂ nf1W).lamports.val = 0
-      rw [hO2 nf1W w11 w12 w13 w14 w15 w16]; unfold toyS0; decide +kernel
-  · refine ⟨fun b h => ?_, fun b h => ?_, p30, p31, p40, p41⟩
-    · rw [show s₂ spendA.recipient = toyS0 (pk 3#u8) from hO2 _ p3T p3K p3C p31' p3a p3b] at h
-      unfold toyS0 at h; rw [if_neg p31'] at h; cases h
-    · rw [show s₂ spendA.feeRecipientAccount = toyS0 (pk 4#u8) from hO2 _ p4T p4K p4C p41' p4a p4b] at h
-      unfold toyS0 at h; rw [if_neg p41'] at h; cases h
 
 /-- The three-event toy execution, split at any program step. -/
 theorem toy_split3 {e₁ e₂ e₃ ev : Event} {pre post : List Event} (h : [e₁, e₂, e₃] = pre ++ ev :: post) :
@@ -470,13 +466,13 @@ theorem toy_transact_nonvacuous :
           (extAmount : I64) (fee : U64) (out1 out2 : Slice U8) (events : List CommitmentData),
         Run d s₀ evs s ∧ Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s' ∧
         extAmount.val > 0 ∧ SolanaFacts d tx ∧ CryptoFacts d proof ∧ CircuitFacts d {proof} ∧
-        OutsideSpecDetail d rent s tx a proof) ∧
+        SameRent rent tx) ∧
       (∃ (evs : List Event) (s s' : State) (tx : TxEnv) (a : TransactAccounts) (proof : transact.Proof)
           (extAmount : I64) (fee : U64) (out1 out2 : Slice U8) (events : List CommitmentData),
         Run d s₀ evs s ∧ Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s' ∧
         extAmount.val < 0 ∧ SolanaFacts d tx ∧ CryptoFacts d proof ∧ CircuitFacts d {proof} ∧
-        OutsideSpecDetail d rent s tx a proof) := by
-  obtain ⟨s₁, s₂, s₃, e₂, e₃, h1, h2, h3, -, crypto, outside⟩ := toy_spend_execution toySplit_one
+        SameRent rent tx) := by
+  obtain ⟨s₁, s₂, s₃, e₂, e₃, h1, h2, h3, -, crypto, outside, -⟩ := toy_spend_execution toySplit_one
   obtain ⟨s₁', s₂', e₂', h1', -, hpid, h2', -, solana, depCrypto, depOutside⟩ := toy_execution
   exact ⟨toyD, toyRent, toyS0, toyC, toyLaws, toyGenesis, toyDeploymentFacts, toyHashesAgree,
     ⟨_, s₁', s₂', toyTx, depA, depProof, 2#i64, 0#u64, emptySlice, emptySlice, e₂',
