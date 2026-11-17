@@ -237,17 +237,26 @@ def U64.Insts.BorshSerBorshSerialize.serialize
 /-- DERIVED. borsh `Vec<T>`: a 4-byte little-endian element COUNT, then each element in order.
     Counterpart of `vecU8` in Spec/privacy_cash_spec.lean. That length prefix is what makes the
     two encrypted outputs unambiguous inside the ext-data hash preimage -- without it, a byte
-    could be moved from the end of one to the start of the next without changing the digest. -/
+    could be moved from the end of one to the start of the next without changing the digest.
+
+    A count that does not fit in 4 bytes: borsh writes `u32::try_from(len)?` and returns
+    `Err(InvalidInput)` (vendor/borsh-0.10.4/src/ser/mod.rs:242). `std.io.error.Error` is opaque
+    here, so there is no error value to return; the model FAILS instead. Both abort the
+    instruction, and neither can happen on Solana, where a transaction is about 1232 bytes. (An
+    earlier version wrote `leBytes 4 v.length`, silently wrapping the count mod 2^32 and
+    succeeding where borsh errors.) -/
 @[rust_fun
   "borsh::ser::{borsh::ser::BorshSerialize<alloc::vec::Vec<@T>>}::serialize"]
 def alloc.vec.Vec.Insts.BorshSerBorshSerialize.serialize
   {T : Type} {W : Type} (BorshSerializeInst : borsh.ser.BorshSerialize T)
   (stdioWriteInst : std.io.Write W) (v : alloc.vec.Vec T) (w : W) :
-  Result ((core.result.Result Unit std.io.error.Error) × W) := do
-  let (r, w') ← wrBytes stdioWriteInst (leBytes 4 v.length) w (by simp [leBytes]; scalar_tac)
-  match r with
-  | .Ok _ => borshSerList BorshSerializeInst stdioWriteInst v.val w'
-  | .Err e => ok (.Err e, w')
+  Result ((core.result.Result Unit std.io.error.Error) × W) :=
+  if v.length < 2 ^ 32 then do
+    let (r, w') ← wrBytes stdioWriteInst (leBytes 4 v.length) w (by simp [leBytes]; scalar_tac)
+    match r with
+    | .Ok _ => borshSerList BorshSerializeInst stdioWriteInst v.val w'
+    | .Err e => ok (.Err e, w')
+  else fail .integerOverflow
 
 -- TRUSTED (DIAGNOSTIC). Debug formatting of a hasher error; error path only.
 /-- [light_hasher::errors::{impl core::fmt::Debug for light_hasher::errors::HasherError}::fmt]:

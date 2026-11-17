@@ -116,6 +116,10 @@ work this model exists to support.
   proofs are not yet shown to be accepted; and the statement is about the model's curve types,
   not the spec's. It is not Groth16 soundness (an assumption in `Spec/`); it shows the program
   checks the equation that soundness is about.
+- **`transact` has proved building blocks but no theorem of its own yet.** `lean/proofs/Transact/`
+  characterises `check_public_amount`, `validate_fee` and the ext-data hash preimage exactly;
+  the theorem about `fv_transact_entry` as a whole, which would combine them with the verifier
+  theorem, is not written.
 - **The three curve syscalls say what a successful answer means, not yet that valid inputs succeed.**
   `code_model/hand_written/SyscallContracts.lean` states what a *successful* answer means —
   addition gives P + Q, multiplication gives k·P, a pairing answer of 1 means the four pairings
