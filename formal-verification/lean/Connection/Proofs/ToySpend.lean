@@ -92,7 +92,7 @@ the nullifier of an input at leaf `idx` is `sk + 2·c + 2·idx`. -/
 
 /-- The deposit: two zero-amount inputs at leaf 0 (keys `0` and `1`, nullifiers `0` and `1`);
     output 0 is a note of 2 lamports owned by the key `2` (commitment `2 + 2 - 4 = 0`). -/
-def depWit : LeanSpec.Witness where
+def depWit : Spec.Witness where
   mint := 0
   inAmt := 0
   inSk := ![0, 1]
@@ -104,7 +104,7 @@ def depWit : LeanSpec.Witness where
 
 /-- The withdrawal: input 0 spends the deposit's note (leaf 0, key `2`, nullifier `2`); input 1
     is a zero-amount input with key `3` (nullifier `3`). Both outputs are empty. -/
-def spendWit : LeanSpec.Witness where
+def spendWit : Spec.Witness where
   mint := 0
   inAmt := ![2, 0]
   inSk := ![2, 3]
@@ -114,74 +114,74 @@ def spendWit : LeanSpec.Witness where
   outPk := 0
   outR := 0
 
-theorem toy_H1 (a : LeanSpec.F) : LeanSpec.PoseidonHashes.H1 a = a := rfl
-theorem toy_H3 (a b c : LeanSpec.F) : LeanSpec.PoseidonHashes.H3 a b c = a + b + c := rfl
-theorem toy_H4 (a b c d : LeanSpec.F) : LeanSpec.PoseidonHashes.H4 a b c d = a + b + c + d := rfl
+theorem toy_H1 (a : Spec.F) : Spec.PoseidonHashes.H1 a = a := rfl
+theorem toy_H3 (a b c : Spec.F) : Spec.PoseidonHashes.H3 a b c = a + b + c := rfl
+theorem toy_H4 (a b c d : Spec.F) : Spec.PoseidonHashes.H4 a b c d = a + b + c + d := rfl
 
 /-- In the toy every Merkle path reaches the root `1`. -/
-theorem toy_calcRoot (O : LeanSpec.Opening) (c : LeanSpec.F) : O.calcRoot c = 1 := by
-  unfold LeanSpec.Opening.calcRoot
+theorem toy_calcRoot (O : Spec.Opening) (c : Spec.F) : O.calcRoot c = 1 := by
+  unfold Spec.Opening.calcRoot
   rw [Fin.foldl_succ_last]
   split_ifs <;> rfl
 
 /-- In the toy every root an append stores is `1`. -/
-theorem toy_append_history (c : LeanSpec.F) (T : LeanSpec.Tree) :
-    (LeanSpec.appendEffects c T).history (T.rootIndex + 1) = 1 := by
-  unfold LeanSpec.appendEffects
+theorem toy_append_history (c : Spec.F) (T : Spec.Tree) :
+    (Spec.appendEffects c T).history (T.rootIndex + 1) = 1 := by
+  unfold Spec.appendEffects
   simp only [Function.update_self]
   rw [Fin.foldl_succ_last]
   split_ifs <;> rfl
 
 theorem dep_relation :
-    LeanSpec.RelationS (toInputs toyTx.signers depA depProof 2#i64 0#u64 emptySlice emptySlice).pubInputs depWit where
+    Spec.RelationS (toInputs toyTx.signers depA depProof 2#i64 0#u64 emptySlice emptySlice).pubInputs depWit where
   outputCommitmentIntegrity := by
     intro j
     fin_cases j <;>
-      simp [toInputs, LeanSpec.TxInputs.pubInputs, depProof, toyProof, toF_zeros32, depWit,
-        LeanSpec.commit, toy_H4]
+      simp [toInputs, Spec.TxInputs.pubInputs, depProof, toyProof, toF_zeros32, depWit,
+        Spec.commit, toy_H4]
     all_goals norm_num
   nullifierCorrectness := by
     intro i
     fin_cases i <;>
-      simp [toInputs, LeanSpec.TxInputs.pubInputs, depProof, toyProof, toF_zeros32, toF_one32, depWit,
-        LeanSpec.nullifier, LeanSpec.Witness.sign, LeanSpec.signature, LeanSpec.Witness.inC,
-        LeanSpec.commit, LeanSpec.Witness.inPk, toy_H1, toy_H3, toy_H4]
+      simp [toInputs, Spec.TxInputs.pubInputs, depProof, toyProof, toF_zeros32, toF_one32, depWit,
+        Spec.nullifier, Spec.Witness.sign, Spec.signature, Spec.Witness.inC,
+        Spec.commit, Spec.Witness.inPk, toy_H1, toy_H3, toy_H4]
   noDuplicateNullifiers := by
-    simp only [toInputs, LeanSpec.TxInputs.pubInputs, Matrix.cons_val_zero, Matrix.cons_val_one]
+    simp only [toInputs, Spec.TxInputs.pubInputs, Matrix.cons_val_zero, Matrix.cons_val_one]
     show toF zeros32 ≠ toF one32
     rw [toF_zeros32, toF_one32]; decide
   correctOpenings := by intro i hi; simp [depWit] at hi
   amountConservation := by
-    simp [toInputs, LeanSpec.TxInputs.pubInputs, depProof, toyProof, toF_two32, depWit]
+    simp [toInputs, Spec.TxInputs.pubInputs, depProof, toyProof, toF_two32, depWit]
   outputRangeChecks := by
-    haveI : Fact (1 < LeanSpec.p) := ⟨by norm_num [LeanSpec.p]⟩
-    have hval : ZMod.val (2 : LeanSpec.F) = 2 := by
-      have := ZMod.val_natCast_of_lt (n := LeanSpec.p) (a := 2) (by norm_num [LeanSpec.p]); exact_mod_cast this
+    haveI : Fact (1 < Spec.p) := ⟨by norm_num [Spec.p]⟩
+    have hval : ZMod.val (2 : Spec.F) = 2 := by
+      have := ZMod.val_natCast_of_lt (n := Spec.p) (a := 2) (by norm_num [Spec.p]); exact_mod_cast this
     intro j; fin_cases j <;> simp [depWit, hval]
 
 theorem spend_relation {ext : I64} {fee : U64} :
-    LeanSpec.RelationS (toInputs toyTx.signers spendA spendProof ext fee emptySlice emptySlice).pubInputs spendWit where
+    Spec.RelationS (toInputs toyTx.signers spendA spendProof ext fee emptySlice emptySlice).pubInputs spendWit where
   outputCommitmentIntegrity := by
     intro j
     fin_cases j <;>
-      simp [toInputs, LeanSpec.TxInputs.pubInputs, spendProof, toF_zeros32, spendWit, LeanSpec.commit, toy_H4]
+      simp [toInputs, Spec.TxInputs.pubInputs, spendProof, toF_zeros32, spendWit, Spec.commit, toy_H4]
   nullifierCorrectness := by
     intro i
     fin_cases i <;>
-      simp [toInputs, LeanSpec.TxInputs.pubInputs, spendProof, toF_two32, toF_three32, spendWit,
-        LeanSpec.nullifier, LeanSpec.Witness.sign, LeanSpec.signature, LeanSpec.Witness.inC,
-        LeanSpec.commit, LeanSpec.Witness.inPk, toy_H1, toy_H3, toy_H4]
+      simp [toInputs, Spec.TxInputs.pubInputs, spendProof, toF_two32, toF_three32, spendWit,
+        Spec.nullifier, Spec.Witness.sign, Spec.signature, Spec.Witness.inC,
+        Spec.commit, Spec.Witness.inPk, toy_H1, toy_H3, toy_H4]
     all_goals norm_num
   noDuplicateNullifiers := by
-    simp only [toInputs, LeanSpec.TxInputs.pubInputs, Matrix.cons_val_zero, Matrix.cons_val_one]
+    simp only [toInputs, Spec.TxInputs.pubInputs, Matrix.cons_val_zero, Matrix.cons_val_one]
     show toF two32 ≠ toF three32
     rw [toF_two32, toF_three32]; decide
   correctOpenings := by
     intro i _
-    show LeanSpec.Opening.calcRoot _ _ = toF one32
+    show Spec.Opening.calcRoot _ _ = toF one32
     rw [toF_one32]; exact toy_calcRoot _ _
   amountConservation := by
-    simp [toInputs, LeanSpec.TxInputs.pubInputs, spendProof, toF_minusTwo32, spendWit]
+    simp [toInputs, Spec.TxInputs.pubInputs, spendProof, toF_minusTwo32, spendWit]
   outputRangeChecks := by intro j; simp [spendWit]
 
 /-! ## The withdrawal is accepted -/
@@ -190,7 +190,7 @@ theorem spend_relation {ext : I64} {fee : U64} :
     `init`s: the tree is the deposit's tree (two appends after `initialize`), the pool holds 3
     lamports, the recipient and the fee recipient none. -/
 theorem spend_pre (sB : State) (tree₂ t1 : merkle_tree.MerkleTreeAccount) (config : admin.GlobalConfig)
-    (c : LeanSpec.F) (htree : toTree tree₂ = LeanSpec.appendEffects c (toTree t1))
+    (c : Spec.F) (htree : toTree tree₂ = Spec.appendEffects c (toTree t1))
     (hTn : tree₂.next_index.val = 2) (hwr : config.withdrawal_fee_rate.val = 25)
     (hpoolB : (sB tokenA).lamports.val = 3) (hrecB : (sB (pk 3#u8)).lamports.val = 0)
     (hfeeB : (sB (pk 4#u8)).lamports.val = 0) {ext : I64} {fee : U64} (hsplit : ToySplit ext fee) :
@@ -217,43 +217,43 @@ theorem spend_pre (sB : State) (tree₂ t1 : merkle_tree.MerkleTreeAccount) (con
   have hpb : (handlerWorld spendA sB 1#u64 tree₂ config ∅ (handlerAddr spendA)).balances (toPubkey tokenA) = 3 := by
     show (sB (fromPubkey (toPubkey tokenA))).lamports.val = 3
     rw [fromPubkey_toPubkey, hpoolB]
-  refine @LeanSpec.transactPreconditions.mk _ (syscallGroups toyC) (inferInstanceAs (AddCommGroup Unit))
-    (inferInstanceAs (Module LeanSpec.F Unit))
+  refine @Spec.transactPreconditions.mk _ (syscallGroups toyC) (inferInstanceAs (AddCommGroup Unit))
+    (inferInstanceAs (Module Spec.F Unit))
     (inferInstanceAs (CommGroup Unit))
-    (syscallPairing toyC) (@LeanSpec.Deployment.mk (syscallGroups toyC) (programKey toyC)) _ _
+    (syscallPairing toyC) (@Spec.Deployment.mk (syscallGroups toyC) (programKey toyC)) _ _
     ?_ ?_ ?_ ?_ ⟨_, hdec, rfl⟩ ?_ ?_ hfacts.1 ?_ ?_ ?_ ?_ hfacts.2 ?_ ?_ ?_ ?_ ?_ ?_
   · -- the root: the deposit's last append stored the root `1`
-    show LeanSpec.rootBytesKnown (toTree tree₂) (toBytes one32.val)
+    show Spec.rootBytesKnown (toTree tree₂) (toBytes one32.val)
     rw [rootBytesKnown_iff]
     refine ⟨canonical_one32, ⟨⟨(toTree t1).rootIndex + 1, ?_⟩, by rw [toF_one32]; decide⟩⟩
     rw [htree, toy_append_history, toF_one32]
-  · show (LeanSpec.natOfLE (List.replicate 32 0) : LeanSpec.F) = toF zeros32
+  · show (Spec.natOfLE (List.replicate 32 0) : Spec.F) = toF zeros32
     rw [toF_zeros32]; rfl
-  · unfold LeanSpec.feeSufficient; rw [he, hf]; simp [handlerWorld, toConfig, hwr]
+  · unfold Spec.feeSufficient; rw [he, hf]; simp [handlerWorld, toConfig, hwr]
     rcases hsp with ⟨h1, h2⟩ | ⟨h1, h2⟩ <;> simp [h1, h2]
-  · unfold LeanSpec.pubAmtConsistent; rw [he, hf]
+  · unfold Spec.pubAmtConsistent; rw [he, hf]
     refine ⟨fun h => by omega, ?_⟩
     show toF minusTwo32 = _; rw [toF_minusTwo32]
     rcases hsp with ⟨h1, h2⟩ | ⟨h1, h2⟩ <;> simp [h1, h2] <;> norm_num
-  · simp [LeanSpec.nullifiersFresh, LeanSpec.State.spent, handlerWorld]
+  · simp [Spec.nullifiersFresh, Spec.State.spent, handlerWorld]
   · show toF two32 ≠ toF three32
     rw [toF_two32, toF_three32]; decide
   · intro h; rw [he] at h; omega
-  · unfold LeanSpec.poolSolvent; rw [he, hf]
+  · unfold Spec.poolSolvent; rw [he, hf]
     refine ⟨fun _ => ?_, fun h => by omega⟩
     have hpb' : (handlerWorld spendA sB 1#u64 tree₂ config ∅ (handlerAddr spendA)).poolBalance = 3 := hpb
     rw [hpb']; simp [handlerWorld]
     rcases hsp with ⟨h1, h2⟩ | ⟨h1, h2⟩ <;> simp [h1, h2]
-  · unfold LeanSpec.signerSolvent; rw [he]; simp [handlerWorld, LeanSpec.World.nullifierTopUp]
+  · unfold Spec.signerSolvent; rw [he]; simp [handlerWorld, Spec.World.nullifierTopUp]
     rcases hsp with ⟨h1, -⟩ | ⟨h1, -⟩ <;> simp [h1]
   · exact List.mem_map_of_mem (f := toPubkey) (List.mem_singleton.mpr rfl)
   · show (toTree tree₂).nextIndex ≤ 2 ^ 26 - 2; simp [toTree, hTn]
-  · unfold LeanSpec.amountsInRange; rw [he, hf]; omega
-  · simp [LeanSpec.encOutsFit, toInputs, emptySlice, toBytes]
+  · unfold Spec.amountsInRange; rw [he, hf]; omega
+  · simp [Spec.encOutsFit, toInputs, emptySlice, toBytes]
   · exact ⟨fun _ e => h3P (toPubkey_inj e),
       fun _ e => h4P (toPubkey_inj e)⟩
   · intro i
-    show LeanSpec.canonicalEncoding (toBytes ((publicInputs _)[i.val]!).val) _
+    show Spec.canonicalEncoding (toBytes ((publicInputs _)[i.val]!).val) _
     rw [canonicalEncoding_iff]
     fin_cases i
     · exact ⟨canonical_one32, rfl⟩
@@ -291,7 +291,7 @@ theorem spend_pre (sB : State) (tree₂ t1 : merkle_tree.MerkleTreeAccount) (con
 
 /-- **The withdrawal is accepted by `step`**, from the state after the deposit. -/
 theorem toy_spend_ok (s₂ : State) (tree₂ t1 : merkle_tree.MerkleTreeAccount) (token : admin.TreeTokenAccount)
-    (config : admin.GlobalConfig) (c : LeanSpec.F)
+    (config : admin.GlobalConfig) (c : Spec.F)
     (hT : s₂ treeA = ⟨1#u64, toyD.programId, .treeAccount tree₂⟩)
     (hK : s₂ tokenA = ⟨3#u64, toyD.programId, .treeToken token⟩)
     (hC : s₂ configA = ⟨1#u64, toyD.programId, .globalConfig config⟩)
@@ -299,7 +299,7 @@ theorem toy_spend_ok (s₂ : State) (tree₂ t1 : merkle_tree.MerkleTreeAccount)
     (hO : ∀ k, k ≠ treeA → k ≠ tokenA → k ≠ configA → k ≠ pk 1#u8 → k ≠ nf0A → k ≠ nf1A → s₂ k = toyS0 k)
     (hshape : TreeShape tree₂) (hroots : ∀ j : Fin 100, Canonical tree₂.root_history.val[j.val]!)
     (hsubs : ∀ j : Fin 26, Canonical tree₂.subtrees.val[j.val]!)
-    (htree : toTree tree₂ = LeanSpec.appendEffects c (toTree t1)) (hTn : tree₂.next_index.val = 2)
+    (htree : toTree tree₂ = Spec.appendEffects c (toTree t1)) (hTn : tree₂.next_index.val = 2)
     (hTb : tree₂.bump = 255#u8) (hkb : token.bump = 255#u8) (hcb : config.bump = 255#u8)
     (hdr : config.deposit_fee_rate.val = 0) (hwr : config.withdrawal_fee_rate.val = 25)
     (hmr : config.fee_error_margin.val = 500) {ext : I64} {fee : U64} (hsplit : ToySplit ext fee) :
@@ -494,10 +494,10 @@ theorem toy_spend_nonvacuous :
       HashesAgree d.crypto ∧ ExecutionAssumptions d s₀ evs ∧
       (∀ tx ix em, .program tx ix em ∈ evs → SameRent toyRent tx) ∧ Initialized d s ∧
       (runTxs evs).length = 2 ∧
-      ∃ wit : ℕ → LeanSpec.Witness,
-        (∀ j (h : j < (runTxs evs).length), LeanSpec.RelationS (runTxs evs)[j].pubInputs (wit j)) ∧
-        (wit 1).inAmt 0 ≠ 0 ∧ LeanSpec.openedPos wit 1 0 = 0 ∧
-        (wit 1).inNote 0 = LeanSpec.leafNote wit 0 := by
+      ∃ wit : ℕ → Spec.Witness,
+        (∀ j (h : j < (runTxs evs).length), Spec.RelationS (runTxs evs)[j].pubInputs (wit j)) ∧
+        (wit 1).inAmt 0 ≠ 0 ∧ Spec.openedPos wit 1 0 = 0 ∧
+        (wit 1).inNote 0 = Spec.leafNote wit 0 := by
   obtain ⟨s₁, s₂, s₃, e₂, e₃, h1, h2, h3, hi₁, crypto, -⟩ := toy_spend_execution toySplit_one
   obtain ⟨-, -, -, -, -, -, -, -, solana, depCrypto, -⟩ := toy_execution
   have hpid : toyD.programId ≠ systemProgram := by unfold toyD; decide +kernel

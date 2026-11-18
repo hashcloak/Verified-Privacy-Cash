@@ -69,8 +69,8 @@ cryptography the spec uses: its groups and pairing are the `alt_bn128` syscalls'
 namespace Connection
 
 section
-variable {G1 G2 GT : Type} [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGroup G2]
-  [Module LeanSpec.F G2] [CommGroup GT] [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
+variable {G1 G2 GT : Type} [AddCommGroup G1] [Module Spec.F G1] [AddCommGroup G2]
+  [Module Spec.F G2] [CommGroup GT] [Spec.PoseidonHashes] [Spec.Sha]
 
 /-! ## 1. The connection theorems
 
@@ -99,11 +99,11 @@ theorem transact_connection
     (hrun : Run d sGenesis evs s)                          --   ...that reached `s`
     (hstep : Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s') :
                                                            -- [premise] ...then accepted a transact (one more step)
-    letI : LeanSpec.Groups := syscallGroups C
-    letI : LeanSpec.Pairing := syscallPairing C
-    letI : LeanSpec.Deployment := ⟨programKey C⟩
+    letI : Spec.Groups := syscallGroups C
+    letI : Spec.Pairing := syscallPairing C
+    letI : Spec.Deployment := ⟨programKey C⟩
     let inputs := toInputs tx.signers a proof extAmount fee out1 out2
-    LeanSpec.transact inputs (toWorld d rent s) (toWorld d rent s') :=
+    Spec.transact inputs (toWorld d rent s) (toWorld d rent s') :=
   transact_connection_pf hgen hrun deploy.programNotSystem hstep C laws hashes solana crypto circuit sameRent
 
 /-- **An execution path is core-model's execution, with its states.** `ExecutionPath`
@@ -136,9 +136,9 @@ theorem run_connection {d : Deployment} {rent : Nat → U64} {sGenesis s : State
     (hgen : Genesis d.programId sGenesis)                  -- [premise] an execution from genesis
     (hrun : ExecutionPath d sGenesis evs states s) :       --   ...that reached `s` through `states`
     (NoProgramAccounts d s ∧ runTxs evs = []) ∨
-      (letI : LeanSpec.Groups := syscallGroups C
-       letI : LeanSpec.Pairing := syscallPairing C
-       letI : LeanSpec.Deployment := ⟨programKey C⟩
+      (letI : Spec.Groups := syscallGroups C
+       letI : Spec.Pairing := syscallPairing C
+       letI : Spec.Deployment := ⟨programKey C⟩
        IsSpecRun d rent sGenesis evs states s) :=
   execution_is_spec_run_pf hgen hrun deploy.programNotSystem C laws hashes assume sameRent
 
@@ -156,26 +156,26 @@ variable {signers : List Pubkey}
     for the mapped inputs in the world the handler sees. -/
 def HandlerSpecAllows (signers : List Pubkey) (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT)
     (a : TransactAccounts) (s₁ : State) (v : U64) (tree : zkcash_core.merkle_tree.MerkleTreeAccount)
-    (config : zkcash_core.admin.GlobalConfig) (accts : Finset LeanSpec.Pubkey)
-    (addr : Fin 2 → LeanSpec.Bytes → LeanSpec.Pubkey)
+    (config : zkcash_core.admin.GlobalConfig) (accts : Finset Spec.Pubkey)
+    (addr : Fin 2 → Spec.Bytes → Spec.Pubkey)
     (proof : zkcash_core.transact.Proof) (ext : I64) (fee : U64) (out1 out2 : Slice U8) : Prop :=
-  letI : LeanSpec.Groups := syscallGroups C
-  letI : LeanSpec.Pairing := syscallPairing C
-  letI : LeanSpec.Deployment := ⟨programKey C⟩
-  LeanSpec.transactPreconditions (toInputs signers a proof ext fee out1 out2) (handlerWorld a s₁ v tree config accts addr)
+  letI : Spec.Groups := syscallGroups C
+  letI : Spec.Pairing := syscallPairing C
+  letI : Spec.Deployment := ⟨programKey C⟩
+  Spec.transactPreconditions (toInputs signers a proof ext fee out1 out2) (handlerWorld a s₁ v tree config accts addr)
 
 /-- `HandlerMatchesSpec …`: the handler accepts, with exactly the spec's effects: it returns
     `Ok`, every account's balance is the spec's (`transactEffects`, on code addresses), and
     the new tree is the spec's. -/
 def HandlerMatchesSpec (signers : List Pubkey) (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT)
     (a : TransactAccounts) (s₁ : State) (v : U64) (tree : zkcash_core.merkle_tree.MerkleTreeAccount)
-    (config : zkcash_core.admin.GlobalConfig) (accts : Finset LeanSpec.Pubkey)
-    (addr : Fin 2 → LeanSpec.Bytes → LeanSpec.Pubkey)
+    (config : zkcash_core.admin.GlobalConfig) (accts : Finset Spec.Pubkey)
+    (addr : Fin 2 → Spec.Bytes → Spec.Pubkey)
     (proof : zkcash_core.transact.Proof) (ext : I64) (fee : U64) (out1 out2 : Slice U8) : Prop :=
-  letI : LeanSpec.Groups := syscallGroups C
-  letI : LeanSpec.Pairing := syscallPairing C
-  letI : LeanSpec.Deployment := ⟨programKey C⟩
-  let effects := LeanSpec.transactEffects (toInputs signers a proof ext fee out1 out2)
+  letI : Spec.Groups := syscallGroups C
+  letI : Spec.Pairing := syscallPairing C
+  letI : Spec.Deployment := ⟨programKey C⟩
+  let effects := Spec.transactEffects (toInputs signers a proof ext fee out1 out2)
     (handlerWorld a s₁ v tree config accts addr)
   ∃ ap env' tree', zkcash_core.transact.transact c.hasher arkFr c.sha256 c.proofVerifier solRuntime
       (handlerEnv a s₁ v) tree config proof ext fee a.recipient a.feeRecipientAccount out1 out2
@@ -193,7 +193,7 @@ def HandlerMatchesSpec (signers : List Pubkey) (c : Crypto) (C : AltBn128Contrac
 theorem handler_complete_except_L1_A0 (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT)
     (laws : PairingLaws C.e) {a : TransactAccounts} {s₁ : State} {v : U64}
     {tree : zkcash_core.merkle_tree.MerkleTreeAccount} {config : zkcash_core.admin.GlobalConfig}
-    {accts : Finset LeanSpec.Pubkey} {addr : Fin 2 → LeanSpec.Bytes → LeanSpec.Pubkey}
+    {accts : Finset Spec.Pubkey} {addr : Fin 2 → Spec.Bytes → Spec.Pubkey}
     {proof : zkcash_core.transact.Proof} {ext : I64} {fee : U64}
     {out1 out2 : Slice U8}
     (hashes : HashesAgree c)                               -- [assumed] the hashes are the spec's
@@ -261,11 +261,11 @@ theorem connection_nonvacuous :
       -- the pool is initialized, and the execution has two transactions
       ∧ Initialized d s ∧ (runTxs evs).length = 2
       -- with circuit witnesses for both transactions
-      ∧ ∃ wit : ℕ → LeanSpec.Witness,
-        (∀ j (h : j < (runTxs evs).length), LeanSpec.RelationS (runTxs evs)[j].pubInputs (wit j))
+      ∧ ∃ wit : ℕ → Spec.Witness,
+        (∀ j (h : j < (runTxs evs).length), Spec.RelationS (runTxs evs)[j].pubInputs (wit j))
         -- in which transaction 1 spends a real note, the one the deposit put at leaf 0
-        ∧ (wit 1).inAmt 0 ≠ 0 ∧ LeanSpec.openedPos wit 1 0 = 0
-        ∧ (wit 1).inNote 0 = LeanSpec.leafNote wit 0 :=
+        ∧ (wit 1).inAmt 0 ≠ 0 ∧ Spec.openedPos wit 1 0 = 0
+        ∧ (wit 1).inNote 0 = Spec.leafNote wit 0 :=
   Toy.toy_spend_nonvacuous
 
 section
@@ -331,7 +331,7 @@ theorem handler_complete_nonvacuous
     ∃ (c : Crypto) (C : AltBn128Contracts c.altBn128 Unit Unit Unit) (laws : PairingLaws C.e)
       (signers : List Pubkey) (a : TransactAccounts) (s₁ : State) (v : U64)
       (tree : zkcash_core.merkle_tree.MerkleTreeAccount) (config : zkcash_core.admin.GlobalConfig)
-      (accts : Finset LeanSpec.Pubkey) (addr : Fin 2 → LeanSpec.Bytes → LeanSpec.Pubkey)
+      (accts : Finset Spec.Pubkey) (addr : Fin 2 → Spec.Bytes → Spec.Pubkey)
       (proof : zkcash_core.transact.Proof) (ext : I64) (fee : U64)
       (out1 out2 : Slice U8),
       -- every hypothesis of `handler_complete_except_L1_A0`

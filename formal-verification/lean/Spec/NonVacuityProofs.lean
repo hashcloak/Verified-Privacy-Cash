@@ -17,12 +17,12 @@ on the wire (`Groth16CompleteBytes`), proved at the end of this file for the toy
   any split of the note between recipient and fee, so for whichever split G3b picks;
 - `toy_G4_hypotheses`, `toy_G2a_hypotheses`, `toy_G2b_hypotheses`: likewise for G4a/G4b, G2a
   and G2b. -/
-namespace LeanSpec.NonVacuity
-open LeanSpec
+namespace Spec.NonVacuity
+open Spec
 
 set_option linter.unusedSectionVars false
 
-variable [Groups] [AddCommGroup G1] [Module F G1] [AddCommGroup G2] [Module F G2] [CommGroup GT]
+variable [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT]
   [Pairing] [Deployment]
 
 /-- Groth16 completeness on the wire: every statement with a witness has a proof, sent as bytes,
@@ -748,12 +748,12 @@ theorem toy_G2b_hypotheses (hCompl : Groth16CompleteBytes) :
   have h := (toy_withdrawal_honest hCompl).circuit
   ⟨_, _, _, _, 0, 0, h, h, rfl⟩
 
-end LeanSpec.NonVacuity
+end Spec.NonVacuity
 
-namespace LeanSpec.NonVacuity
-open LeanSpec
+namespace Spec.NonVacuity
+open Spec
 
-attribute [local instance] toyGroups toyG1Group toyG2Group toyG1Module toyG2Module toyGTGroup
+attribute [local instance] toyGroups toyG1Group toyG1Module toyGTGroup
   toyPairing toyDeployment
 
 
@@ -761,7 +761,7 @@ attribute [local instance] toyGroups toyG1Group toyG2Group toyG1Module toyG2Modu
     decode to the point `0`. -/
 theorem toyCompleteBytes [PoseidonHashes] [Sha] : Groth16CompleteBytes :=
   have h1 : Groups.decodeG1 [] = some (0 : G1) := congrArg some Nat.cast_zero
-  have h2 : Groups.decodeG2 [] = some (0 : G2) := congrArg some Nat.cast_zero
-  fun _ _ _ => ⟨⟨[], [], []⟩, ⟨0, 0, 0⟩, by simp [Groth16.ProofBytes.decode, h1, h2], rfl⟩
+  have h2 : Groups.decodeG2 [] = some (0 : F) := congrArg some Nat.cast_zero
+  fun _ _ _ => ⟨⟨[], [], []⟩, ⟨0, (0 : F), 0⟩, by simp [Groth16.ProofBytes.decode, h1, h2], rfl⟩
 
-end LeanSpec.NonVacuity
+end Spec.NonVacuity

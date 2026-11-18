@@ -19,37 +19,37 @@ namespace Connection
 
 /-- `toF b`: a 32-byte public input or hash as a field element: read big-endian, reduced
     mod p (as the verifier reads public inputs; it rejects values `≥ p`). -/
-def toF (b : Std.Array U8 32#usize) : LeanSpec.F := (beNat b : LeanSpec.F)
+def toF (b : Std.Array U8 32#usize) : Spec.F := (beNat b : Spec.F)
 
 /-- `Canonical b`: the big-endian value of `b` is below the field modulus, so `toF` loses
     nothing. -/
 def Canonical (b : Std.Array U8 32#usize) : Prop := beNat b < bn254ScalarModulus
 
 /-- `toBytes l`: code bytes as the spec's bytes. -/
-def toBytes (l : List U8) : LeanSpec.Bytes := l.map (·.bv)
+def toBytes (l : List U8) : Spec.Bytes := l.map (·.bv)
 
 /-- `toSlice bs`: the spec's bytes as a code byte slice (empty if too long for a slice,
     which no real transaction is). Used to say which bytes the code hashes. -/
-def toSlice (bs : LeanSpec.Bytes) : Slice U8 :=
+def toSlice (bs : Spec.Bytes) : Slice U8 :=
   let l : List U8 := bs.map (fun b => ⟨b⟩)
   if h : l.length ≤ Usize.max then Slice.from l h else Slice.from [] (by simp)
 
 /-- `toPubkey k`: a Solana address as the spec's `Pubkey`, read little-endian, so that the
     spec's serialization `PubkeyToBytes` gives back the address's own 32 bytes. -/
-def toPubkey (k : Pubkey) : LeanSpec.Pubkey := BitVec.ofNat 256 (leNatOfList k.val)
+def toPubkey (k : Pubkey) : Spec.Pubkey := BitVec.ofNat 256 (leNatOfList k.val)
 
 /-- `fromPubkey x`: the inverse of `toPubkey`. -/
-def fromPubkey (x : LeanSpec.Pubkey) : Pubkey :=
+def fromPubkey (x : Spec.Pubkey) : Pubkey :=
   Std.Array.from (leBytes32 x.toNat) (by simp [leBytes32])
 
 /-- `toArray n bs`: the spec's bytes as an `n`-byte code array, if there are exactly `n`. -/
-def toArray (n : Usize) (bs : LeanSpec.Bytes) : Option (Std.Array U8 n) :=
+def toArray (n : Usize) (bs : Spec.Bytes) : Option (Std.Array U8 n) :=
   if h : bs.length = n.val then
     some (Std.Array.from (bs.map (fun b => (⟨b⟩ : U8))) (by simp [h]))
   else none
 
 /-- Every address, as a finite set. -/
-def allPubkeys : Finset LeanSpec.Pubkey := (Finset.univ : Finset (Fin (2^256))).image BitVec.ofFin
+def allPubkeys : Finset Spec.Pubkey := (Finset.univ : Finset (Fin (2^256))).image BitVec.ofFin
 
 /-! ## The program's accounts -/
 
@@ -80,7 +80,7 @@ def TreeShape (t : zkcash_core.merkle_tree.MerkleTreeAccount) : Prop :=
 
 /-- `toTree t`: the tree account as the spec's tree, field by field. `rootIndex` is reduced
     mod 100; `WellFormed` says it is already below 100. -/
-def toTree (t : zkcash_core.merkle_tree.MerkleTreeAccount) : LeanSpec.Tree where
+def toTree (t : zkcash_core.merkle_tree.MerkleTreeAccount) : Spec.Tree where
   nextIndex := t.next_index.val
   subtrees i := toF (t.subtrees.val[i.val]!)
   root := toF t.root
@@ -90,7 +90,7 @@ def toTree (t : zkcash_core.merkle_tree.MerkleTreeAccount) : LeanSpec.Tree where
 /-- `toConfig c t`: the config as the spec's config, field by field. The deposit limit and
     its authority live on the tree account `t` in the code. -/
 def toConfig (c : zkcash_core.admin.GlobalConfig)
-    (t : zkcash_core.merkle_tree.MerkleTreeAccount) : LeanSpec.config where
+    (t : zkcash_core.merkle_tree.MerkleTreeAccount) : Spec.config where
   authority := toPubkey c.authority
   limitAuthority := toPubkey t.authority
   depositFeeRate := c.deposit_fee_rate.val
@@ -113,13 +113,13 @@ instance (d : Deployment) (s : State) (k : Pubkey) : Decidable (IsNullifierAccou
   cases (s k).data <;> simp <;> infer_instance
 
 /-- `nullifierAccountsOf d s`: the addresses of the program's nullifier accounts in `s`. -/
-def nullifierAccountsOf (d : Deployment) (s : State) : Finset LeanSpec.Pubkey :=
+def nullifierAccountsOf (d : Deployment) (s : State) : Finset Spec.Pubkey :=
   allPubkeys.filter fun x => IsNullifierAccount d s (fromPubkey x)
 
 /-- `nullifierAddrOf d i b`: the address of the nullifier account for the nullifier with bytes
     `b`, spent as input `i`: the program's PDA with seeds `[b"nullifier0", b]` or
     `[b"nullifier1", b]`. Bytes that are not 32 long are no nullifier; they get address `0`. -/
-def nullifierAddrOf (d : Deployment) (i : Fin 2) (b : LeanSpec.Bytes) : LeanSpec.Pubkey :=
+def nullifierAddrOf (d : Deployment) (i : Fin 2) (b : Spec.Bytes) : Spec.Pubkey :=
   match toArray 32#usize b with
   | some n => toPubkey (d.pda (if i = 0 then nullifier0Seeds n else nullifier1Seeds n))
   | none => 0
@@ -128,7 +128,7 @@ def nullifierAddrOf (d : Deployment) (i : Fin 2) (b : LeanSpec.Bytes) : LeanSpec
     - **`rent`:** Solana's rent-exempt minimum for an account of a given size. The spec fixes
       the two amounts it uses; `SameRent` assumes each transaction sees this.
     - **nullifier accounts:** the program's nullifier accounts in `s`, at the program's PDAs. -/
-def toWorld (d : Deployment) (rent : Nat → U64) (s : State) : LeanSpec.World where
+def toWorld (d : Deployment) (rent : Nat → U64) (s : State) : Spec.World where
   state :=
     { tree := toTree (treeAt s (treeAddr d))
       nullifierAccounts := nullifierAccountsOf d s
@@ -147,7 +147,7 @@ def toWorld (d : Deployment) (rent : Nat → U64) (s : State) : LeanSpec.World w
     sender's 32 bytes (`pubInputBytes`, in circuit order); the proof is the sender's bytes of
     its three points. -/
 def toInputs (signers : List Pubkey) (a : TransactAccounts) (proof : zkcash_core.transact.Proof) (extAmount : I64)
-    (fee : U64) (out1 out2 : Slice U8) : LeanSpec.TxInputs where
+    (fee : U64) (out1 out2 : Slice U8) : Spec.TxInputs where
   R := toF proof.root
   pubAmt := toF proof.public_amount
   extDataHash := toF proof.ext_data_hash
@@ -172,12 +172,12 @@ def toInputs (signers : List Pubkey) (a : TransactAccounts) (proof : zkcash_core
 /-- `stepTxs tx ix`: the spec transactions of one instruction in transaction `tx`: a `transact`'s
     mapped inputs; nothing for the other instructions (they are changes between transactions in
     the spec). -/
-def stepTxs (tx : TxEnv) : Instruction → List LeanSpec.TxInputs
+def stepTxs (tx : TxEnv) : Instruction → List Spec.TxInputs
   | .transact a proof ext fee out1 out2 => [toInputs tx.signers a proof ext fee out1 out2]
   | _ => []
 
 /-- `runTxs evs`: the spec transactions of an execution, in order. -/
-def runTxs : List Event → List LeanSpec.TxInputs
+def runTxs : List Event → List Spec.TxInputs
   | [] => []
   | .program tx ix _ :: es => stepTxs tx ix ++ runTxs es
   | .env :: es => runTxs es
@@ -200,7 +200,7 @@ inductive ExecutionPath (d : Deployment) : State → List Event → List State �
     `tx` run on state `before`, with the signers of `tx`. A setting `update_global_config` isn't
     given keeps its value in `before`. `none` for the other instructions. -/
 def toAdminChange (d : Deployment) (before : State) (tx : TxEnv) :
-    Instruction → Option LeanSpec.AdminChange
+    Instruction → Option Spec.AdminChange
   | .updateDepositLimit _ newLimit =>
     some ⟨tx.signers.map toPubkey, .depositLimit newLimit.val⟩
   | .updateGlobalConfig _ dep wd margin =>
@@ -212,9 +212,9 @@ def toAdminChange (d : Deployment) (before : State) (tx : TxEnv) :
 /-- What `initialize` set up: its signing authority, the signers of its transaction, and the
     spec world of the state it left. -/
 structure InitRecord where
-  initializer : LeanSpec.Pubkey
-  signers : List LeanSpec.Pubkey
-  world : LeanSpec.World
+  initializer : Spec.Pubkey
+  signers : List Spec.Pubkey
+  world : Spec.World
 
 /-- What the spec sees of an execution so far.
 
@@ -225,10 +225,10 @@ structure InitRecord where
     - `afterTx`: after each transaction so far, the chain's spec state and pool balance. -/
 structure ExecutionView where
   init : Option InitRecord := none
-  closedGaps : List (List LeanSpec.AdminChange) := []
-  openGap : List LeanSpec.AdminChange := []
+  closedGaps : List (List Spec.AdminChange) := []
+  openGap : List Spec.AdminChange := []
   poolBeforeTx : List ℕ := []
-  afterTx : List (LeanSpec.State × ℕ) := []
+  afterTx : List (Spec.State × ℕ) := []
 
 /-- `v.afterEvent d rent before e after`: the view `v` after event `e` took the chain from
     `before` to `after`. Outside actions change nothing the view records. -/
@@ -276,16 +276,16 @@ def NoProgramAccounts (d : Deployment) (s : State) : Prop :=
     (∀ k c, ¬ HoldsGlobalConfig d.programId s k c) ∧ ∀ k, ¬ IsNullifierAccount d s k
 
 section
-variable [LeanSpec.PoseidonHashes] [LeanSpec.Sha] [LeanSpec.Groups] [AddCommGroup LeanSpec.G1]
-  [Module LeanSpec.F LeanSpec.G1] [AddCommGroup LeanSpec.G2] [Module LeanSpec.F LeanSpec.G2]
-  [CommGroup LeanSpec.GT] [LeanSpec.Pairing] [LeanSpec.Deployment]
+variable [Spec.PoseidonHashes] [Spec.Sha] [Spec.Groups] [AddCommGroup Spec.G1]
+  [Module Spec.F Spec.G1] [AddCommGroup Spec.G2] [Module Spec.F Spec.G2]
+  [CommGroup Spec.GT] [Spec.Pairing] [Spec.Deployment]
 
 /-- `RunMatchesView d rent v txs s params r`: the spec run `r` is what the view `v` records,
     and it ends at the code state `s`. The conditions are explained at `IsRunOf`, which applies this
     to a whole execution. -/
 def RunMatchesView (d : Deployment) (rent : Nat → U64) (v : ExecutionView)
-    (txs : List LeanSpec.TxInputs) (s : State) (params : LeanSpec.InitParams)
-    (r : LeanSpec.Run (LeanSpec.initWorld params)) : Prop :=
+    (txs : List Spec.TxInputs) (s : State) (params : Spec.InitParams)
+    (r : Spec.Run (Spec.initWorld params)) : Prop :=
   -- the start
   params.pool = toPubkey (poolAddr d) ∧ params.nullifierAddr = nullifierAddrOf d ∧
     params.rentExemptMin = (rent treeTokenAccountSpace).val ∧
@@ -307,7 +307,7 @@ def RunMatchesView (d : Deployment) (rent : Nat → U64) (v : ExecutionView)
     v.closedGaps.length = r.txs.length ∧
     (∀ j (_ : j < r.txs.length), v.closedGaps[j]? = some (r.updatedValues j).adminChanges) ∧
     -- the end
-    ∃ b : LeanSpec.UpdatedValuesBetweenTransacts, b.Allowed r.final ∧
+    ∃ b : Spec.UpdatedValuesBetweenTransacts, b.Allowed r.final ∧
       b.adminChanges = v.openGap ∧ toWorld d rent s = r.final.withUpdatedValues b
 
 /-- `IsRunOf d rent s₀ evs states s params r`: `r` is the spec run of this execution: the one
@@ -327,14 +327,14 @@ def RunMatchesView (d : Deployment) (rent : Nat → U64) (v : ExecutionView)
     - **the end:** the code state `s` is its final world after an allowed change that records the
       admin instructions executed since the last transaction. -/
 def IsRunOf (d : Deployment) (rent : Nat → U64) (s₀ : State) (evs : List Event)
-    (states : List State) (s : State) (params : LeanSpec.InitParams)
-    (r : LeanSpec.Run (LeanSpec.initWorld params)) : Prop :=
+    (states : List State) (s : State) (params : Spec.InitParams)
+    (r : Spec.Run (Spec.initWorld params)) : Prop :=
   RunMatchesView d rent (executionView d rent s₀ evs states) (runTxs evs) s params r
 
 /-- `IsSpecRun d rent s₀ evs states s`: the execution is a spec run (some `r` with `IsRunOf`). -/
 def IsSpecRun (d : Deployment) (rent : Nat → U64) (s₀ : State) (evs : List Event)
     (states : List State) (s : State) : Prop :=
-  ∃ (params : LeanSpec.InitParams) (r : LeanSpec.Run (LeanSpec.initWorld params)),
+  ∃ (params : Spec.InitParams) (r : Spec.Run (Spec.initWorld params)),
     IsRunOf d rent s₀ evs states s params r
 
 end
@@ -368,8 +368,8 @@ def handlerEnv (a : TransactAccounts) (s₁ : State) (v : U64) : SolEnv :=
     - **rent:** the handler's own `v`. -/
 def handlerWorld (a : TransactAccounts) (s₁ : State) (v : U64)
     (tree : zkcash_core.merkle_tree.MerkleTreeAccount) (config : zkcash_core.admin.GlobalConfig)
-    (accts : Finset LeanSpec.Pubkey) (addr : Fin 2 → LeanSpec.Bytes → LeanSpec.Pubkey) :
-    LeanSpec.World where
+    (accts : Finset Spec.Pubkey) (addr : Fin 2 → Spec.Bytes → Spec.Pubkey) :
+    Spec.World where
   state :=
     { tree := toTree tree
       nullifierAccounts := accts
@@ -387,28 +387,28 @@ groups `G1 G2 GT` and the point decoding come from the syscall contracts `C` (co
 `AltBn128Contracts`); the key is the program's extracted `VERIFYING_KEY`. -/
 
 section
-variable {G1 G2 GT : Type} [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGroup G2]
-  [Module LeanSpec.F G2] [CommGroup GT] {s : AltBn128}
+variable {G1 G2 GT : Type} [AddCommGroup G1] [Module Spec.F G1] [AddCommGroup G2]
+  [Module Spec.F G2] [CommGroup GT] {s : AltBn128}
 open PrivacyCash.Proofs.Groth16 (ic)
 
 /-- `syscallGroups C`: the spec's groups and point decoding are the syscalls'. A G1 point is
     64 bytes and a G2 point 128 bytes, decoded as the syscalls decode them (`C.decodeG1`,
     `C.decodeG2`); bytes of any other length are not a point. -/
-@[reducible] def syscallGroups (C : AltBn128Contracts s G1 G2 GT) : LeanSpec.Groups :=
+@[reducible] def syscallGroups (C : AltBn128Contracts s G1 G2 GT) : Spec.Groups :=
   ⟨G1, G2, GT, fun bs => (toArray 64#usize bs).bind C.decodeG1,
     fun bs => (toArray 128#usize bs).bind C.decodeG2⟩
 
 /-- `syscallPairing C`: the spec's pairing is the syscall's. -/
 @[reducible] def syscallPairing (C : AltBn128Contracts s G1 G2 GT) :
-    @LeanSpec.Pairing (syscallGroups C) :=
-  @LeanSpec.Pairing.mk (syscallGroups C) C.e
+    @Spec.Pairing (syscallGroups C) :=
+  @Spec.Pairing.mk (syscallGroups C) C.e
 
 /-- `programKey C`: the spec's deployed key is the program's key, as the syscalls decode it. The key is the
     program's own constant, not sender data; whenever the verifier accepts a proof, every one
     of its points decodes (`programVerifier_groth16`), so the default `0` is never used. -/
 @[reducible] def programKey (C : AltBn128Contracts s G1 G2 GT) :
-    @LeanSpec.Groth16.VerificationKey (syscallGroups C) :=
-  letI : LeanSpec.Groups := syscallGroups C
+    @Spec.Groth16.VerificationKey (syscallGroups C) :=
+  letI : Spec.Groups := syscallGroups C
   let vk := zkcash_core.verifying_key.VERIFYING_KEY
   { α := (C.decodeG1 vk.vk_alpha_g1).getD 0, β := (C.decodeG2 vk.vk_beta_g2).getD 0,
     γ := (C.decodeG2 vk.vk_gamme_g2).getD 0, δ := (C.decodeG2 vk.vk_delta_g2).getD 0,
@@ -419,22 +419,22 @@ end
 /-! ## Decidability (so a statement can say the code returns `decide (spec predicate)`) -/
 
 /-- `p_eq`: the spec's field and the code's field are the same, `ZMod p` with the same `p`. -/
-theorem p_eq : LeanSpec.p = bn254ScalarModulus := rfl
+theorem p_eq : Spec.p = bn254ScalarModulus := rfl
 
-instance (extAmt : ℤ) (f : ℕ) (pubAmt : LeanSpec.F) :
-    Decidable (LeanSpec.pubAmtConsistent extAmt f pubAmt) := by
-  unfold LeanSpec.pubAmtConsistent; infer_instance
+instance (extAmt : ℤ) (f : ℕ) (pubAmt : Spec.F) :
+    Decidable (Spec.pubAmtConsistent extAmt f pubAmt) := by
+  unfold Spec.pubAmtConsistent; infer_instance
 
-instance (extAmt : ℤ) (f : ℕ) : Decidable (LeanSpec.amountsInRange extAmt f) := by
-  unfold LeanSpec.amountsInRange; infer_instance
+instance (extAmt : ℤ) (f : ℕ) : Decidable (Spec.amountsInRange extAmt f) := by
+  unfold Spec.amountsInRange; infer_instance
 
-instance (inputs : LeanSpec.TxInputs) : Decidable (LeanSpec.encOutsFit inputs) := by
-  unfold LeanSpec.encOutsFit; infer_instance
+instance (inputs : Spec.TxInputs) : Decidable (Spec.encOutsFit inputs) := by
+  unfold Spec.encOutsFit; infer_instance
 
-instance (T : LeanSpec.Tree) (R : LeanSpec.F) : Decidable (LeanSpec.rootKnown T R) :=
-  decidable_of_iff ((∃ i, T.history i = R) ∧ R ≠ 0) (by simp [LeanSpec.rootKnown, Set.mem_range])
+instance (T : Spec.Tree) (R : Spec.F) : Decidable (Spec.rootKnown T R) :=
+  decidable_of_iff ((∃ i, T.history i = R) ∧ R ≠ 0) (by simp [Spec.rootKnown, Set.mem_range])
 
-instance (T : LeanSpec.Tree) (bs : LeanSpec.Bytes) : Decidable (LeanSpec.rootBytesKnown T bs) := by
-  unfold LeanSpec.rootBytesKnown; infer_instance
+instance (T : Spec.Tree) (bs : Spec.Bytes) : Decidable (Spec.rootBytesKnown T bs) := by
+  unfold Spec.rootBytesKnown; infer_instance
 
 end Connection

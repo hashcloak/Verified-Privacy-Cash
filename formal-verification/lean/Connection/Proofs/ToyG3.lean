@@ -12,7 +12,7 @@ attribute [local instance] toyPoseidon toySpecSha
 
 /-- The deposit's witness for G3: as `depWit`, but its zero-amount inputs have commitment `1`, so
     they don't share a commitment and position with the withdrawal's inputs (commitment `0`). -/
-def depWitG3 : LeanSpec.Witness where
+def depWitG3 : Spec.Witness where
   mint := 0
   inAmt := 0
   inSk := ![-2, -1]
@@ -23,49 +23,49 @@ def depWitG3 : LeanSpec.Witness where
   outR := ![-4, 0]
 
 theorem depG3_relation :
-    LeanSpec.RelationS (toInputs toyTx.signers depA depProof 2#i64 0#u64 emptySlice emptySlice).pubInputs depWitG3 where
+    Spec.RelationS (toInputs toyTx.signers depA depProof 2#i64 0#u64 emptySlice emptySlice).pubInputs depWitG3 where
   outputCommitmentIntegrity := by
     intro j
     fin_cases j <;>
-      simp [toInputs, LeanSpec.TxInputs.pubInputs, depProof, toyProof, toF_zeros32, depWitG3,
-        LeanSpec.commit, toy_H4]
+      simp [toInputs, Spec.TxInputs.pubInputs, depProof, toyProof, toF_zeros32, depWitG3,
+        Spec.commit, toy_H4]
     all_goals norm_num
   nullifierCorrectness := by
     intro i
     fin_cases i <;>
-      simp [toInputs, LeanSpec.TxInputs.pubInputs, depProof, toyProof, toF_zeros32, toF_one32, depWitG3,
-        LeanSpec.nullifier, LeanSpec.Witness.sign, LeanSpec.signature, LeanSpec.Witness.inC,
-        LeanSpec.commit, LeanSpec.Witness.inPk, toy_H1, toy_H3, toy_H4]
+      simp [toInputs, Spec.TxInputs.pubInputs, depProof, toyProof, toF_zeros32, toF_one32, depWitG3,
+        Spec.nullifier, Spec.Witness.sign, Spec.signature, Spec.Witness.inC,
+        Spec.commit, Spec.Witness.inPk, toy_H1, toy_H3, toy_H4]
     all_goals ring
   noDuplicateNullifiers := by
-    simp only [toInputs, LeanSpec.TxInputs.pubInputs, Matrix.cons_val_zero, Matrix.cons_val_one]
+    simp only [toInputs, Spec.TxInputs.pubInputs, Matrix.cons_val_zero, Matrix.cons_val_one]
     show toF zeros32 ≠ toF one32
     rw [toF_zeros32, toF_one32]; decide
   correctOpenings := by intro i hi; simp [depWitG3] at hi
   amountConservation := by
-    simp [toInputs, LeanSpec.TxInputs.pubInputs, depProof, toyProof, toF_two32, depWitG3]
+    simp [toInputs, Spec.TxInputs.pubInputs, depProof, toyProof, toF_two32, depWitG3]
   outputRangeChecks := by
-    haveI : Fact (1 < LeanSpec.p) := ⟨by norm_num [LeanSpec.p]⟩
-    have hval : ZMod.val (2 : LeanSpec.F) = 2 := by
-      have := ZMod.val_natCast_of_lt (n := LeanSpec.p) (a := 2) (by norm_num [LeanSpec.p]); exact_mod_cast this
+    haveI : Fact (1 < Spec.p) := ⟨by norm_num [Spec.p]⟩
+    have hval : ZMod.val (2 : Spec.F) = 2 := by
+      have := ZMod.val_natCast_of_lt (n := Spec.p) (a := 2) (by norm_num [Spec.p]); exact_mod_cast this
     intro j; fin_cases j <;> simp [depWitG3, hval]
 
 section
-variable [LeanSpec.Groups] [AddCommGroup LeanSpec.G1] [Module LeanSpec.F LeanSpec.G1]
-  [AddCommGroup LeanSpec.G2] [Module LeanSpec.F LeanSpec.G2] [CommGroup LeanSpec.GT]
-  [LeanSpec.Pairing] [LeanSpec.Deployment]
+variable [Spec.Groups] [AddCommGroup Spec.G1] [Module Spec.F Spec.G1]
+  [AddCommGroup Spec.G2] [Module Spec.F Spec.G2] [CommGroup Spec.GT]
+  [Spec.Pairing] [Spec.Deployment]
 
 /-- No input of the deposit shares a commitment with an input of the withdrawal. -/
-theorem withdrawal_inputs_unused {w0 : LeanSpec.World} (r : LeanSpec.Run w0) (i : Fin 2) :
-    ¬ LeanSpec.InputUsedInRun r (fun _ => depWitG3) spendWit i := by
+theorem withdrawal_inputs_unused {w0 : Spec.World} (r : Spec.Run w0) (i : Fin 2) :
+    ¬ Spec.InputUsedInRun r (fun _ => depWitG3) spendWit i := by
   rintro ⟨j, _, e, hC, _⟩
   have h1 : depWitG3.inC e = 1 := by
-    fin_cases e <;> simp [depWitG3, LeanSpec.Witness.inC, LeanSpec.commit, LeanSpec.Witness.inPk, toy_H1, toy_H4]
+    fin_cases e <;> simp [depWitG3, Spec.Witness.inC, Spec.commit, Spec.Witness.inPk, toy_H1, toy_H4]
     all_goals norm_num
   have h0 : spendWit.inC i = 0 := by
-    fin_cases i <;> simp [spendWit, LeanSpec.Witness.inC, LeanSpec.commit, LeanSpec.Witness.inPk, toy_H1, toy_H4]
+    fin_cases i <;> simp [spendWit, Spec.Witness.inC, Spec.commit, Spec.Witness.inPk, toy_H1, toy_H4]
     all_goals norm_num
-  have : (1 : LeanSpec.F) = 0 := h1.symm.trans (hC.trans h0)
+  have : (1 : Spec.F) = 0 := h1.symm.trans (hC.trans h0)
   exact absurd this (by decide)
 
 end
@@ -80,23 +80,23 @@ attribute [local instance] toySpecGroups toySpecG1Group toySpecG2Group toySpecG1
     deposit's note with that split satisfies every hypothesis of both, and `step` accepts it. -/
 theorem toy_G3_code_nonvacuous (h64 : Usize.max = 2 ^ 64 - 1) :
     ∃ (s₀ s : State) (evs : List Event)
-      (params : LeanSpec.InitParams) (r : LeanSpec.Run (LeanSpec.initWorld params))
-      (wit : ℕ → LeanSpec.Witness),
+      (params : Spec.InitParams) (r : Spec.Run (Spec.initWorld params))
+      (wit : ℕ → Spec.Witness),
       Genesis toyD.programId s₀ ∧ Run toyD s₀ evs s ∧ DeploymentFacts toyD
       ∧ PairingLaws toyC.e ∧ HashesAgree toyD.crypto ∧ CompletenessAssumptions toyD.crypto toyC
       ∧ toWorld toyD toyRent s = r.final
       ∧ r.WitnessesFor wit
-      ∧ ∀ payout feeAmount : ℕ, LeanSpec.Goals.WithdrawalWay r.final.state.config 2 payout feeAmount →
+      ∧ ∀ payout feeAmount : ℕ, Spec.Goals.WithdrawalWay r.final.state.config 2 payout feeAmount →
         ∃ (tx : TxEnv) (a : TransactAccounts) (proof : transact.Proof) (ext : I64) (fee : U64)
           (out1 out2 : Slice U8) (tree : merkle_tree.MerkleTreeAccount) (tt : admin.TreeTokenAccount)
-          (config : admin.GlobalConfig) (witness : LeanSpec.Witness) (k : ℕ),
+          (config : admin.GlobalConfig) (witness : Spec.Witness) (k : ℕ),
           let inputs := toInputs tx.signers a proof ext fee out1 out2
           ReachesProgram toyD toyRent s tx a proof ext fee out1 out2 tree tt config
           ∧ ext.val ≠ 0 ∧ proof.proof_a.val ≠ List.replicate 64 0#u8
-          ∧ LeanSpec.HonestSpend r wit inputs witness k
-          ∧ LeanSpec.LimitsNotHit r.final inputs
+          ∧ Spec.HonestSpend r wit inputs witness k
+          ∧ Spec.LimitsNotHit r.final inputs
           ∧ witness.inAmt 0 ≠ 0
-          ∧ witness.inAmt 0 + witness.inAmt 1 = ((2 : ℕ) : LeanSpec.F)
+          ∧ witness.inAmt 0 + witness.inAmt 1 = ((2 : ℕ) : Spec.F)
           ∧ inputs.extAmt = -(payout : ℤ) ∧ inputs.f = feeAmount
           ∧ ∃ s' events, step toyD s tx (.transact a proof ext fee out1 out2) = .ok (s', events) := by
   obtain ⟨s₁', s₂', e₂', h1', -, hpid, h2', -, solana, depCrypto, depOutside⟩ := toy_execution
@@ -132,7 +132,7 @@ theorem toy_G3_code_nonvacuous (h64 : Usize.max = 2 ^ 64 - 1) :
   · obtain ⟨⟨t, ht⟩, -⟩ := hi₁
     exact absurd ht (hno.1 _ t)
   -- the deposit extends it
-  have hdep : LeanSpec.transact (toInputs toyTx.signers depA depProof 2#i64 0#u64 emptySlice emptySlice)
+  have hdep : Spec.transact (toInputs toyTx.signers depA depProof 2#i64 0#u64 emptySlice emptySlice)
       (toWorld toyD toyRent s₁') (toWorld toyD toyRent s₂') :=
     transact_connection_pf toyGenesis hrun₁ hpid (.program h2' toyTx_rentPositive (.nil _)) toyC toyLaws toyHashesAgree solana depCrypto.1 depCrypto.2 depOutside
   rw [hw₀] at hdep
@@ -163,10 +163,10 @@ theorem toy_G3_code_nonvacuous (h64 : Usize.max = 2 ^ 64 - 1) :
   have es₂ : (s₂', e₂') = (s₂, e₂) := Except.ok.inj (h2'.symm.trans h2)
   obtain ⟨rfl, rfl⟩ := Prod.mk.inj es₂
   -- the withdrawal's preconditions
-  have hpre0 : LeanSpec.transactPreconditions (toInputs toyTx.signers spendA spendProof ext fee emptySlice emptySlice)
+  have hpre0 : Spec.transactPreconditions (toInputs toyTx.signers spendA spendProof ext fee emptySlice emptySlice)
       (toWorld toyD toyRent s₂') :=
     (transact_connection_pf toyGenesis hrun₂ hpid (.program h3 toyTx_rentPositive (.nil _)) toyC toyLaws toyHashesAgree solana crypto.1 crypto.2 outside).1
-  have hpre : LeanSpec.transactPreconditions (toInputs toyTx.signers spendA spendProof ext fee emptySlice emptySlice) r.final := by
+  have hpre : Spec.transactPreconditions (toInputs toyTx.signers spendA spendProof ext fee emptySlice emptySlice) r.final := by
     rw [← hfinal]; exact hpre0
   -- getting past Anchor
   have hx : execTransact toyD s₂' toyTx spendA spendProof ext fee emptySlice emptySlice = .ok (s₃, e₃) := h3
@@ -217,7 +217,7 @@ theorem toy_G3_code_nonvacuous (h64 : Usize.max = 2 ^ 64 - 1) :
         isPrefixRoot := by
           have hcap : (r.firstLeaves 2).length < 2^26 :=
             (List.length_take_le _ _).trans_lt (by norm_num)
-          rw [(LeanSpec.foldAppend_spec _ hcap).2.1, LeanSpec.treeHash.eq_2]
+          rw [(Spec.foldAppend_spec _ hcap).2.1, Spec.treeHash.eq_2]
           show toF one32 = 1
           exact toF_one32 }
       circuit := spend_relation

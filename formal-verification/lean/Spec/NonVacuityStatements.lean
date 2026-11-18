@@ -20,11 +20,11 @@ trivial. These statements show only that the spec's own rules (preconditions of 
 `WitnessesFor`, tree and balance bookkeeping) do not contradict each other. They show nothing
 about real cryptography, and miss spec mistakes visible only with real hash values (e.g. in
 Merkle paths, hidden by the constant `H2`). -/
-namespace LeanSpec.Goals.NonVacuous
-open LeanSpec
+namespace Spec.Goals.NonVacuous
+open Spec
 
 attribute [local instance] NonVacuity.toyHashes NonVacuity.toySha NonVacuity.toyGroups
-  NonVacuity.toyG1Group NonVacuity.toyG2Group NonVacuity.toyG1Module NonVacuity.toyG2Module
+  NonVacuity.toyG1Group NonVacuity.toyG1Module
   NonVacuity.toyGTGroup NonVacuity.toyPairing NonVacuity.toyDeployment
 
 /-- **The hypotheses of G1a–G1d can hold, on a real spend.** A run of two transactions (a
@@ -94,4 +94,4 @@ theorem nonvacuous_G2b_hypotheses :
       RelationS x w ∧ RelationS x' w' ∧ x.nullifiers i = x'.nullifiers i' :=
   NonVacuity.toy_G2b_hypotheses NonVacuity.toyCompleteBytes
 
-end LeanSpec.Goals.NonVacuous
+end Spec.Goals.NonVacuous

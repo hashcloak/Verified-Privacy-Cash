@@ -15,27 +15,27 @@ open PrivacyCash.Proofs.Groth16 (ic vkxOf programVerifier_groth16)
 
 section
 variable {signers : List Pubkey}
-variable {G1 G2 GT : Type} [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGroup G2]
-  [Module LeanSpec.F G2] [CommGroup GT] {s : AltBn128}
+variable {G1 G2 GT : Type} [AddCommGroup G1] [Module Spec.F G1] [AddCommGroup G2]
+  [Module Spec.F G2] [CommGroup GT] {s : AltBn128}
 
 /-- The spec decodes the mapped proof's bytes as the syscalls decode the proof's points. -/
 theorem decode_toInputs (C : AltBn128Contracts s G1 G2 GT) (proof : zkcash_core.transact.Proof)
     (a : TransactAccounts) (ext : I64) (fee : U64) (out1 out2 : Slice U8)
     {A Cp : G1} {B : G2} (hA : C.decodeG1 proof.proof_a = some A)
     (hB : C.decodeG2 proof.proof_b = some B) (hC : C.decodeG1 proof.proof_c = some Cp) :
-    letI : LeanSpec.Groups := syscallGroups C
-    (toInputs signers a proof ext fee out1 out2).π.decode = some (LeanSpec.Groth16.Proof.mk A B Cp) := by
-  letI : LeanSpec.Groups := syscallGroups C
-  have e1 : LeanSpec.Groups.decodeG1 (toBytes proof.proof_a.val) = some A := by
+    letI : Spec.Groups := syscallGroups C
+    (toInputs signers a proof ext fee out1 out2).π.decode = some (Spec.Groth16.Proof.mk A B Cp) := by
+  letI : Spec.Groups := syscallGroups C
+  have e1 : Spec.Groups.decodeG1 (toBytes proof.proof_a.val) = some A := by
     show (toArray 64#usize (toBytes proof.proof_a.val)).bind C.decodeG1 = some A
     rw [toArray_toBytes]; exact hA
-  have e2 : LeanSpec.Groups.decodeG2 (toBytes proof.proof_b.val) = some B := by
+  have e2 : Spec.Groups.decodeG2 (toBytes proof.proof_b.val) = some B := by
     show (toArray 128#usize (toBytes proof.proof_b.val)).bind C.decodeG2 = some B
     rw [toArray_toBytes]; exact hB
-  have e3 : LeanSpec.Groups.decodeG1 (toBytes proof.proof_c.val) = some Cp := by
+  have e3 : Spec.Groups.decodeG1 (toBytes proof.proof_c.val) = some Cp := by
     show (toArray 64#usize (toBytes proof.proof_c.val)).bind C.decodeG1 = some Cp
     rw [toArray_toBytes]; exact hC
-  simp only [LeanSpec.Groth16.ProofBytes.decode, toInputs, e1, e2, e3]
+  simp only [Spec.Groth16.ProofBytes.decode, toInputs, e1, e2, e3]
 
 /-- **The bridge.** If the program's verifier accepts `proof`, the spec's `proofValid` holds for
     the mapped transaction, with the spec instantiated by the syscalls and the program's key. -/
@@ -43,15 +43,15 @@ theorem verifier_bridge (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT)
     (laws : PairingLaws C.e) (proof : zkcash_core.transact.Proof)
     (h : c.proofVerifier.verify proof = ok true)
     (a : TransactAccounts) (ext : I64) (fee : U64) (out1 out2 : Slice U8) :
-    letI : LeanSpec.Groups := syscallGroups C
-    letI : LeanSpec.Pairing := syscallPairing C
-    letI : LeanSpec.Deployment := ⟨programKey C⟩
-    LeanSpec.proofValid (toInputs signers a proof ext fee out1 out2) := by
+    letI : Spec.Groups := syscallGroups C
+    letI : Spec.Pairing := syscallPairing C
+    letI : Spec.Deployment := ⟨programKey C⟩
+    Spec.proofValid (toInputs signers a proof ext fee out1 out2) := by
   obtain ⟨-, -, A, Cp, α, B, β, γ, δ, d1, d2, d3, d4, d5, d6, d7, heq⟩ :=
     programVerifier_groth16 c C proof h
-  letI : LeanSpec.Groups := syscallGroups C
-  letI : LeanSpec.Pairing := syscallPairing C
-  letI : LeanSpec.Deployment := ⟨programKey C⟩
+  letI : Spec.Groups := syscallGroups C
+  letI : Spec.Pairing := syscallPairing C
+  letI : Spec.Deployment := ⟨programKey C⟩
   -- the decoded points
   have hdec : (toInputs signers a proof ext fee out1 out2).π.decode = some ⟨A, B, Cp⟩ := by
     exact decode_toInputs C proof a ext fee out1 out2 d1 d2 d3
@@ -61,15 +61,15 @@ theorem verifier_bridge (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT)
   have hγ : (C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_gamme_g2).getD 0 = γ := by rw [d6]; rfl
   have hδ : (C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_delta_g2).getD 0 = δ := by rw [d7]; rfl
   -- the spec's vk_x is the code's
-  have hvec : ∀ i : Fin 7, LeanSpec.Groth16.toVector (toInputs signers a proof ext fee out1 out2).pubInputs i
+  have hvec : ∀ i : Fin 7, Spec.Groth16.toVector (toInputs signers a proof ext fee out1 out2).pubInputs i
       = toF ((publicInputs proof)[i.val]!) := by
     intro i; fin_cases i <;> rfl
   have hsmul : ∀ (b : Std.Array U8 32#usize) (P : G1), toF b • P = beNatOf b • P := by
     intro b P
-    show ((beNat b : ℕ) : LeanSpec.F) • P = _
+    show ((beNat b : ℕ) : Spec.F) • P = _
     rw [Nat.cast_smul_eq_nsmul]; rfl
   have hvkx : ic C zkcash_core.verifying_key.VERIFYING_KEY 0 +
-      ∑ i : Fin 7, LeanSpec.Groth16.toVector (toInputs signers a proof ext fee out1 out2).pubInputs i •
+      ∑ i : Fin 7, Spec.Groth16.toVector (toInputs signers a proof ext fee out1 out2).pubInputs i •
         ic C zkcash_core.verifying_key.VERIFYING_KEY i.succ.val
       = vkxOf C zkcash_core.verifying_key.VERIFYING_KEY proof := by
     simp only [vkxOf, hvec, hsmul, Fin.val_succ]
@@ -80,7 +80,7 @@ theorem verifier_bridge (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT)
     = C.e ((C.decodeG1 zkcash_core.verifying_key.VERIFYING_KEY.vk_alpha_g1).getD 0)
         ((C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_beta_g2).getD 0) *
       C.e (ic C zkcash_core.verifying_key.VERIFYING_KEY 0 +
-        ∑ i : Fin 7, LeanSpec.Groth16.toVector (toInputs signers a proof ext fee out1 out2).pubInputs i •
+        ∑ i : Fin 7, Spec.Groth16.toVector (toInputs signers a proof ext fee out1 out2).pubInputs i •
           ic C zkcash_core.verifying_key.VERIFYING_KEY i.succ.val)
         ((C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_gamme_g2).getD 0) *
       C.e Cp ((C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_delta_g2).getD 0)
@@ -93,7 +93,7 @@ theorem verifier_bridge (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT)
   ac_rfl
 
 /-- `transact_refines` with the verifier bridge in place of the temporary `hProofValid`. -/
-theorem transact_refines_verified [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
+theorem transact_refines_verified [Spec.PoseidonHashes] [Spec.Sha]
     {d : Deployment} {rent : Nat → U64} {s s' : State} {tx : TxEnv}
     {a : TransactAccounts} {proof : zkcash_core.transact.Proof} {extAmount : I64} {fee : U64}
     {out1 out2 : Slice U8} {events : List CommitmentData}
@@ -104,20 +104,20 @@ theorem transact_refines_verified [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
     (solana : SolanaFacts d tx) (hrentPos : tx.RentPositive)
     (crypto : CryptoFacts d proof) (circuit : CircuitFacts d {proof})
     (rentFixed : SameRent rent tx) :
-    letI : LeanSpec.Groups := syscallGroups C
-    letI : LeanSpec.Pairing := syscallPairing C
-    letI : LeanSpec.Deployment := ⟨programKey C⟩
+    letI : Spec.Groups := syscallGroups C
+    letI : Spec.Pairing := syscallPairing C
+    letI : Spec.Deployment := ⟨programKey C⟩
     let inputs := toInputs tx.signers a proof extAmount fee out1 out2
-    LeanSpec.transact inputs (toWorld d rent s) (toWorld d rent s') ∧
+    Spec.transact inputs (toWorld d rent s) (toWorld d rent s') ∧
       WellFormed d s' := by
-  letI : LeanSpec.Groups := syscallGroups C
-  letI : LeanSpec.Pairing := syscallPairing C
-  letI : LeanSpec.Deployment := ⟨programKey C⟩
+  letI : Spec.Groups := syscallGroups C
+  letI : Spec.Pairing := syscallPairing C
+  letI : Spec.Deployment := ⟨programKey C⟩
   exact transact_refines hstep hashes wf solana hrentPos crypto circuit rentFixed
     (fun hv => verifier_bridge d.crypto C laws proof hv a extAmount fee out1 out2)
 
 /-- `transact_refines_between` with the verifier bridge in place of `hProofValid`. -/
-theorem transact_refines_between_verified [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
+theorem transact_refines_between_verified [Spec.PoseidonHashes] [Spec.Sha]
     {d : Deployment} {rent : Nat → U64} {s s' : State} {tx : TxEnv}
     {a : TransactAccounts} {proof : zkcash_core.transact.Proof} {extAmount : I64} {fee : U64}
     {out1 out2 : Slice U8} {events : List CommitmentData}
@@ -128,23 +128,23 @@ theorem transact_refines_between_verified [LeanSpec.PoseidonHashes] [LeanSpec.Sh
     (solana : SolanaFacts d tx) (hrentPos : tx.RentPositive)
     (crypto : CryptoFacts d proof) (circuit : CircuitFacts d {proof})
     (rentFixed : tx.minimumBalance = some rent) :
-    letI : LeanSpec.Groups := syscallGroups C
-    letI : LeanSpec.Pairing := syscallPairing C
-    letI : LeanSpec.Deployment := ⟨programKey C⟩
+    letI : Spec.Groups := syscallGroups C
+    letI : Spec.Pairing := syscallPairing C
+    letI : Spec.Deployment := ⟨programKey C⟩
     let inputs := toInputs tx.signers a proof extAmount fee out1 out2
-    ∃ b₁ : LeanSpec.UpdatedValuesBetweenTransacts, b₁.Allowed (toWorld d rent s) ∧
-      ∃ b₂ : LeanSpec.UpdatedValuesBetweenTransacts,
-      LeanSpec.transact inputs ((toWorld d rent s).withUpdatedValues b₁)
+    ∃ b₁ : Spec.UpdatedValuesBetweenTransacts, b₁.Allowed (toWorld d rent s) ∧
+      ∃ b₂ : Spec.UpdatedValuesBetweenTransacts,
+      Spec.transact inputs ((toWorld d rent s).withUpdatedValues b₁)
         ((toWorld d rent s').withUpdatedValues b₂) ∧
-      (LeanSpec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent s')).Allowed
+      (Spec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent s')).Allowed
         ((toWorld d rent s').withUpdatedValues b₂) ∧
       WellFormed d s' ∧ b₁.adminChanges = [] ∧
       b₁.balances (toPubkey (poolAddr d)) = lamportsOf s (poolAddr d) ∧
       b₂.config = (toWorld d rent s').state.config ∧
       b₂.balances (toPubkey (poolAddr d)) = lamportsOf s' (poolAddr d) := by
-  letI : LeanSpec.Groups := syscallGroups C
-  letI : LeanSpec.Pairing := syscallPairing C
-  letI : LeanSpec.Deployment := ⟨programKey C⟩
+  letI : Spec.Groups := syscallGroups C
+  letI : Spec.Pairing := syscallPairing C
+  letI : Spec.Deployment := ⟨programKey C⟩
   exact transact_refines_between hstep hashes wf solana hrentPos crypto circuit rentFixed
     (fun hv => verifier_bridge d.crypto C laws proof hv a extAmount fee out1 out2)
 

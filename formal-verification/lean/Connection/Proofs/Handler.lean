@@ -325,8 +325,8 @@ theorem handler_ok (c : Crypto) (env : SolEnv) (tree : merkle_tree.MerkleTreeAcc
       · rw [hf0, payN_zero, ← hsb]
       · rw [← hsb]; exact u64_lt _
   · have h := ite_neg' h hpos
-    have hpub : LeanSpec.pubAmtConsistent ext.val fee.val (toF proof.public_amount) ∧
-        LeanSpec.amountsInRange ext.val fee.val ∧ ext.val ≠ 0 := by
+    have hpub : Spec.pubAmtConsistent ext.val fee.val (toF proof.public_amount) ∧
+        Spec.amountsInRange ext.val fee.val ∧ ext.val ≠ 0 := by
       have := (checkPublicAmount_eq ext fee proof.public_amount).symm.trans hb2
       simpa using this
     by_cases hneg : ext < 0#i64

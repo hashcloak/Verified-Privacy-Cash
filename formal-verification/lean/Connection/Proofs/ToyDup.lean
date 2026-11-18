@@ -16,26 +16,26 @@ nullifiers differ: `nullifier2` and `nullifier3` get the addresses of `nullifier
 namespace Connection
 
 section
-variable {G1 G2 GT : Type} [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGroup G2]
-  [Module LeanSpec.F G2] [CommGroup GT] [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
+variable {G1 G2 GT : Type} [AddCommGroup G1] [Module Spec.F G1] [AddCommGroup G2]
+  [Module Spec.F G2] [CommGroup GT] [Spec.PoseidonHashes] [Spec.Sha]
 
 /-- The conclusion of `transact_connection`: the spec's `transact` holds between the worlds
     before and after the accepted transaction. -/
 def SpecTransactHolds (d : Deployment) (rent : Nat → U64) (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT)
     (laws : PairingLaws C.e) (evs : List Event) (s s' : State) (tx : TxEnv) (a : TransactAccounts)
     (proof : zkcash_core.transact.Proof) (extAmount : I64) (fee : U64) (out1 out2 : Slice U8) : Prop :=
-  letI : LeanSpec.Groups := syscallGroups C
-  letI : LeanSpec.Pairing := syscallPairing C
-  letI : LeanSpec.Deployment := ⟨programKey C⟩
+  letI : Spec.Groups := syscallGroups C
+  letI : Spec.Pairing := syscallPairing C
+  letI : Spec.Deployment := ⟨programKey C⟩
   let inputs := toInputs tx.signers a proof extAmount fee out1 out2
-  LeanSpec.transact inputs (toWorld d rent s) (toWorld d rent s')
+  Spec.transact inputs (toWorld d rent s) (toWorld d rent s')
 
 end
 
 /-- `transact_connection` without `CircuitFacts`; all other hypotheses are kept. -/
 def TransactConnectionWithoutCircuit : Prop :=
-  ∀ (G1 G2 GT : Type) [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGroup G2]
-    [Module LeanSpec.F G2] [CommGroup GT] [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
+  ∀ (G1 G2 GT : Type) [AddCommGroup G1] [Module Spec.F G1] [AddCommGroup G2]
+    [Module Spec.F G2] [CommGroup GT] [Spec.PoseidonHashes] [Spec.Sha]
     (d : Deployment) (rent : Nat → U64) (s₀ s s' : State) (evs : List Event) (tx : TxEnv)
     (a : TransactAccounts) (proof : zkcash_core.transact.Proof) (extAmount : I64) (fee : U64)
     (out1 out2 : Slice U8) (events : List CommitmentData)
@@ -89,19 +89,19 @@ theorem dup_addr : nf0W ≠ nf3W ∧ pk 3#u8 ≠ nf3W ∧ pk 4#u8 ≠ nf3W := by
 /-- The spec's preconditions other than `distinctNullifiers` (`PreExceptDistinct`), in the
     handler's view, for the toy deployment. -/
 def HandlerPreND (signers : List Pubkey) (a : TransactAccounts) (s₁ : State) (v : U64)
-    (tree : merkle_tree.MerkleTreeAccount) (config : admin.GlobalConfig) (accts : Finset LeanSpec.Pubkey)
-    (addr : Fin 2 → LeanSpec.Bytes → LeanSpec.Pubkey)
+    (tree : merkle_tree.MerkleTreeAccount) (config : admin.GlobalConfig) (accts : Finset Spec.Pubkey)
+    (addr : Fin 2 → Spec.Bytes → Spec.Pubkey)
     (proof : transact.Proof) (ext : I64) (fee : U64) (out1 out2 : Slice U8) : Prop :=
   @PreExceptDistinct _ _ (syscallGroups toyC) (inferInstanceAs (AddCommGroup Unit))
-    (inferInstanceAs (Module LeanSpec.F Unit))
+    (inferInstanceAs (Module Spec.F Unit))
     (inferInstanceAs (CommGroup Unit))
-    (syscallPairing toyC) (@LeanSpec.Deployment.mk (syscallGroups toyC) (programKey toyC))
+    (syscallPairing toyC) (@Spec.Deployment.mk (syscallGroups toyC) (programKey toyC))
     (toInputs signers a proof ext fee out1 out2) (handlerWorld a s₁ v tree config accts addr)
 
 /-- The spec's preconditions other than `distinctNullifiers` hold for the withdrawal (as
     `spend_pre`, with the split 2/0). -/
 theorem dup_pre (sB : State) (tree₂ t1 : merkle_tree.MerkleTreeAccount) (config : admin.GlobalConfig)
-    (c : LeanSpec.F) (htree : toTree tree₂ = LeanSpec.appendEffects c (toTree t1))
+    (c : Spec.F) (htree : toTree tree₂ = Spec.appendEffects c (toTree t1))
     (hTn : tree₂.next_index.val = 2) (hwr : config.withdrawal_fee_rate.val = 25)
     (hpoolB : (sB tokenA).lamports.val = 3) (hrecB : (sB (pk 3#u8)).lamports.val = 0) :
     HandlerPreND toyTx.signers dupA sB 1#u64 tree₂ config ∅ (handlerAddr dupA) dupProof dupExt 0#u64
@@ -128,36 +128,36 @@ theorem dup_pre (sB : State) (tree₂ t1 : merkle_tree.MerkleTreeAccount) (confi
     show (sB (fromPubkey (toPubkey tokenA))).lamports.val = 3
     rw [fromPubkey_toPubkey, hpoolB]
   refine @PreExceptDistinct.mk _ _ (syscallGroups toyC) (inferInstanceAs (AddCommGroup Unit))
-    (inferInstanceAs (Module LeanSpec.F Unit))
+    (inferInstanceAs (Module Spec.F Unit))
     (inferInstanceAs (CommGroup Unit))
-    (syscallPairing toyC) (@LeanSpec.Deployment.mk (syscallGroups toyC) (programKey toyC)) _ _
+    (syscallPairing toyC) (@Spec.Deployment.mk (syscallGroups toyC) (programKey toyC)) _ _
     ?_ ?_ ?_ ?_ ⟨_, hdec, rfl⟩ ?_ hfacts.1 ?_ ?_ ?_ ?_ hfacts.2 ?_ ?_ ?_ ?_ ?_ ?_
   · -- the root: the deposit's last append stored the root `1`
-    show LeanSpec.rootBytesKnown (toTree tree₂) (toBytes one32.val)
+    show Spec.rootBytesKnown (toTree tree₂) (toBytes one32.val)
     rw [rootBytesKnown_iff]
     refine ⟨canonical_one32, ⟨⟨(toTree t1).rootIndex + 1, ?_⟩, by rw [toF_one32]; decide⟩⟩
     rw [htree, toy_append_history, toF_one32]
-  · show (LeanSpec.natOfLE (List.replicate 32 0) : LeanSpec.F) = toF zeros32
+  · show (Spec.natOfLE (List.replicate 32 0) : Spec.F) = toF zeros32
     rw [toF_zeros32]; rfl
-  · unfold LeanSpec.feeSufficient; rw [he, hf]; simp [handlerWorld, toConfig, hwr]
-  · unfold LeanSpec.pubAmtConsistent; rw [he, hf]
+  · unfold Spec.feeSufficient; rw [he, hf]; simp [handlerWorld, toConfig, hwr]
+  · unfold Spec.pubAmtConsistent; rw [he, hf]
     refine ⟨fun h => by omega, ?_⟩
     show toF minusTwo32 = _; rw [toF_minusTwo32]; norm_num
-  · simp [LeanSpec.nullifiersFresh, LeanSpec.State.spent, handlerWorld]
+  · simp [Spec.nullifiersFresh, Spec.State.spent, handlerWorld]
   · intro h; rw [he] at h; omega
-  · unfold LeanSpec.poolSolvent; rw [he, hf]
+  · unfold Spec.poolSolvent; rw [he, hf]
     refine ⟨fun _ => ?_, fun h => by omega⟩
     have hpb' : (handlerWorld dupA sB 1#u64 tree₂ config ∅ (handlerAddr dupA)).poolBalance = 3 := hpb
     rw [hpb']; simp [handlerWorld]
-  · unfold LeanSpec.signerSolvent; rw [he]; simp [handlerWorld, LeanSpec.World.nullifierTopUp]
+  · unfold Spec.signerSolvent; rw [he]; simp [handlerWorld, Spec.World.nullifierTopUp]
   · exact List.mem_map_of_mem (f := toPubkey) (List.mem_singleton.mpr rfl)
   · show (toTree tree₂).nextIndex ≤ 2 ^ 26 - 2; simp [toTree, hTn]
-  · unfold LeanSpec.amountsInRange; rw [he, hf]; norm_num
-  · simp [LeanSpec.encOutsFit, toInputs, emptySlice, toBytes]
+  · unfold Spec.amountsInRange; rw [he, hf]; norm_num
+  · simp [Spec.encOutsFit, toInputs, emptySlice, toBytes]
   · exact ⟨fun _ e => h3P (toPubkey_inj e),
       fun h => by rw [hf] at h; omega⟩
   · intro i
-    show LeanSpec.canonicalEncoding (toBytes ((publicInputs _)[i.val]!).val) _
+    show Spec.canonicalEncoding (toBytes ((publicInputs _)[i.val]!).val) _
     rw [canonicalEncoding_iff]
     fin_cases i
     · exact ⟨canonical_one32, rfl⟩
@@ -186,7 +186,7 @@ theorem dup_pre (sB : State) (tree₂ t1 : merkle_tree.MerkleTreeAccount) (confi
 
 /-- **The withdrawal with equal nullifiers is accepted by `step`** (as `toy_spend_ok`). -/
 theorem toy_dup_ok (s₂ : State) (tree₂ t1 : merkle_tree.MerkleTreeAccount) (token : admin.TreeTokenAccount)
-    (config : admin.GlobalConfig) (c : LeanSpec.F)
+    (config : admin.GlobalConfig) (c : Spec.F)
     (hT : s₂ treeA = ⟨1#u64, toyD.programId, .treeAccount tree₂⟩)
     (hK : s₂ tokenA = ⟨3#u64, toyD.programId, .treeToken token⟩)
     (hC : s₂ configA = ⟨1#u64, toyD.programId, .globalConfig config⟩)
@@ -194,7 +194,7 @@ theorem toy_dup_ok (s₂ : State) (tree₂ t1 : merkle_tree.MerkleTreeAccount) (
     (hO : ∀ k, k ≠ treeA → k ≠ tokenA → k ≠ configA → k ≠ pk 1#u8 → k ≠ nf0A → k ≠ nf1A → s₂ k = toyS0 k)
     (hshape : TreeShape tree₂) (hroots : ∀ j : Fin 100, Canonical tree₂.root_history.val[j.val]!)
     (hsubs : ∀ j : Fin 26, Canonical tree₂.subtrees.val[j.val]!)
-    (htree : toTree tree₂ = LeanSpec.appendEffects c (toTree t1)) (hTn : tree₂.next_index.val = 2)
+    (htree : toTree tree₂ = Spec.appendEffects c (toTree t1)) (hTn : tree₂.next_index.val = 2)
     (hTb : tree₂.bump = 255#u8) (hkb : token.bump = 255#u8) (hcb : config.bump = 255#u8)
     (hdr : config.deposit_fee_rate.val = 0) (hwr : config.withdrawal_fee_rate.val = 25)
     (hmr : config.fee_error_margin.val = 500) :

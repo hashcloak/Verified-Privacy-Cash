@@ -116,6 +116,6 @@ theorem toy_admin_change_nonvacuous :
     have h0 := hgaps 0 (by rw [hlen]; exact Nat.one_pos)
     simp only [List.getElem?_cons_zero, Option.some.injEq] at h0
     rw [hlen]
-    simp [LeanSpec.Run.adminChangesUpTo, ← h0]
+    simp [Spec.Run.adminChangesUpTo, ← h0]
 
 end Connection.Toy

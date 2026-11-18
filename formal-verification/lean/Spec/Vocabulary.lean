@@ -4,11 +4,11 @@ import Spec.Spec
 
 Part of the review surface (see `Spec/Statements.lean`). Only definitions, no proofs. -/
 
-namespace LeanSpec
+namespace Spec
 open PoseidonHashes Sha
 
 variable [PoseidonHashes] [Sha] [Groups]
-variable [AddCommGroup G1] [Module F G1] [AddCommGroup G2] [Module F G2] [CommGroup GT]
+variable [AddCommGroup G1] [Module F G1] [CommGroup GT]
 variable [Pairing] [Deployment]
 
 /-- `leafAt cs i`: leaf `i`, or the zero leaf if `i` wasn't written.
@@ -450,4 +450,4 @@ def SpendBlockedByBreak {w0 : World} (r : Run w0) (wit : ℕ → Witness) (input
   -- or the 2 last nodes hash together to obtain 0 for root
   ∨ H2ZeroPreimage (treeHash (r.firstLeaves k) 25 0, treeHash (r.firstLeaves k) 25 1)
 
-end LeanSpec
+end Spec

@@ -23,8 +23,8 @@ namespace Connection
     0, fee 0, public amount 0): the spec's checks hold, the code rejects it. -/
 theorem checkPublicAmount_L1_counterexample :
     zkcash_core.utils.check_public_amount arkFr 0#i64 0#u64 zeroBytes = ok false ∧
-      LeanSpec.pubAmtConsistent (0#i64).val (0#u64).val (toF zeroBytes) ∧
-        LeanSpec.amountsInRange (0#i64).val (0#u64).val :=
+      Spec.pubAmtConsistent (0#i64).val (0#u64).val (toF zeroBytes) ∧
+        Spec.amountsInRange (0#i64).val (0#u64).val :=
   checkPublicAmount_L1
 
 /-! ## L1 and A0 at the level of the handler

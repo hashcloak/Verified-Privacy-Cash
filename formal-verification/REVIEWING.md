@@ -121,7 +121,7 @@ says?
 
 **`CodeModelStatements.lean`**
 - *Goals of the code* (`…_code`). The conclusion must be the spec's own property, applied
-  unchanged (`LeanSpec.Goals.NoDoubleSpend …`, defined in `Spec/Statements.lean`), not a property
+  unchanged (`Spec.Goals.NoDoubleSpend …`, defined in `Spec/Statements.lean`), not a property
   rewritten for the code, which could be weaker. The hypotheses must be those of the connection
   theorem in the table above.
 - *Non-vacuity.* The conjuncts must be exactly the hypotheses of the theorem they cover,

@@ -38,7 +38,7 @@ theorem pushBytesLoop_spec (out : alloc.vec.Vec U8) (bytes : Slice U8) (i : Usiz
   · exact ⟨hi, hcap, rfl⟩
 
 /-- The little-endian bytes `k₀ … 7` of `n`, as the spec writes them (`natToBytesLE`). -/
-private def leBytesFrom (n : ℕ) (k₀ w : ℕ) : LeanSpec.Bytes :=
+private def leBytesFrom (n : ℕ) (k₀ w : ℕ) : Spec.Bytes :=
   ((List.range w).drop k₀).map (fun k => BitVec.ofNat 8 (n >>> (8 * k)))
 
 private theorem leBytesFrom_succ (n k w : ℕ) (h : k < w) :
@@ -109,14 +109,14 @@ theorem pushLenLoop_spec (out : alloc.vec.Vec U8) (x : U32) (i : I32)
       rw [← heq, this, leBytesFrom_end]; simp
   · exact ⟨h0, h8, by simp, rfl⟩
 
-private theorem natToBytesLE_eq (w n : ℕ) : LeanSpec.natToBytesLE w n = leBytesFrom n 0 w := by
-  simp [LeanSpec.natToBytesLE, leBytesFrom]
+private theorem natToBytesLE_eq (w n : ℕ) : Spec.natToBytesLE w n = leBytesFrom n 0 w := by
+  simp [Spec.natToBytesLE, leBytesFrom]
 
 theorem pushLenPrefixed_spec (out : alloc.vec.Vec U8) (bytes : Slice U8)
     (hcap : out.val.length + 4 + bytes.length ≤ Usize.max) :
     ext_data.push_len_prefixed out bytes ⦃ r =>
       (r.1 = true ↔ bytes.length < 2 ^ 32) ∧
-      (r.1 = true → toBytes r.2.val = toBytes out.val ++ LeanSpec.vecU8 (toBytes bytes.val)) ⦄ := by
+      (r.1 = true → toBytes r.2.val = toBytes out.val ++ Spec.vecU8 (toBytes bytes.val)) ⦄ := by
   unfold ext_data.push_len_prefixed
   simp only
   split
@@ -138,13 +138,13 @@ theorem pushLenPrefixed_spec (out : alloc.vec.Vec U8) (bytes : Slice U8)
     refine ⟨hl, ?_⟩
     rw [h2]
     simp only [toBytes, List.map_append] at h1 ⊢
-    rw [h1, LeanSpec.vecU8, LeanSpec.u32LE, natToBytesLE_eq]
+    rw [h1, Spec.vecU8, Spec.u32LE, natToBytesLE_eq]
     simp [len_post]
 
 
 private theorem natToBytesLE_succ (w n : ℕ) :
-    LeanSpec.natToBytesLE (w + 1) n = BitVec.ofNat 8 n :: LeanSpec.natToBytesLE w (n >>> 8) := by
-  simp only [LeanSpec.natToBytesLE, List.range_succ_eq_map, List.map_cons, List.map_map]
+    Spec.natToBytesLE (w + 1) n = BitVec.ofNat 8 n :: Spec.natToBytesLE w (n >>> 8) := by
+  simp only [Spec.natToBytesLE, List.range_succ_eq_map, List.map_cons, List.map_map]
   congr 1
   apply List.map_congr_left
   intro a _
@@ -153,7 +153,7 @@ private theorem natToBytesLE_succ (w n : ℕ) :
 
 /-- Re-encoding the little-endian value of a byte list gives back the bytes. -/
 theorem natToBytesLE_leNat (l : List U8) :
-    LeanSpec.natToBytesLE l.length (leNatOfList l) = toBytes l := by
+    Spec.natToBytesLE l.length (leNatOfList l) = toBytes l := by
   induction l with
   | nil => rfl
   | cons b l ih =>
@@ -177,21 +177,21 @@ theorem leNatOfList_lt (l : List U8) : leNatOfList l < 256 ^ l.length := by
     nlinarith
 
 /-- The spec's serialization of a mapped address is the address's own 32 bytes. -/
-theorem pubkeyToBytes_toPubkey (k : Pubkey) : LeanSpec.PubkeyToBytes (toPubkey k) = toBytes k.val := by
+theorem pubkeyToBytes_toPubkey (k : Pubkey) : Spec.PubkeyToBytes (toPubkey k) = toBytes k.val := by
   have hlen : k.val.length = 32 := by simp
   have hlt : leNatOfList k.val < 2 ^ 256 := by
     have := leNatOfList_lt k.val; rw [hlen] at this; simpa using this
-  simp only [LeanSpec.PubkeyToBytes, toPubkey, BitVec.toNat_ofNat, Nat.mod_eq_of_lt hlt]
+  simp only [Spec.PubkeyToBytes, toPubkey, BitVec.toNat_ofNat, Nat.mod_eq_of_lt hlt]
   have h := natToBytesLE_leNat k.val
   rw [hlen] at h; exact h
 
 /-- The bytes `serialize_complete_ext_data` writes, as the spec writes them. -/
 def extDataBytes (recipient feeRecipient mint : Pubkey) (ext : I64) (out1 out2 : Slice U8)
-    (fee : U64) : LeanSpec.Bytes :=
-  LeanSpec.PubkeyToBytes (toPubkey recipient) ++ LeanSpec.i64LE ext.val ++
-    LeanSpec.vecU8 (toBytes out1.val) ++ LeanSpec.vecU8 (toBytes out2.val) ++
-    LeanSpec.u64LE fee.val ++ LeanSpec.PubkeyToBytes (toPubkey feeRecipient) ++
-    LeanSpec.PubkeyToBytes (toPubkey mint)
+    (fee : U64) : Spec.Bytes :=
+  Spec.PubkeyToBytes (toPubkey recipient) ++ Spec.i64LE ext.val ++
+    Spec.vecU8 (toBytes out1.val) ++ Spec.vecU8 (toBytes out2.val) ++
+    Spec.u64LE fee.val ++ Spec.PubkeyToBytes (toPubkey feeRecipient) ++
+    Spec.PubkeyToBytes (toPubkey mint)
 
 theorem serialize_spec (recipient feeRecipient mint : Pubkey) (ext : I64) (out1 out2 : Slice U8)
     (fee : U64) (hfit : out1.length + out2.length + 120 ≤ Usize.max) :
@@ -223,7 +223,7 @@ theorem serialize_spec (recipient feeRecipient mint : Pubkey) (ext : I64) (out1 
   · simp only [hbt]
     have l3 : o3.val.length = 44 + out1.val.length := by
       have := congrArg List.length (h3 hbt)
-      simp [tlen, LeanSpec.vecU8, LeanSpec.u32LE, LeanSpec.natToBytesLE, l2] at this; omega
+      simp [tlen, Spec.vecU8, Spec.u32LE, Spec.natToBytesLE, l2] at this; omega
     apply WP.spec_bind (pushLenPrefixed_spec o3 out2 (by simp only [Slice.length]; omega))
     rintro ⟨b1, o4⟩ ⟨hb1, h4⟩
     simp only at hb1 h4 ⊢
@@ -231,7 +231,7 @@ theorem serialize_spec (recipient feeRecipient mint : Pubkey) (ext : I64) (out1 
     · simp only [hb1t]
       have l4 : o4.val.length = 48 + out1.val.length + out2.val.length := by
         have := congrArg List.length (h4 hb1t)
-        simp [tlen, LeanSpec.vecU8, LeanSpec.u32LE, LeanSpec.natToBytesLE, l3] at this; omega
+        simp [tlen, Spec.vecU8, Spec.u32LE, Spec.natToBytesLE, l3] at this; omega
       apply WP.spec_bind (pushU64Loop_spec o4 fee 0#i32 (by simp) (by simp) (by omega))
       intro o5 h5
       simp only [show (0#i32 : I32).val.toNat = 0 by simp] at h5
@@ -252,7 +252,7 @@ theorem serialize_spec (recipient feeRecipient mint : Pubkey) (ext : I64) (out1 
       rw [h7, h6]
       simp only [toBytes, List.map_append] at h5 h4 h3 h2 ⊢
       rw [h5, h4 hb1t, h3 hbt, h2, h1]
-      simp only [extDataBytes, pubkeyToBytes_toPubkey, LeanSpec.i64LE, LeanSpec.u64LE,
+      simp only [extDataBytes, pubkeyToBytes_toPubkey, Spec.i64LE, Spec.u64LE,
         natToBytesLE_eq, toBytes, IScalar.hcast_val_eq, List.append_assoc]
       rfl
     · have hb1f' : b1 = false := by simpa using hb1t
@@ -285,31 +285,31 @@ private theorem toSlice_toBytes (v : alloc.vec.Vec U8) :
   simp only [toSlice, hl, alloc.vec.Vec.deref, dif_pos v.property]
 
 theorem extDataHash_eq (sha : ext_data.Sha256 Unit) (recipient feeRecipient mint : Pubkey)
-    (ext : I64) (out1 out2 : Slice U8) (fee : U64) (inputs : LeanSpec.TxInputs)
+    (ext : I64) (out1 out2 : Slice U8) (fee : U64) (inputs : Spec.TxInputs)
     (hA : inputs.A = toPubkey recipient) (hext : inputs.extAmt = ext.val)
     (he0 : inputs.encOut0 = toBytes out1.val) (he1 : inputs.encOut1 = toBytes out2.val)
     (hf : inputs.f = fee.val) (ht : inputs.t = toPubkey feeRecipient)
     (hm : inputs.mintAddr = toPubkey mint)
     (hfit : out1.length + out2.length + 120 ≤ Usize.max) :
     ext_data.calculate_complete_ext_data_hash sha recipient ext out1 out2 fee feeRecipient mint
-      = if LeanSpec.encOutsFit inputs then
-          (do let h ← sha.hash (toSlice (LeanSpec.serealizeExternalData inputs)); ok (some h))
+      = if Spec.encOutsFit inputs then
+          (do let h ← sha.hash (toSlice (Spec.serealizeExternalData inputs)); ok (some h))
         else ok none := by
   obtain ⟨r, hr, hsome, hbytes⟩ :=
     (WP.spec_equiv_exists _ _).mp (serialize_spec recipient feeRecipient mint ext out1 out2 fee hfit)
-  have hser : LeanSpec.serealizeExternalData inputs = extDataBytes recipient feeRecipient mint ext out1 out2 fee := by
-    simp only [LeanSpec.serealizeExternalData, extDataBytes, hA, hext, he0, he1, hf, ht, hm]
-  have hfits : LeanSpec.encOutsFit inputs ↔ out1.length < 2 ^ 32 ∧ out2.length < 2 ^ 32 := by
-    simp [LeanSpec.encOutsFit, he0, he1, toBytes, Slice.length]
+  have hser : Spec.serealizeExternalData inputs = extDataBytes recipient feeRecipient mint ext out1 out2 fee := by
+    simp only [Spec.serealizeExternalData, extDataBytes, hA, hext, he0, he1, hf, ht, hm]
+  have hfits : Spec.encOutsFit inputs ↔ out1.length < 2 ^ 32 ∧ out2.length < 2 ^ 32 := by
+    simp [Spec.encOutsFit, he0, he1, toBytes, Slice.length]
   unfold ext_data.calculate_complete_ext_data_hash
   rw [hr]
   simp only [bind_tc_ok]
   cases r with
   | none =>
-    have : ¬ LeanSpec.encOutsFit inputs := by rw [hfits, ← hsome]; simp
+    have : ¬ Spec.encOutsFit inputs := by rw [hfits, ← hsome]; simp
     simp [this]
   | some v =>
-    have hfit' : LeanSpec.encOutsFit inputs := by rw [hfits, ← hsome]; simp
+    have hfit' : Spec.encOutsFit inputs := by rw [hfits, ← hsome]; simp
     rw [if_pos hfit', hser, ← hbytes v rfl, toSlice_toBytes]
 
 /-! ## Code accepted ⟹ the external data fit in a vector (soundness: no length assumption)
@@ -499,12 +499,12 @@ theorem extDataHash_ok_fits {S : Type} {sha : ext_data.Sha256 S} {recipient feeR
 
 /-- With a 64-bit `usize`, the spec's bound on the encrypted outputs (each below `2^32` bytes)
     makes the serialized external data fit in a vector (completeness). -/
-theorem fits_of_encOutsFit {out1 out2 : Slice U8} {inputs : LeanSpec.TxInputs}
+theorem fits_of_encOutsFit {out1 out2 : Slice U8} {inputs : Spec.TxInputs}
     (h64 : Usize.max = 2 ^ 64 - 1)
     (he0 : inputs.encOut0 = toBytes out1.val) (he1 : inputs.encOut1 = toBytes out2.val)
-    (hfit : LeanSpec.encOutsFit inputs) :
+    (hfit : Spec.encOutsFit inputs) :
     out1.length + out2.length + 120 ≤ Usize.max := by
   have : out1.length < 2 ^ 32 ∧ out2.length < 2 ^ 32 := by
-    simpa [LeanSpec.encOutsFit, he0, he1, toBytes, Slice.length] using hfit
+    simpa [Spec.encOutsFit, he0, he1, toBytes, Slice.length] using hfit
   omega
 end Connection

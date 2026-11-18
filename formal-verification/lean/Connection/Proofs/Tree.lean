@@ -62,41 +62,41 @@ theorem finFoldlNat {α : Type} (g : α → ℕ → α) :
 private theorem okOf {α : Type} {m : Result α} {P : α → Prop} (h : m ⦃ P ⦄) : ∃ x, m = ok x ∧ P x :=
   (WP.spec_equiv_exists _ _).mp h
 
-variable [LeanSpec.PoseidonHashes]
+variable [Spec.PoseidonHashes]
 
 /-- One level of `appendEffects`'s fold (levels `≥ 26` are no-ops). -/
-def appendLevel (index : ℕ) (acc : LeanSpec.F × (Fin 26 → LeanSpec.F)) (j : ℕ) :
-    LeanSpec.F × (Fin 26 → LeanSpec.F) :=
+def appendLevel (index : ℕ) (acc : Spec.F × (Fin 26 → Spec.F)) (j : ℕ) :
+    Spec.F × (Fin 26 → Spec.F) :=
   if hj : j < 26 then
-    if Nat.testBit index j then (LeanSpec.PoseidonHashes.H2 (acc.2 ⟨j, hj⟩) acc.1, acc.2)
-    else (LeanSpec.PoseidonHashes.H2 acc.1 (LeanSpec.Z j), Function.update acc.2 ⟨j, hj⟩ acc.1)
+    if Nat.testBit index j then (Spec.PoseidonHashes.H2 (acc.2 ⟨j, hj⟩) acc.1, acc.2)
+    else (Spec.PoseidonHashes.H2 acc.1 (Spec.Z j), Function.update acc.2 ⟨j, hj⟩ acc.1)
   else acc
 
-theorem appendEffectsFold (c : LeanSpec.F) (t : LeanSpec.Tree) :
-    LeanSpec.appendEffects c t =
+theorem appendEffectsFold (c : Spec.F) (t : Spec.Tree) :
+    Spec.appendEffects c t =
       let r := natFold (appendLevel t.nextIndex) (c, t.subtrees) 26
       { nextIndex := t.nextIndex + 1, subtrees := r.2, root := r.1,
         history := Function.update t.history (t.rootIndex + 1) r.1,
         rootIndex := t.rootIndex + 1 } := by
-  have hf : ∀ x, Fin.foldl 26 (fun (p : LeanSpec.F × (Fin 26 → LeanSpec.F)) (height : Fin 26) =>
+  have hf : ∀ x, Fin.foldl 26 (fun (p : Spec.F × (Fin 26 → Spec.F)) (height : Fin 26) =>
       match p with
       | (current, subtrees) =>
         if Nat.testBit t.nextIndex height.val then
-          (LeanSpec.PoseidonHashes.H2 (subtrees height) current, subtrees)
-        else (LeanSpec.PoseidonHashes.H2 current (LeanSpec.Z height.val),
+          (Spec.PoseidonHashes.H2 (subtrees height) current, subtrees)
+        else (Spec.PoseidonHashes.H2 current (Spec.Z height.val),
           Function.update subtrees height current)) x
       = natFold (appendLevel t.nextIndex) x 26 := by
     intro x
     rw [← finFoldlNat]
     congr 1; funext acc j; obtain ⟨cur, sub⟩ := acc
     simp [appendLevel, j.isLt]
-  simp only [LeanSpec.appendEffects, hf]
+  simp only [Spec.appendEffects, hf]
 
 /-- The 26 stored subtrees, as field elements. -/
-def subtreesF (a : Std.Array (Std.Array U8 32#usize) 26#usize) : Fin 26 → LeanSpec.F :=
+def subtreesF (a : Std.Array (Std.Array U8 32#usize) 26#usize) : Fin 26 → Spec.F :=
   fun j => toF a.val[j.val]!
 
-omit [LeanSpec.PoseidonHashes] in
+omit [Spec.PoseidonHashes] in
 theorem subtreesF_set (a : Std.Array (Std.Array U8 32#usize) 26#usize) (i : Usize)
     (v : Std.Array U8 32#usize) (hi : i.val < 26) :
     subtreesF (a.set i v) = Function.update (subtreesF a) ⟨i.val, hi⟩ (toF v) := by
@@ -115,10 +115,10 @@ theorem subtreesF_set (a : Std.Array (Std.Array U8 32#usize) 26#usize) (i : Usiz
 
 /-- **The append loop computes the spec's fold**, if it returns. -/
 theorem appendLoop_ok (H : merkle_tree.Hasher Unit)
-    (hp : ∀ a b h, H.hash_pair a b = ok h → toF h = LeanSpec.PoseidonHashes.H2 (toF a) (toF b))
+    (hp : ∀ a b h, H.hash_pair a b = ok h → toF h = Spec.PoseidonHashes.H2 (toF a) (toF b))
     (z : _) (hzb : H.zero_bytes = ok z)
-    (hZ : ∀ i, i ≤ 26 → toF (z.val[i]!) = LeanSpec.Z i)
-    (index : ℕ) (init : LeanSpec.F × (Fin 26 → LeanSpec.F))
+    (hZ : ∀ i, i ≤ 26 → toF (z.val[i]!) = Spec.Z i)
+    (index : ℕ) (init : Spec.F × (Fin 26 → Spec.F))
     (iter : core.ops.range.Range Usize) (a : Std.Array (Std.Array U8 32#usize) 26#usize)
     (ci : Usize) (cur : Std.Array U8 32#usize) (proof : alloc.vec.Vec (Std.Array U8 32#usize))
     (r : (Std.Array (Std.Array U8 32#usize) 26#usize) × (Std.Array U8 32#usize) ×
@@ -168,7 +168,7 @@ theorem appendLoop_ok (H : merkle_tree.Hasher Unit)
     have hrr := (Result.ok_injective hr).symm
     subst hrr
     have hs26 : it.start.val < 26 := hlt
-    have hzval : toF zb' = LeanSpec.Z it.start.val := by
+    have hzval : toF zb' = Spec.Z it.start.val := by
       have := hZ it.start.val (by omega)
       rw [getElem!_pos _ _ (by simp; omega)] at this
       rw [hzbv]; exact this
@@ -227,7 +227,7 @@ theorem appendLoop_ok (H : merkle_tree.Hasher Unit)
     rw [h26] at hst; exact hst
 
 
-omit [LeanSpec.PoseidonHashes] in
+omit [Spec.PoseidonHashes] in
 theorem histF_set (a : Std.Array (Std.Array U8 32#usize) 100#usize) (i : Usize)
     (v : Std.Array U8 32#usize) (hi : i.val < 100) :
     (fun j : Fin 100 => toF (a.set i v).val[j.val]!)
@@ -244,12 +244,12 @@ theorem histF_set (a : Std.Array (Std.Array U8 32#usize) 100#usize) (i : Usize)
     rw [getElem!_pos _ _ (by simp [hlen]), getElem!_pos _ _ (by simp [hlen])]
     simp [Ne.symm hj']
 
-omit [LeanSpec.PoseidonHashes] in
+omit [Spec.PoseidonHashes] in
 private theorem usize_big : 2 ^ 26 ≤ 2 ^ UScalarTy.Usize.numBits :=
   Nat.pow_le_pow_right (by norm_num)
     (by cases System.Platform.numBits_eq <;> simp_all [UScalarTy.numBits])
 
-omit [LeanSpec.PoseidonHashes] in
+omit [Spec.PoseidonHashes] in
 /-- `x.ok_or e` followed by `?`, on a `some`: continues with the value. -/
 private theorem okOr_some {T β : Type} (v : T) (e : error.ErrorCode)
     (k : core.ops.control_flow.ControlFlow (core.result.Result core.convert.Infallible error.ErrorCode) T → Result β)
@@ -266,7 +266,7 @@ private theorem okOr_some {T β : Type} (v : T) (e : error.ErrorCode)
     simpa [core.result.Result.Insts.CoreOpsTry.branch] using hcf
   exact h
 
-omit [LeanSpec.PoseidonHashes] in
+omit [Spec.PoseidonHashes] in
 /-- `x.ok_or e` followed by `?`, on a `none`: continues with the error. -/
 private theorem okOr_none {T β : Type} (e : error.ErrorCode)
     (k : core.ops.control_flow.ControlFlow (core.result.Result core.convert.Infallible error.ErrorCode) T → Result β)
@@ -286,12 +286,12 @@ private theorem okOr_none {T β : Type} (e : error.ErrorCode)
 /-- **If `append` returns `Ok`, the new tree is the spec's `appendEffects`**, there was room
     (`next_index < 2^26`), the tree keeps its shape, and the other fields are unchanged. -/
 theorem append_ok (H : merkle_tree.Hasher Unit)
-    (hp : ∀ a b h, H.hash_pair a b = ok h → toF h = LeanSpec.PoseidonHashes.H2 (toF a) (toF b))
-    (z : _) (hzb : H.zero_bytes = ok z) (hZ : ∀ i, i ≤ 26 → toF (z.val[i]!) = LeanSpec.Z i)
+    (hp : ∀ a b h, H.hash_pair a b = ok h → toF h = Spec.PoseidonHashes.H2 (toF a) (toF b))
+    (z : _) (hzb : H.zero_bytes = ok z) (hZ : ∀ i, i ≤ 26 → toF (z.val[i]!) = Spec.Z i)
     (leaf : Std.Array U8 32#usize) (t t' : merkle_tree.MerkleTreeAccount)
     (p : alloc.vec.Vec (Std.Array U8 32#usize)) (hshape : TreeShape t)
     (h : merkle_tree.append H leaf t = ok (.Ok p, t')) :
-    toTree t' = LeanSpec.appendEffects (toF leaf) (toTree t) ∧ TreeShape t' ∧
+    toTree t' = Spec.appendEffects (toF leaf) (toTree t) ∧ TreeShape t' ∧
       t.next_index.val < 2 ^ 26 ∧ t'.next_index.val = t.next_index.val + 1 ∧
       t'.authority = t.authority ∧ t'.max_deposit_amount = t.max_deposit_amount ∧
       t'.bump = t.bump := by
@@ -392,7 +392,7 @@ theorem append_ok (H : merkle_tree.Hasher Unit)
     simp only [toTree, Fin.val_add, hnriv]
     rw [Nat.mod_eq_of_lt hidx]; rfl
   rw [appendEffectsFold]
-  have hinit : ((toF leaf, (toTree t).subtrees) : LeanSpec.F × (Fin 26 → LeanSpec.F))
+  have hinit : ((toF leaf, (toTree t).subtrees) : Spec.F × (Fin 26 → Spec.F))
       = (toF leaf, subtreesF t.subtrees) := rfl
   rw [hinit, show (toTree t).nextIndex = t.next_index.val from rfl, ← hloop]
   simp only [toTree]
@@ -404,7 +404,7 @@ theorem append_ok (H : merkle_tree.Hasher Unit)
     simp
 
 
-omit [LeanSpec.PoseidonHashes] in
+omit [Spec.PoseidonHashes] in
 /-- A successful `append` keeps the tree's shape (no hash assumption needed). -/
 theorem append_shape (H : merkle_tree.Hasher Unit)
     (leaf : Std.Array U8 32#usize) (t t' : merkle_tree.MerkleTreeAccount)
@@ -502,7 +502,7 @@ theorem append_shape (H : merkle_tree.Hasher Unit)
   exact ⟨⟨hheight, hsize, by show (UScalar.cast .U64 nri').val < 100; omega⟩, hroomV,
     hv, rfl, rfl, rfl⟩
 
-omit [LeanSpec.PoseidonHashes] in
+omit [Spec.PoseidonHashes] in
 /-- The hash `append`'s loop returns is a Poseidon output, so canonical, once the loop has run
     at least once. -/
 theorem appendLoop_canonical (H : merkle_tree.Hasher Unit)
@@ -553,7 +553,7 @@ theorem appendLoop_canonical (H : merkle_tree.Hasher Unit)
     subst hrr
     exact hcur (by omega)
 
-omit [LeanSpec.PoseidonHashes] in
+omit [Spec.PoseidonHashes] in
 /-- If `append` returns `Ok` and the tree's stored roots are canonical, so are the new tree's:
     the new slot holds the loop's final hash, a Poseidon output. -/
 theorem append_history_canonical (H : merkle_tree.Hasher Unit)
@@ -660,7 +660,7 @@ theorem append_history_canonical (H : merkle_tree.Hasher Unit)
     rw [getElem!_pos _ _ (by simp [hlen])] at this
     simpa [Ne.symm hj] using this
 
-omit [LeanSpec.PoseidonHashes] in
+omit [Spec.PoseidonHashes] in
 /-- `append`'s loop keeps the subtrees canonical: it stores only the running hash (the leaf,
     then Poseidon outputs) and subtrees it read. -/
 theorem appendLoop_subtrees (H : merkle_tree.Hasher Unit)
@@ -734,7 +734,7 @@ theorem appendLoop_subtrees (H : merkle_tree.Hasher Unit)
     subst hrr
     exact ha
 
-omit [LeanSpec.PoseidonHashes] in
+omit [Spec.PoseidonHashes] in
 /-- If `append` returns `Ok`, the leaf and the tree's subtrees are canonical, so are the new
     tree's subtrees. -/
 theorem append_subtrees_canonical (H : merkle_tree.Hasher Unit)
@@ -831,7 +831,7 @@ theorem append_subtrees_canonical (H : merkle_tree.Hasher Unit)
   exact appendLoop_subtrees H hc _ _ _ _ _ _ (by simpa using hhu)
     (fun i hi => hsub ⟨i, hi⟩) hleaf hlp j.val j.isLt
 
-omit [LeanSpec.PoseidonHashes] in
+omit [Spec.PoseidonHashes] in
 /-- `initialize`'s loop writes zero hashes `0 … 25` into the subtrees: canonical if they are. -/
 theorem initLoop_subtrees (iter : core.ops.range.Range Usize)
     (a : Std.Array (Std.Array U8 32#usize) 26#usize) (z : Std.Array (Std.Array U8 32#usize) 41#usize)
@@ -890,7 +890,7 @@ theorem initLoop_subtrees (iter : core.ops.range.Range Usize)
     subst hrr
     exact ha
 
-omit [LeanSpec.PoseidonHashes] in
+omit [Spec.PoseidonHashes] in
 /-- With no room, `append` returns `MerkleTreeFull` and leaves the tree as it was. -/
 theorem append_full (H : merkle_tree.Hasher Unit) (leaf : Std.Array U8 32#usize)
     (t : merkle_tree.MerkleTreeAccount) (hheight : t.height.val = 26)
@@ -907,10 +907,10 @@ theorem append_full (H : merkle_tree.Hasher Unit) (leaf : Std.Array U8 32#usize)
   rw [hmc', bind_tc_ok, if_neg hno]
 
 /-- `append_ok` with the hash assumptions of `HashesAgree`. -/
-theorem append_ok' [LeanSpec.Sha] (c : Crypto) (hashes : HashesAgree c) (leaf : Std.Array U8 32#usize)
+theorem append_ok' [Spec.Sha] (c : Crypto) (hashes : HashesAgree c) (leaf : Std.Array U8 32#usize)
     (t t' : merkle_tree.MerkleTreeAccount) (p : alloc.vec.Vec (Std.Array U8 32#usize))
     (hshape : TreeShape t) (h : merkle_tree.append c.hasher leaf t = ok (.Ok p, t')) :
-    toTree t' = LeanSpec.appendEffects (toF leaf) (toTree t) ∧ TreeShape t' ∧
+    toTree t' = Spec.appendEffects (toF leaf) (toTree t) ∧ TreeShape t' ∧
       t.next_index.val < 2 ^ 26 ∧ t'.next_index.val = t.next_index.val + 1 ∧
       t'.authority = t.authority ∧ t'.max_deposit_amount = t.max_deposit_amount ∧
       t'.bump = t.bump := by

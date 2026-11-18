@@ -5,7 +5,7 @@ import Spec.Vocabulary
 All lemmas and the proofs of the theorems stated in `Spec/Statements.lean`. Lean checks
 them; the statements are enough to know what is guaranteed. -/
 
-namespace LeanSpec
+namespace Spec
 open PoseidonHashes Sha
 
 /-- `[NeZero p]` for the field-to-`ℤ` lifting lemmas used by G1c (`p` is a `def`, so the
@@ -24,7 +24,7 @@ lemma InitParams.withdrawalFeeRate_init (params : InitParams) :
   rw [params.withdrawalFeeRate_default]; decide
 
 variable [PoseidonHashes] [Sha] [Groups]
-variable [AddCommGroup G1] [Module F G1] [AddCommGroup G2] [Module F G2] [CommGroup GT]
+variable [AddCommGroup G1] [Module F G1] [CommGroup GT]
 variable [Pairing] [Deployment]
 
 --/////////////////////////////////////////
@@ -2543,4 +2543,4 @@ theorem admin_powers_limited
     hm params.feeErrorMargin_init, hd params.depositFeeRate_init,
     hw params.withdrawalFeeRate_init⟩
 
-end LeanSpec
+end Spec

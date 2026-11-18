@@ -181,11 +181,11 @@ every theorem is tagged with why it is fair to assume:
 
 -/
 
-namespace LeanSpec.Goals
-open LeanSpec PoseidonHashes Sha
+namespace Spec.Goals
+open Spec PoseidonHashes Sha
 
 variable [PoseidonHashes] [Sha] [Groups]
-variable [AddCommGroup G1] [Module F G1] [AddCommGroup G2] [Module F G2] [CommGroup GT]
+variable [AddCommGroup G1] [Module F G1] [CommGroup GT]
 variable [Pairing] [Deployment]
 
 /-! ## G1. Balance -/
@@ -230,7 +230,7 @@ theorem spends_are_genuine
     (r : Run (initWorld params))                           -- [attacker] any history
     (wit : ℕ → Witness) (hwit : r.WitnessesFor wit) :      -- [assumption T1] the witnesses of its proofs
     SpendsAreGenuine r wit :=
-  fun j hj i hne => (LeanSpec.spends_are_genuine params r wit hwit j hj i hne).imp
+  fun j hj i hne => (Spec.spends_are_genuine params r wit hwit j hj i hne).imp
     (fun h => GenuineInput.of_eq h) id
 
 /-! ### G1b. No note is spent twice
@@ -268,7 +268,7 @@ theorem no_double_spend
     (wit : ℕ → Witness) (hwit : r.WitnessesFor wit) :      -- [assumption T1] the witnesses of its proofs
     NoDoubleSpend r wit :=
   fun j hj j' hj' i i' ⟨hdiff, hne, hne', hsame⟩ =>
-    LeanSpec.no_double_spend params r wit hwit j j' hj hj' i i' hne hne' hdiff hsame
+    Spec.no_double_spend params r wit hwit j j' hj hj' i i' hne hne' hdiff hsame
 
 /-! ### G1c. No inflation: the pool's SOL exactly backs the unspent notes
 
@@ -319,7 +319,7 @@ theorem balance
     (r : Run (initWorld params))                           -- [attacker] any history
     (wit : ℕ → Witness) (hwit : r.WitnessesFor wit) :      -- [assumption T1] the witnesses of its proofs
     PoolBacksNotes params r wit :=
-  LeanSpec.balance params r wit hwit
+  Spec.balance params r wit hwit
 
 /-! ### G1d. Only the owner's secret key can spend a note
 
@@ -354,7 +354,7 @@ theorem honest_note_spent_only_with_owner_key
     (wit : ℕ → Witness) (hwit : r.WitnessesFor wit) :      -- [assumption T1] the witnesses of its proofs
     OnlyOwnerSpends r wit :=
   fun j hj i skOwner ⟨hne, hOwner⟩ =>
-    LeanSpec.honest_note_spent_only_with_owner_key params r wit hwit j hj i hne skOwner hOwner
+    Spec.honest_note_spent_only_with_owner_key params r wit hwit j hj i hne skOwner hOwner
 
 /-! ## G2. Non-malleability -/
 
@@ -417,7 +417,7 @@ theorem same_public_inputs_same_external_data
     (h' : transact T' oldWorld' newWorld') :               -- [premise] if the program accepted it
     -- Then, the same payout must happen (the only thing to change is the signer)
     SamePayout T T' :=
-  LeanSpec.same_public_inputs_same_external_data T T' oldWorld' newWorld' hT h' hSame
+  Spec.same_public_inputs_same_external_data T T' oldWorld' newWorld' hT h' hSame
 
 /-! ### G2b. Revealing a note's nullifier requires the owner's key
 
@@ -447,7 +447,7 @@ theorem shared_nullifier_requires_owner_key
     -- Or a break has happened
     ∨ NullifierCollision w i w' i'
     ∨ H1Collision (w.inSk i) (w'.inSk i') :=
-  (LeanSpec.shared_nullifier_requires_owner_key x x' w w' hRel hRel' i i' hShared).imp_right
+  (Spec.shared_nullifier_requires_owner_key x x' w w' hRel hRel' i i' hShared).imp_right
     or_assoc.mpr
 
 /-! ## G3. Liveness -/
@@ -514,7 +514,7 @@ theorem honest_spend_is_accepted
     (hHonest : HonestSpend r wit inputs witness k)         -- [owner]: everything the owner controls
     (hLimits : LimitsNotHit r.final inputs) :              -- [limit]: what can block it
     CanBeAccepted inputs r.final ∨ SpendBlockedByBreak r wit inputs witness k :=
-  LeanSpec.honest_spend_is_accepted params r wit hwit inputs witness k hHonest hLimits
+  Spec.honest_spend_is_accepted params r wit hwit inputs witness k hHonest hLimits
 
 /-! ### G3b. Admin config changes can't lock withdrawals
 
@@ -580,7 +580,7 @@ theorem admins_cannot_lock_withdrawals
       ∧ spentAmt / 2 ≤ payout
       ∧ WayIsAccepted r wit spentAmt payout fee :=
   let ⟨payout, fee, h0, hsum, hfee, hhalf, hacc⟩ :=
-    LeanSpec.admins_cannot_lock_withdrawals params r wit hwit spentAmt hSpentAmt
+    Spec.admins_cannot_lock_withdrawals params r wit hwit spentAmt hSpentAmt
   ⟨payout, fee, ⟨h0, hsum, hfee⟩, hhalf,
     fun inputs witness k hH _ hA hF hW hR hB => hacc inputs witness k hH hA hF hW hR hB⟩
 
@@ -610,7 +610,7 @@ theorem only_signers_pay
                                                            --   pool before and after it
     (h : transact inputs oldWorld newWorld) :              -- [premise] the program accepted it
     OnlySignersPay inputs oldWorld newWorld :=
-  fun k hk hlost => LeanSpec.only_signers_pay oldWorld newWorld inputs h k hk hlost
+  fun k hk hlost => Spec.only_signers_pay oldWorld newWorld inputs h k hk hlost
 
 /-! ### G4b. Every account receives and pays exactly what it should
 
@@ -658,7 +658,7 @@ theorem exact_payouts
                                                            --   pool before and after it
     (h : transact inputs oldWorld newWorld) :              -- [premise] the program accepted it
     ExactPayouts inputs oldWorld newWorld :=
-  have hp := LeanSpec.exact_payouts oldWorld newWorld inputs h
+  have hp := Spec.exact_payouts oldWorld newWorld inputs h
   ⟨hp.1, hp.2⟩
 
 /-! ## G5. Admin control
@@ -687,7 +687,7 @@ theorem only_authorities_change_config
     (params : InitParams)                                  -- [premise] the parameters the pool is initialized with
     (r : Run (initWorld params)) :                         -- [attacker] any history
     OnlyAuthoritiesChangeConfig params r :=
-  LeanSpec.only_authorities_change_config params r
+  Spec.only_authorities_change_config params r
 
 /-! ### G5b. Admins change only the fees and the deposit limit, within bounds
 
@@ -713,6 +713,6 @@ theorem admin_powers_limited
     (params : InitParams)                                  -- [premise] the parameters the pool is initialized with
     (r : Run (initWorld params)) :                         -- [attacker] any history
     AdminPowersLimited params r :=
-  LeanSpec.admin_powers_limited params r
+  Spec.admin_powers_limited params r
 
-end LeanSpec.Goals
+end Spec.Goals

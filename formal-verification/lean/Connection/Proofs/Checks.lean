@@ -18,7 +18,7 @@ private theorem val_natCast_small {n : ℕ} (h : n < 2 ^ 64) : (n : Fr).val = n 
 
 private theorem checkPublicAmount_iff (extAmount : I64) (fee : U64) (pa : Std.Array U8 32#usize) :
     ∃ b, zkcash_core.utils.check_public_amount arkFr extAmount fee pa = ok b ∧
-      (b = true ↔ LeanSpec.pubAmtConsistent extAmount.val fee.val (toF pa) ∧ LeanSpec.amountsInRange extAmount.val fee.val ∧
+      (b = true ↔ Spec.pubAmtConsistent extAmount.val fee.val (toF pa) ∧ Spec.amountsInRange extAmount.val fee.val ∧
         extAmount.val ≠ 0) := by
   have hlo : -2 ^ 63 ≤ extAmount.val := by scalar_tac
   have hhi : extAmount.val < 2 ^ 63 := by scalar_tac
@@ -28,7 +28,7 @@ private theorem checkPublicAmount_iff (extAmount : I64) (fee : U64) (pa : Std.Ar
   by_cases hmin : extAmount = core.num.I64.MIN
   · have hv : extAmount.val = -9223372036854775808 := by rw [hmin]; rfl
     refine ⟨false, by simp [hmin], ?_⟩
-    simp [LeanSpec.amountsInRange, hv]
+    simp [Spec.amountsInRange, hv]
   · have hv : extAmount.val ≠ -9223372036854775808 := by
       intro h; apply hmin; rw [IScalar.eq_equiv, h]; rfl
     by_cases hpos : extAmount ≥ 0#i64
@@ -42,11 +42,11 @@ private theorem checkPublicAmount_iff (extAmount : I64) (fee : U64) (pa : Std.Ar
         simp only [Bool.false_eq_true, false_iff]
         rintro ⟨hp, -, h0⟩; have := hp.1 (by omega); omega
       · refine ⟨_, by simp [hle]; rfl, ?_⟩
-        simp only [decide_eq_true_eq, LeanSpec.pubAmtConsistent, toF]
+        simp only [decide_eq_true_eq, Spec.pubAmtConsistent, toF]
         have e : ((extAmount.val.toNat : ℕ) : Fr) = (extAmount.val : Fr) := by
           rw [← Int.cast_natCast, Int.toNat_of_nonneg hpos']
         constructor
-        · intro h; refine ⟨⟨fun _ => by omega, ?_⟩, by simp only [LeanSpec.amountsInRange]; omega, by omega⟩
+        · intro h; refine ⟨⟨fun _ => by omega, ?_⟩, by simp only [Spec.amountsInRange]; omega, by omega⟩
           show ((beNat pa : ℕ) : Fr) = (extAmount.val : Fr) - ((fee.val : ℕ) : Fr)
           rw [← h, e]
         · rintro ⟨⟨-, h⟩, -, -⟩
@@ -62,11 +62,11 @@ private theorem checkPublicAmount_iff (extAmount : I64) (fee : U64) (pa : Std.Ar
         rw [IScalar.hcast_val_eq, hvv]; congr 1; exact Int.emod_eq_of_lt (by omega) (by simp; omega)
       simp only [hmin, hpos, if_false, core.num.I64.checked_neg, hvok, Option.ofResult, bind_tc_ok]
       refine ⟨_, rfl, ?_⟩
-      simp only [decide_eq_true_eq, LeanSpec.pubAmtConsistent, toF]
+      simp only [decide_eq_true_eq, Spec.pubAmtConsistent, toF]
       have e : (((IScalar.hcast UScalarTy.U64 v).val : ℕ) : Fr) = -(extAmount.val : Fr) := by
         rw [hc, ← Int.cast_natCast, Int.toNat_of_nonneg (by omega), Int.cast_neg]
       constructor
-      · intro h; refine ⟨⟨fun h' => absurd h' (by omega), ?_⟩, by simp only [LeanSpec.amountsInRange]; omega, by omega⟩
+      · intro h; refine ⟨⟨fun h' => absurd h' (by omega), ?_⟩, by simp only [Spec.amountsInRange]; omega, by omega⟩
         show ((beNat pa : ℕ) : Fr) = (extAmount.val : Fr) - ((fee.val : ℕ) : Fr)
         rw [← h, e]; ring
       · rintro ⟨⟨-, h⟩, -, -⟩
@@ -75,7 +75,7 @@ private theorem checkPublicAmount_iff (extAmount : I64) (fee : U64) (pa : Std.Ar
         rw [e, h']; ring
 theorem checkPublicAmount_eq (extAmount : I64) (fee : U64) (pa : Std.Array U8 32#usize) :
     zkcash_core.utils.check_public_amount arkFr extAmount fee pa
-      = ok (decide (LeanSpec.pubAmtConsistent extAmount.val fee.val (toF pa) ∧ LeanSpec.amountsInRange extAmount.val fee.val ∧
+      = ok (decide (Spec.pubAmtConsistent extAmount.val fee.val (toF pa) ∧ Spec.amountsInRange extAmount.val fee.val ∧
         extAmount.val ≠ 0)) := by
   obtain ⟨b, hb, hiff⟩ := checkPublicAmount_iff extAmount fee pa
   rw [hb]; cases b <;> simp_all <;> exact hiff
@@ -85,18 +85,18 @@ def zeroBytes : Std.Array U8 32#usize := Std.Array.repeat 32#usize 0#u8
 
 theorem checkPublicAmount_L1 :
     zkcash_core.utils.check_public_amount arkFr 0#i64 0#u64 zeroBytes = ok false ∧
-      LeanSpec.pubAmtConsistent (0#i64).val (0#u64).val (toF zeroBytes) ∧
-        LeanSpec.amountsInRange (0#i64).val (0#u64).val := by
+      Spec.pubAmtConsistent (0#i64).val (0#u64).val (toF zeroBytes) ∧
+        Spec.amountsInRange (0#i64).val (0#u64).val := by
   have hb : beNat zeroBytes = 0 := by rfl
   have hz : toF zeroBytes = 0 := by simp only [toF, hb, Nat.cast_zero]
   refine ⟨?_, ?_⟩
   · rw [checkPublicAmount_eq]; simp
-  · simp [LeanSpec.pubAmtConsistent, LeanSpec.amountsInRange, hz]
+  · simp [Spec.pubAmtConsistent, Spec.amountsInRange, hz]
 
 theorem checkPublicAmount_not_square :
     ¬ ∀ (extAmount : I64) (fee : U64) (pa : Std.Array U8 32#usize),
       zkcash_core.utils.check_public_amount arkFr extAmount fee pa
-        = ok (decide (LeanSpec.pubAmtConsistent extAmount.val fee.val (toF pa) ∧ LeanSpec.amountsInRange extAmount.val fee.val)) := by
+        = ok (decide (Spec.pubAmtConsistent extAmount.val fee.val (toF pa) ∧ Spec.amountsInRange extAmount.val fee.val)) := by
   intro h
   obtain ⟨h1, h2⟩ := checkPublicAmount_L1
   have := (h 0#i64 0#u64 zeroBytes).symm.trans h1
@@ -272,8 +272,8 @@ theorem toF_injOn {a b : Std.Array U8 32#usize} (ha : Canonical a) (hb : Canonic
 
 /-- The spec's big-endian reading of code bytes is the code's. -/
 theorem natOfBE_toBytes (l : List U8) :
-    LeanSpec.natOfBE (toBytes l) = l.foldl (fun acc x => acc * 256 + x.val) 0 := by
-  unfold LeanSpec.natOfBE toBytes
+    Spec.natOfBE (toBytes l) = l.foldl (fun acc x => acc * 256 + x.val) 0 := by
+  unfold Spec.natOfBE toBytes
   rw [List.foldl_map]
   congr 1; funext acc x
   show 256 * acc + x.val = acc * 256 + x.val
@@ -283,21 +283,21 @@ theorem toBytes_length (l : List U8) : (toBytes l).length = l.length := by simp 
 
 /-- A 32-byte array, as the spec's bytes: the spec reads the same number (`beNat`). -/
 theorem natOfBE_toBytes_arr (b : Std.Array U8 32#usize) :
-    LeanSpec.natOfBE (toBytes b.val) = beNat b := natOfBE_toBytes b.val
+    Spec.natOfBE (toBytes b.val) = beNat b := natOfBE_toBytes b.val
 
 /-- A 32-byte array is the spec's canonical encoding of `x` exactly when it is canonical and
     `toF` maps it to `x`. -/
-theorem canonicalEncoding_iff (b : Std.Array U8 32#usize) (x : LeanSpec.F) :
-    LeanSpec.canonicalEncoding (toBytes b.val) x ↔ Canonical b ∧ toF b = x := by
-  unfold LeanSpec.canonicalEncoding
+theorem canonicalEncoding_iff (b : Std.Array U8 32#usize) (x : Spec.F) :
+    Spec.canonicalEncoding (toBytes b.val) x ↔ Canonical b ∧ toF b = x := by
+  unfold Spec.canonicalEncoding
   rw [natOfBE_toBytes_arr, toBytes_length, Std.Array.property]
   exact ⟨fun ⟨_, h1, h2⟩ => ⟨h1, h2⟩, fun ⟨h1, h2⟩ => ⟨rfl, h1, h2⟩⟩
 
 /-- The root's bytes are known (byte level) exactly when they are canonical and their field
     element is known. -/
-theorem rootBytesKnown_iff (T : LeanSpec.Tree) (b : Std.Array U8 32#usize) :
-    LeanSpec.rootBytesKnown T (toBytes b.val) ↔ Canonical b ∧ LeanSpec.rootKnown T (toF b) := by
-  unfold LeanSpec.rootBytesKnown
+theorem rootBytesKnown_iff (T : Spec.Tree) (b : Std.Array U8 32#usize) :
+    Spec.rootBytesKnown T (toBytes b.val) ↔ Canonical b ∧ Spec.rootKnown T (toF b) := by
+  unfold Spec.rootBytesKnown
   rw [natOfBE_toBytes_arr, toBytes_length, Std.Array.property]
   exact ⟨fun ⟨_, h1, h2⟩ => ⟨h1, h2⟩, fun ⟨h1, h2⟩ => ⟨rfl, h1, h2⟩⟩
 
@@ -340,12 +340,12 @@ theorem isKnownRoot_eq (t : zkcash_core.merkle_tree.MerkleTreeAccount) (root : S
     (hshape : TreeShape t)
     (hhist : ∀ j : Fin 100, Canonical t.root_history.val[j.val]!) :
     zkcash_core.merkle_tree.is_known_root t root
-      = ok (decide (LeanSpec.rootBytesKnown (toTree t) (toBytes root.val))) := by
+      = ok (decide (Spec.rootBytesKnown (toTree t) (toBytes root.val))) := by
   obtain ⟨b, hb, hiff⟩ := (WP.spec_equiv_exists _ _).mp (isKnownRootSpec t root hshape.2.1 hshape.2.2)
   have key : (root ≠ Std.Array.repeat 32#usize 0#u8 ∧ ∃ j : Fin 100, t.root_history.val[j.val]! = root)
-      ↔ LeanSpec.rootBytesKnown (toTree t) (toBytes root.val) := by
+      ↔ Spec.rootBytesKnown (toTree t) (toBytes root.val) := by
     rw [rootBytesKnown_iff]
-    simp only [LeanSpec.rootKnown, toTree, Set.mem_range]
+    simp only [Spec.rootKnown, toTree, Set.mem_range]
     constructor
     · rintro ⟨hne, j, hj⟩
       have hroot : Canonical root := hj ▸ hhist j
@@ -353,7 +353,7 @@ theorem isKnownRoot_eq (t : zkcash_core.merkle_tree.MerkleTreeAccount) (root : S
         fun h0 => hne (toF_injOn hroot zero_canonical (h0.trans toF_zero.symm))⟩
     · rintro ⟨hroot, ⟨j, hj⟩, hne⟩
       exact ⟨fun h => hne (by rw [h, toF_zero]), j, toF_injOn (hhist j) hroot hj⟩
-  have hbd : b = decide (LeanSpec.rootBytesKnown (toTree t) (toBytes root.val)) := by
+  have hbd : b = decide (Spec.rootBytesKnown (toTree t) (toBytes root.val)) := by
     have h := hiff.trans key
     cases b <;> simp_all
   rw [hb, hbd]
@@ -361,11 +361,11 @@ theorem isKnownRoot_eq (t : zkcash_core.merkle_tree.MerkleTreeAccount) (root : S
 theorem isKnownRoot_safe (t : zkcash_core.merkle_tree.MerkleTreeAccount) (root : Std.Array U8 32#usize)
     (hshape : TreeShape t) (hroot : Canonical root)
     (h : zkcash_core.merkle_tree.is_known_root t root = ok true) :
-    LeanSpec.rootKnown (toTree t) (toF root) := by
+    Spec.rootKnown (toTree t) (toF root) := by
   obtain ⟨b, hb, hiff⟩ := (WP.spec_equiv_exists _ _).mp (isKnownRootSpec t root hshape.2.1 hshape.2.2)
   have hbt : b = true := (Result.ok_injective (h.symm.trans hb)).symm
   obtain ⟨hne, j, hj⟩ := hiff.mp hbt
-  simp only [LeanSpec.rootKnown, toTree, Set.mem_range]
+  simp only [Spec.rootKnown, toTree, Set.mem_range]
   exact ⟨⟨j, congrArg toF hj⟩, fun h0 => hne (toF_injOn hroot zero_canonical (h0.trans toF_zero.symm))⟩
 
 /-! ## `validate_fee` ↔ `feeSufficient` -/
@@ -516,8 +516,8 @@ theorem validateFee_iff (extAmt : I64) (fee : U64) (c : zkcash_core.admin.Global
     (hm : c.fee_error_margin.val ≤ 10000) :
     zkcash_core.utils.validate_fee extAmt fee c.deposit_fee_rate c.withdrawal_fee_rate
         c.fee_error_margin = ok (.Ok ()) ↔
-      extAmt.val ≠ -9223372036854775808 ∧ LeanSpec.feeSufficient (toConfig c t) extAmt.val fee.val := by
-  simp only [LeanSpec.feeSufficient, toConfig]
+      extAmt.val ≠ -9223372036854775808 ∧ Spec.feeSufficient (toConfig c t) extAmt.val fee.val := by
+  simp only [Spec.feeSufficient, toConfig]
   by_cases hpos : extAmt > 0#i64
   · have hpos' : extAmt.val > 0 := by scalar_tac
     have hext : (IScalar.hcast .U128 extAmt).val = extAmt.val.natAbs := by
@@ -589,13 +589,13 @@ theorem validateFee_eq_spec (extAmt : I64) (fee : U64) (c : zkcash_core.admin.Gl
     (hm : c.fee_error_margin.val ≤ 10000) :
     zkcash_core.utils.validate_fee extAmt fee c.deposit_fee_rate c.withdrawal_fee_rate
         c.fee_error_margin = ok (.Ok ()) ↔
-      LeanSpec.feeSufficient (toConfig c t) extAmt.val fee.val ∧
-        LeanSpec.amountsInRange extAmt.val fee.val := by
+      Spec.feeSufficient (toConfig c t) extAmt.val fee.val ∧
+        Spec.amountsInRange extAmt.val fee.val := by
   rw [validateFee_iff extAmt fee c t hd hw hm]
   have hlo : -2 ^ 63 ≤ extAmt.val := by scalar_tac
   have hhi : extAmt.val < 2 ^ 63 := by scalar_tac
   have hfee : fee.val < 2 ^ 64 := by scalar_tac
-  simp only [LeanSpec.amountsInRange]
+  simp only [Spec.amountsInRange]
   constructor
   · rintro ⟨h1, h2⟩; exact ⟨h2, by omega, hhi, hfee⟩
   · rintro ⟨h2, h1, -, -⟩; exact ⟨by omega, h2⟩

@@ -33,7 +33,7 @@ core-model (`PrivacyCash/Model/Execution.lean`).
 
 namespace Connection
 
-variable [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
+variable [Spec.PoseidonHashes] [Spec.Sha]
 
 /-- `HashesAgree c` (assumed): the spec's hash functions are the program's. The spec leaves `H2`
     and `sha256` abstract (its goals hold for any hash, unless a hash break occurs); this ties them
@@ -42,11 +42,11 @@ variable [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
     spec's empty-subtree roots `Z`, which the spec computes from `H2`. -/
 structure HashesAgree (c : Crypto) : Prop where
   /-- Poseidon of two tree nodes is the spec's `H2`. -/
-  poseidon : ∀ a b h, c.hasher.hash_pair a b = ok h → toF h = LeanSpec.PoseidonHashes.H2 (toF a) (toF b)
+  poseidon : ∀ a b h, c.hasher.hash_pair a b = ok h → toF h = Spec.PoseidonHashes.H2 (toF a) (toF b)
   /-- The program's zero hashes are the spec's empty-subtree roots `Z 0, …, Z 26`. -/
-  zeroBytes : ∃ z, c.hasher.zero_bytes = ok z ∧ ∀ i, i ≤ 26 → toF (z.val[i]!) = LeanSpec.Z i
+  zeroBytes : ∃ z, c.hasher.zero_bytes = ok z ∧ ∀ i, i ≤ 26 → toF (z.val[i]!) = Spec.Z i
   /-- SHA-256 is the spec's `sha256` (used for the external data hash). -/
-  sha256 : ∀ x h, c.sha256.hash x = ok h → toBytes h.val = LeanSpec.Sha.sha256 (toBytes x.val)
+  sha256 : ∀ x h, c.sha256.hash x = ok h → toBytes h.val = Spec.Sha.sha256 (toBytes x.val)
   /-- Poseidon's outputs are canonical: their big-endian value is below the field modulus.
       True of the program's hasher: `light-poseidon` computes in `ark_bn254::Fr` and writes
       the result with `into_bigint().to_bytes_be()`, which is always below the field's modulus,

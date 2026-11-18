@@ -7,7 +7,7 @@ import Mathlib.Algebra.BigOperators.Fin
 
 --///////// Note: SOL ONLY.
 
-namespace LeanSpec
+namespace Spec
 
 -- Labels for what the spec adds beyond the documentation:
 -- ADDED MANUALLY (docs silent): a rule the documentation does not state; listed in
@@ -227,7 +227,6 @@ abbrev G2 : Type := Groups.G2
 abbrev GT : Type := Groups.GT
 variable
   [AddCommGroup G1] [Module F G1]
-  [AddCommGroup G2] [Module F G2]
   [CommGroup GT]
 
 -- The pairing used by Groth16 verification. Meant to be bilinear (BN254's optimal ate pairing),
@@ -950,4 +949,4 @@ inductive ReachableWorld: World → World → Prop where
       transact txInputs (w2.withUpdatedValues b) w3 →
        ReachableWorld w1 w3
 
-end LeanSpec
+end Spec

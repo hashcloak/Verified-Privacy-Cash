@@ -129,17 +129,17 @@ them (`syscallGroups`, `syscallPairing`, `programKey`), with the group structure
 as local instances by statements about the toy. -/
 
 section
-@[reducible] def toySpecGroups : LeanSpec.Groups := syscallGroups toyC
+@[reducible] def toySpecGroups : Spec.Groups := syscallGroups toyC
 attribute [local instance] toySpecGroups
-@[reducible] def toySpecG1Group : AddCommGroup LeanSpec.G1 := inferInstanceAs (AddCommGroup Unit)
-@[reducible] def toySpecG2Group : AddCommGroup LeanSpec.G2 := inferInstanceAs (AddCommGroup Unit)
+@[reducible] def toySpecG1Group : AddCommGroup Spec.G1 := inferInstanceAs (AddCommGroup Unit)
+@[reducible] def toySpecG2Group : AddCommGroup Spec.G2 := inferInstanceAs (AddCommGroup Unit)
 attribute [local instance] toySpecG1Group toySpecG2Group
-@[reducible] def toySpecG1Module : Module LeanSpec.F LeanSpec.G1 := inferInstanceAs (Module LeanSpec.F Unit)
-@[reducible] def toySpecG2Module : Module LeanSpec.F LeanSpec.G2 := inferInstanceAs (Module LeanSpec.F Unit)
-@[reducible] def toySpecGTGroup : CommGroup LeanSpec.GT := inferInstanceAs (CommGroup Unit)
+@[reducible] def toySpecG1Module : Module Spec.F Spec.G1 := inferInstanceAs (Module Spec.F Unit)
+@[reducible] def toySpecG2Module : Module Spec.F Spec.G2 := inferInstanceAs (Module Spec.F Unit)
+@[reducible] def toySpecGTGroup : CommGroup Spec.GT := inferInstanceAs (CommGroup Unit)
 attribute [local instance] toySpecG1Module toySpecG2Module toySpecGTGroup
-@[reducible] def toySpecPairing : LeanSpec.Pairing := syscallPairing toyC
-@[reducible] def toySpecDeployment : LeanSpec.Deployment := ⟨programKey toyC⟩
+@[reducible] def toySpecPairing : Spec.Pairing := syscallPairing toyC
+@[reducible] def toySpecDeployment : Spec.Deployment := ⟨programKey toyC⟩
 end
 
 /-! ## The hashes -/
@@ -156,9 +156,9 @@ def toySha256 : ext_data.Sha256 Unit := ⟨fun _ => ok zeros32⟩
     The code never computes `H1`, `H3`, `H4` (only the circuit does); they are chosen so that
     the toy run's transactions have circuit witnesses (`Proofs/ToyRun.lean`): `H1` is the
     identity, `H3` and `H4` add their arguments. -/
-@[reducible] def toyPoseidon : LeanSpec.PoseidonHashes :=
+@[reducible] def toyPoseidon : Spec.PoseidonHashes :=
   ⟨fun a => a, fun _ _ => 1, fun a b c => a + b + c, fun a b c d => a + b + c + d⟩
-@[reducible] def toySpecSha : LeanSpec.Sha := ⟨fun _ => List.replicate 32 0⟩
+@[reducible] def toySpecSha : Spec.Sha := ⟨fun _ => List.replicate 32 0⟩
 
 attribute [local instance] toyPoseidon toySpecSha
 
@@ -173,7 +173,7 @@ theorem toyZ_canonical (i : ℕ) (hi : i ≤ 26) : Canonical (toyZ.val[i]!) := b
   | zero => rw [toyZ_zero]; exact canonical_zeros32
   | succ i => rw [toyZ_succ i (by omega)]; exact canonical_one32
 
-theorem spec_Z (i : ℕ) : LeanSpec.Z i = if i = 0 then 0 else 1 := by
+theorem spec_Z (i : ℕ) : Spec.Z i = if i = 0 then 0 else 1 := by
   cases i <;> rfl
 
 theorem toyHashesAgree : HashesAgree toyCrypto where
@@ -254,7 +254,7 @@ theorem pk_ne {m n : U8} (h : m ≠ n) : pk m ≠ pk n := by
 
 /-- The nullifier accounts' addresses the handler examples give the spec: the transaction's own
     two nullifier accounts. -/
-def handlerAddr (a : TransactAccounts) : Fin 2 → LeanSpec.Bytes → LeanSpec.Pubkey :=
+def handlerAddr (a : TransactAccounts) : Fin 2 → Spec.Bytes → Spec.Pubkey :=
   fun i _ => toPubkey (![a.nullifier0, a.nullifier1] i)
 
 /-- In a handler example, the new nullifier accounts are the transaction's own, so the spec's
@@ -262,13 +262,13 @@ def handlerAddr (a : TransactAccounts) : Fin 2 → LeanSpec.Bytes → LeanSpec.P
 theorem handlerAddr_facts
     (signers : List Pubkey) (a : TransactAccounts) (proof : transact.Proof) (ext : I64) (fee : U64)
     (out1 out2 : Slice U8) (s₁ : State) (v : U64) (tree : merkle_tree.MerkleTreeAccount)
-    (config : admin.GlobalConfig) (accts : Finset LeanSpec.Pubkey)
+    (config : admin.GlobalConfig) (accts : Finset Spec.Pubkey)
     (h01 : a.nullifier0 ≠ a.nullifier1) (h0p : a.nullifier0 ≠ a.treeTokenAccount)
     (h1p : a.nullifier1 ≠ a.treeTokenAccount) (hs0 : a.signer ≠ a.nullifier0)
     (hs1 : a.signer ≠ a.nullifier1) (hsp : a.signer ≠ a.treeTokenAccount) :
-    LeanSpec.nullifierAccountsCreatable (handlerWorld a s₁ v tree config accts (handlerAddr a)).state
+    Spec.nullifierAccountsCreatable (handlerWorld a s₁ v tree config accts (handlerAddr a)).state
         (toInputs signers a proof ext fee out1 out2) ∧
-      LeanSpec.signerNotPoolNotNullifiers (toInputs signers a proof ext fee out1 out2)
+      Spec.signerNotPoolNotNullifiers (toInputs signers a proof ext fee out1 out2)
         (handlerWorld a s₁ v tree config accts (handlerAddr a)).state := by
   have inj : ∀ {x y : Pubkey}, x ≠ y → toPubkey x ≠ toPubkey y := fun h e => h (toPubkey_inj e)
   exact ⟨⟨inj h01, inj h0p, inj h1p⟩, inj hsp, inj hs0, inj hs1⟩
@@ -286,17 +286,17 @@ theorem toy_zeros_decodes : toyC.decodeG1 zeros64 = some () := by
   simp only [toyC, decode_zeros64]; rfl
 
 /-- The spec's preconditions for the handler's view, with the groups' instances as parameters. -/
-def HandlerPre (G1 G2 GT : Type) [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGroup G2]
-    [Module LeanSpec.F G2] [CommGroup GT] [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
+def HandlerPre (G1 G2 GT : Type) [AddCommGroup G1] [Module Spec.F G1] [AddCommGroup G2]
+    [Module Spec.F G2] [CommGroup GT] [Spec.PoseidonHashes] [Spec.Sha]
     (signers : List Pubkey) (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT)
     (a : TransactAccounts) (s₁ : State) (v : U64) (tree : merkle_tree.MerkleTreeAccount)
-    (config : admin.GlobalConfig) (accts : Finset LeanSpec.Pubkey)
-    (addr : Fin 2 → LeanSpec.Bytes → LeanSpec.Pubkey) (proof : transact.Proof)
+    (config : admin.GlobalConfig) (accts : Finset Spec.Pubkey)
+    (addr : Fin 2 → Spec.Bytes → Spec.Pubkey) (proof : transact.Proof)
     (ext : I64) (fee : U64) (out1 out2 : Slice U8) : Prop :=
-  @LeanSpec.transactPreconditions _ (syscallGroups C) (inferInstanceAs (AddCommGroup G1))
-    (inferInstanceAs (Module LeanSpec.F G1))
+  @Spec.transactPreconditions _ (syscallGroups C) (inferInstanceAs (AddCommGroup G1))
+    (inferInstanceAs (Module Spec.F G1))
     (inferInstanceAs (CommGroup GT))
-    (syscallPairing C) (@LeanSpec.Deployment.mk (syscallGroups C) (programKey C)) (toInputs signers a proof ext fee out1 out2)
+    (syscallPairing C) (@Spec.Deployment.mk (syscallGroups C) (programKey C)) (toInputs signers a proof ext fee out1 out2)
     (handlerWorld a s₁ v tree config accts addr)
 
 theorem toy_pre_L1 : HandlerPre Unit Unit Unit toySigners toyCrypto toyC toyAccounts (toyState 0#u64)
@@ -311,43 +311,43 @@ theorem toy_pre_L1 : HandlerPre Unit Unit Unit toySigners toyCrypto toyC toyAcco
     toyAccounts 0#i64 0#u64 emptySlice emptySlice toy_alpha_decodes rfl toy_zeros_decodes
   have hk0 : (toyProof verifying_key.VERIFYING_KEY.vk_alpha_g1 zeros32).input_nullifiers.val[0]! = zeros32 := rfl
   have hk1 : (toyProof verifying_key.VERIFYING_KEY.vk_alpha_g1 zeros32).input_nullifiers.val[1]! = one32 := rfl
-  have h10 : (1 : LeanSpec.F) ≠ 0 := by decide
+  have h10 : (1 : Spec.F) ≠ 0 := by decide
   have he : (toInputs toySigners toyAccounts (toyProof verifying_key.VERIFYING_KEY.vk_alpha_g1 zeros32) 0#i64 0#u64
       emptySlice emptySlice).extAmt = 0 := by simp [toInputs]
   have hf : (toInputs toySigners toyAccounts (toyProof verifying_key.VERIFYING_KEY.vk_alpha_g1 zeros32) 0#i64 0#u64
       emptySlice emptySlice).f = 0 := by simp [toInputs]
-  refine @LeanSpec.transactPreconditions.mk _ (syscallGroups toyC) (inferInstanceAs (AddCommGroup Unit))
-    (inferInstanceAs (Module LeanSpec.F Unit))
+  refine @Spec.transactPreconditions.mk _ (syscallGroups toyC) (inferInstanceAs (AddCommGroup Unit))
+    (inferInstanceAs (Module Spec.F Unit))
     (inferInstanceAs (CommGroup Unit))
-    (syscallPairing toyC) (@LeanSpec.Deployment.mk (syscallGroups toyC) (programKey toyC)) _ _
+    (syscallPairing toyC) (@Spec.Deployment.mk (syscallGroups toyC) (programKey toyC)) _ _
     ?_ ?_ ?_ ?_ ⟨_, hdec, rfl⟩ ?_ ?_ hfacts.1 ?_ ?_ ?_ ?_ hfacts.2 ?_ ?_ ?_ ?_ ?_ ?_
-  · show LeanSpec.rootBytesKnown (toTree toyTree) (toBytes one32.val)
+  · show Spec.rootBytesKnown (toTree toyTree) (toBytes one32.val)
     rw [rootBytesKnown_iff]
     refine ⟨canonical_one32, ⟨⟨0, ?_⟩, by rw [toF_one32]; exact h10⟩⟩
     show toF (toyTree.root_history.val[0]!) = toF one32
     rfl
-  · show (LeanSpec.natOfLE (List.replicate 32 0) : LeanSpec.F) = toF zeros32
+  · show (Spec.natOfLE (List.replicate 32 0) : Spec.F) = toF zeros32
     rw [toF_zeros32]; rfl
-  · unfold LeanSpec.feeSufficient; rw [he, hf]; simp
-  · unfold LeanSpec.pubAmtConsistent; rw [he, hf]
+  · unfold Spec.feeSufficient; rw [he, hf]; simp
+  · unfold Spec.pubAmtConsistent; rw [he, hf]
     refine ⟨fun h => by omega, ?_⟩
     show toF zeros32 = _; rw [toF_zeros32]; simp
-  · simp [LeanSpec.nullifiersFresh, LeanSpec.State.spent, handlerWorld]
+  · simp [Spec.nullifiersFresh, Spec.State.spent, handlerWorld]
   · show toF _ ≠ toF _
     rw [hk0, hk1, toF_zeros32, toF_one32]; exact h10.symm
   · intro h; rw [he] at h; omega
-  · unfold LeanSpec.poolSolvent; rw [he, hf]
+  · unfold Spec.poolSolvent; rw [he, hf]
     exact ⟨fun h => by omega, fun h => by omega⟩
-  · unfold LeanSpec.signerSolvent; rw [he]; simp [handlerWorld, LeanSpec.World.nullifierTopUp]
+  · unfold Spec.signerSolvent; rw [he]; simp [handlerWorld, Spec.World.nullifierTopUp]
   · exact List.mem_map_of_mem (f := toPubkey) (List.mem_singleton.mpr rfl)
   · show toyTree.next_index.val ≤ 2 ^ 26 - 2; simp [toyTree]
-  · unfold LeanSpec.amountsInRange; rw [he, hf]; norm_num
-  · simp [LeanSpec.encOutsFit, toInputs, emptySlice, toBytes]
+  · unfold Spec.amountsInRange; rw [he, hf]; norm_num
+  · simp [Spec.encOutsFit, toInputs, emptySlice, toBytes]
   · refine ⟨fun h => ?_, fun h => ?_⟩
     · rw [he] at h; omega
     · rw [hf] at h; omega
   · intro i
-    show LeanSpec.canonicalEncoding (toBytes ((publicInputs _)[i.val]!).val) _
+    show Spec.canonicalEncoding (toBytes ((publicInputs _)[i.val]!).val) _
     rw [canonicalEncoding_iff]
     fin_cases i
     · exact ⟨canonical_one32, rfl⟩
@@ -375,43 +375,43 @@ theorem toy_pre_deposit (pa : Std.Array U8 64#usize) (hpa : toyC.decodeG1 pa = s
     toyAccounts 1#i64 0#u64 emptySlice emptySlice hpa rfl toy_zeros_decodes
   have hk0 : (toyProof pa one32).input_nullifiers.val[0]! = zeros32 := rfl
   have hk1 : (toyProof pa one32).input_nullifiers.val[1]! = one32 := rfl
-  have h10 : (1 : LeanSpec.F) ≠ 0 := by decide
+  have h10 : (1 : Spec.F) ≠ 0 := by decide
   have he : (toInputs toySigners toyAccounts (toyProof pa one32) 1#i64 0#u64
       emptySlice emptySlice).extAmt = 1 := by simp [toInputs]
   have hf : (toInputs toySigners toyAccounts (toyProof pa one32) 1#i64 0#u64
       emptySlice emptySlice).f = 0 := by simp [toInputs]
-  refine @LeanSpec.transactPreconditions.mk _ (syscallGroups toyC) (inferInstanceAs (AddCommGroup Unit))
-    (inferInstanceAs (Module LeanSpec.F Unit))
+  refine @Spec.transactPreconditions.mk _ (syscallGroups toyC) (inferInstanceAs (AddCommGroup Unit))
+    (inferInstanceAs (Module Spec.F Unit))
     (inferInstanceAs (CommGroup Unit))
-    (syscallPairing toyC) (@LeanSpec.Deployment.mk (syscallGroups toyC) (programKey toyC)) _ _
+    (syscallPairing toyC) (@Spec.Deployment.mk (syscallGroups toyC) (programKey toyC)) _ _
     ?_ ?_ ?_ ?_ ⟨_, hdec, rfl⟩ ?_ ?_ hfacts.1 ?_ ?_ ?_ ?_ hfacts.2 ?_ ?_ ?_ ?_ ?_ ?_
-  · show LeanSpec.rootBytesKnown (toTree toyTree) (toBytes one32.val)
+  · show Spec.rootBytesKnown (toTree toyTree) (toBytes one32.val)
     rw [rootBytesKnown_iff]
     refine ⟨canonical_one32, ⟨⟨0, ?_⟩, by rw [toF_one32]; exact h10⟩⟩
     show toF (toyTree.root_history.val[0]!) = toF one32
     rfl
-  · show (LeanSpec.natOfLE (List.replicate 32 0) : LeanSpec.F) = toF zeros32
+  · show (Spec.natOfLE (List.replicate 32 0) : Spec.F) = toF zeros32
     rw [toF_zeros32]; rfl
-  · unfold LeanSpec.feeSufficient; rw [he, hf]; simp [handlerWorld, toConfig, toyConfig]
-  · unfold LeanSpec.pubAmtConsistent; rw [he, hf]
+  · unfold Spec.feeSufficient; rw [he, hf]; simp [handlerWorld, toConfig, toyConfig]
+  · unfold Spec.pubAmtConsistent; rw [he, hf]
     refine ⟨fun _ => by omega, ?_⟩
     show toF one32 = _; rw [toF_one32]; simp
-  · simp [LeanSpec.nullifiersFresh, LeanSpec.State.spent, handlerWorld]
+  · simp [Spec.nullifiersFresh, Spec.State.spent, handlerWorld]
   · show toF _ ≠ toF _
     rw [hk0, hk1, toF_zeros32, toF_one32]; exact h10.symm
   · intro _; rw [he]; show (1 : ℤ) ≤ (toyTree.max_deposit_amount.val : ℤ); simp [toyTree]
-  · unfold LeanSpec.poolSolvent; rw [he, hf]
+  · unfold Spec.poolSolvent; rw [he, hf]
     exact ⟨fun h => by omega, fun h => by omega⟩
-  · unfold LeanSpec.signerSolvent; rw [he]; simp [handlerWorld, toyState, LeanSpec.World.nullifierTopUp]
+  · unfold Spec.signerSolvent; rw [he]; simp [handlerWorld, toyState, Spec.World.nullifierTopUp]
   · exact List.mem_map_of_mem (f := toPubkey) (List.mem_singleton.mpr rfl)
   · show toyTree.next_index.val ≤ 2 ^ 26 - 2; simp [toyTree]
-  · unfold LeanSpec.amountsInRange; rw [he, hf]; norm_num
-  · simp [LeanSpec.encOutsFit, toInputs, emptySlice, toBytes]
+  · unfold Spec.amountsInRange; rw [he, hf]; norm_num
+  · simp [Spec.encOutsFit, toInputs, emptySlice, toBytes]
   · refine ⟨fun h => ?_, fun h => ?_⟩
     · rw [he] at h; omega
     · rw [hf] at h; omega
   · intro i
-    show LeanSpec.canonicalEncoding (toBytes ((publicInputs _)[i.val]!).val) _
+    show Spec.canonicalEncoding (toBytes ((publicInputs _)[i.val]!).val) _
     rw [canonicalEncoding_iff]
     fin_cases i
     · exact ⟨canonical_one32, rfl⟩

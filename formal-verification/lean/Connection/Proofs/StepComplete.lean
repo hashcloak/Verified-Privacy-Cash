@@ -93,25 +93,25 @@ structure ReachedHandler (d : Deployment) (rent : Nat → U64) (s : State) (tx :
     (·.initAccount d.programId rent a.signer a.nullifier1 nullifierAccountSpace (.nullifier 0#u8)) = some s₁
 
 section
-variable [LeanSpec.PoseidonHashes] [LeanSpec.Sha] [LeanSpec.Groups] [AddCommGroup LeanSpec.G1]
-  [Module LeanSpec.F LeanSpec.G1] [AddCommGroup LeanSpec.G2] [Module LeanSpec.F LeanSpec.G2]
-  [CommGroup LeanSpec.GT] [LeanSpec.Pairing] [LeanSpec.Deployment]
+variable [Spec.PoseidonHashes] [Spec.Sha] [Spec.Groups] [AddCommGroup Spec.G1]
+  [Module Spec.F Spec.G1] [AddCommGroup Spec.G2] [Module Spec.F Spec.G2]
+  [CommGroup Spec.GT] [Spec.Pairing] [Spec.Deployment]
 
 /-- A world `H` whose balances are those of `W` after the rent step, with no rent of its own and
     the same pool: every account ends where it ends from `W`. -/
-theorem balanceDelta_after_rent (inputs : LeanSpec.TxInputs) (W H : LeanSpec.World)
-    (hb : H.balances = (LeanSpec.nullifierRentEffects inputs W).balances)
+theorem balanceDelta_after_rent (inputs : Spec.TxInputs) (W H : Spec.World)
+    (hb : H.balances = (Spec.nullifierRentEffects inputs W).balances)
     (hp : H.state.pool = W.state.pool) (hr : H.nullifierRent = 0)
     (hSolv : W.nullifierTopUp inputs 0 + W.nullifierTopUp inputs 1 ≤ W.balances inputs.s)
     (hs0 : inputs.s ≠ W.state.newNullifierAccount inputs 0)
     (hs1 : inputs.s ≠ W.state.newNullifierAccount inputs 1)
     (h01 : W.state.newNullifierAccount inputs 0 ≠ W.state.newNullifierAccount inputs 1)
-    (x : LeanSpec.Pubkey) :
-    (H.balances x : ℤ) + LeanSpec.balanceDelta inputs H x
-      = W.balances x + LeanSpec.balanceDelta inputs W x := by
-  rw [hb, LeanSpec.nullifierRentEffects_balances inputs W hSolv hs0 hs1 h01 x,
+    (x : Spec.Pubkey) :
+    (H.balances x : ℤ) + Spec.balanceDelta inputs H x
+      = W.balances x + Spec.balanceDelta inputs W x := by
+  rw [hb, Spec.nullifierRentEffects_balances inputs W hSolv hs0 hs1 h01 x,
     balanceDelta_noRent inputs H hr, hp]
-  unfold LeanSpec.balanceDelta
+  unfold Spec.balanceDelta
   push_cast
   ring
 
@@ -124,8 +124,8 @@ theorem preconditions_at_handler
     (wf : WellFormed d s)
     (reached : ReachedHandler d rent s tx a proof tree tt config s₁)
     (hnr : 0 < (rent nullifierAccountSpace).val)
-    (pre : LeanSpec.transactPreconditions (toInputs tx.signers a proof ext fee out1 out2) (toWorld d rent s)) :
-    LeanSpec.transactPreconditions (toInputs tx.signers a proof ext fee out1 out2)
+    (pre : Spec.transactPreconditions (toInputs tx.signers a proof ext fee out1 out2) (toWorld d rent s)) :
+    Spec.transactPreconditions (toInputs tx.signers a proof ext fee out1 out2)
       (handlerWorld a s₁ (rent treeTokenAccountSpace) tree config (nullifierAccountsOf d s)
         (nullifierAddrOf d)) := by
   set inputs := toInputs tx.signers a proof ext fee out1 out2 with hinputs
@@ -147,9 +147,9 @@ theorem preconditions_at_handler
   have hP : W.state.pool = H.state.pool := by
     show toPubkey (poolAddr d) = toPubkey a.treeTokenAccount; rw [hpoolAddr]
   have hstate : H.state = { W.state with tree := toTree tree, config := toConfig config tree } := by
-    show LeanSpec.State.mk (toTree tree) (nullifierAccountsOf d s) (toPubkey a.treeTokenAccount)
+    show Spec.State.mk (toTree tree) (nullifierAccountsOf d s) (toPubkey a.treeTokenAccount)
         (nullifierAddrOf d) (toConfig config tree)
-      = LeanSpec.State.mk (toTree tree) (nullifierAccountsOf d s) (toPubkey (poolAddr d))
+      = Spec.State.mk (toTree tree) (nullifierAccountsOf d s) (toPubkey (poolAddr d))
         (nullifierAddrOf d) (toConfig config tree)
     rw [hpoolAddr]
   -- the addresses of the new nullifier accounts
@@ -165,18 +165,18 @@ theorem preconditions_at_handler
   -- the handler's balances are the spec's after the rent step
   have hR := rentEffects_of_inits (signers := tx.signers) (ext := ext) (fee := fee) (out1 := out1)
     (out2 := out2) hnf0 hnf1 hs0' hs1' h01' hnr reached.inits
-  have hHb : H.balances = (LeanSpec.nullifierRentEffects inputs W).balances := by
+  have hHb : H.balances = (Spec.nullifierRentEffects inputs W).balances := by
     rw [hR]; rfl
   have hHr : H.nullifierRent = 0 := rfl
   have hsolv := pre.signerSolvency
-  unfold LeanSpec.signerSolvent at hsolv
+  unfold Spec.signerSolvent at hsolv
   have hSolv : W.nullifierTopUp inputs 0 + W.nullifierTopUp inputs 1 ≤ W.balances inputs.s := by
     split_ifs at hsolv <;> omega
-  have hrentB := LeanSpec.nullifierRentEffects_balances inputs W hSolv hs0 hs1 h01
+  have hrentB := Spec.nullifierRentEffects_balances inputs W hSolv hs0 hs1 h01
   have hdelta := balanceDelta_after_rent inputs W H hHb hP.symm hHr hSolv hs0 hs1 h01
   -- the pool keeps its balance
   have hpb : H.poolBalance = W.poolBalance := by
-    unfold LeanSpec.World.poolBalance
+    unfold Spec.World.poolBalance
     rw [← hP, hHb]
     have := hrentB W.state.pool
     rw [if_neg (fun e => hsP e.symm), if_neg (fun e => pre.nullifierAccountsNew.2.1 e.symm),
@@ -201,7 +201,7 @@ theorem preconditions_at_handler
     depositLimit := by have h := pre.depositLimit; rw [hC] at h; exact h
     poolSolvency := by rw [hpb]; exact pre.poolSolvency
     signerSolvency := by
-      unfold LeanSpec.signerSolvent
+      unfold Spec.signerSolvent
       rw [nullifierTopUp_noRent inputs H hHr, nullifierTopUp_noRent inputs H hHr]
       have hs := hsig
       split_ifs at hsolv ⊢ <;> omega
@@ -216,7 +216,7 @@ theorem preconditions_at_handler
     balancesFit := by
       refine ⟨fun x hpos => ?_, fun hext => ?_⟩
       · rw [hdelta x]
-        by_cases hW : 0 < LeanSpec.balanceDelta inputs W x
+        by_cases hW : 0 < Spec.balanceDelta inputs W x
         · exact hfits.1 x hW
         · have : (W.balances x : ℤ) < 2 ^ 64 := by
             exact_mod_cast lamportsOf_lt s (fromPubkey x)
@@ -303,19 +303,19 @@ theorem inits_some {pid : Pubkey} {s : State} {mb : Nat → U64} {signer n0 n1 :
 /-! ## The runtime's lamport check passes -/
 
 section
-variable [LeanSpec.PoseidonHashes] [LeanSpec.Sha] [LeanSpec.Groups] [AddCommGroup LeanSpec.G1]
-  [Module LeanSpec.F LeanSpec.G1] [AddCommGroup LeanSpec.G2] [Module LeanSpec.F LeanSpec.G2]
-  [CommGroup LeanSpec.GT] [LeanSpec.Pairing] [LeanSpec.Deployment]
+variable [Spec.PoseidonHashes] [Spec.Sha] [Spec.Groups] [AddCommGroup Spec.G1]
+  [Module Spec.F Spec.G1] [AddCommGroup Spec.G2] [Module Spec.F Spec.G2]
+  [CommGroup Spec.GT] [Spec.Pairing] [Spec.Deployment]
 
 /-- Over a set of accounts containing every party, the spec's balance changes sum to zero, when
     no rent is charged. -/
-theorem sum_balanceDelta_zero (inputs : LeanSpec.TxInputs) (W : LeanSpec.World) (a : TransactAccounts)
+theorem sum_balanceDelta_zero (inputs : Spec.TxInputs) (W : Spec.World) (a : TransactAccounts)
     (F : Finset Pubkey) (hW : W.nullifierRent = 0) (hp : W.state.pool = toPubkey a.treeTokenAccount)
     (hA : inputs.A = toPubkey a.recipient) (ht : inputs.t = toPubkey a.feeRecipientAccount)
     (hs : inputs.s = toPubkey a.signer)
     (mA : a.recipient ∈ F) (mt : a.feeRecipientAccount ∈ F) (ms : a.signer ∈ F)
     (mp : a.treeTokenAccount ∈ F) :
-    ∑ k ∈ F, LeanSpec.balanceDelta inputs W (toPubkey k) = 0 := by
+    ∑ k ∈ F, Spec.balanceDelta inputs W (toPubkey k) = 0 := by
   have hinj : ∀ {x y : Pubkey}, toPubkey x = toPubkey y ↔ x = y :=
     fun {x y} => ⟨fun h => toPubkey_inj h, fun h => by rw [h]⟩
   simp only [balanceDelta_noRent inputs W hW, hp]
@@ -398,8 +398,8 @@ theorem execTransact_of_parts
 
 
 section
-variable {G1 G2 GT : Type} [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGroup G2]
-  [Module LeanSpec.F G2] [CommGroup GT] [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
+variable {G1 G2 GT : Type} [AddCommGroup G1] [Module Spec.F G1] [AddCommGroup G2]
+  [Module Spec.F G2] [CommGroup GT] [Spec.PoseidonHashes] [Spec.Sha]
 
 /-- **`execTransact` accepts.** If the accounts pass Anchor's checks and the spec's preconditions
     hold in the code's world, Anchor's `init`s, the handler and the runtime's lamport check all
@@ -419,15 +419,15 @@ theorem execTransact_complete
     (hsigSys : (s a.signer).owner = systemProgram ∧ (s a.signer).data.isEmpty)
     (notL1 : ext.val ≠ 0)
     (notA0 : proof.proof_a.val ≠ List.replicate 64 0#u8) :
-    letI : LeanSpec.Groups := syscallGroups C
-    letI : LeanSpec.Pairing := syscallPairing C
-    letI : LeanSpec.Deployment := ⟨programKey C⟩
+    letI : Spec.Groups := syscallGroups C
+    letI : Spec.Pairing := syscallPairing C
+    letI : Spec.Deployment := ⟨programKey C⟩
     let inputs := toInputs tx.signers a proof ext fee out1 out2
-    LeanSpec.transactPreconditions inputs (toWorld d rent s) →
+    Spec.transactPreconditions inputs (toWorld d rent s) →
     ∃ s' evs, execTransact d s tx a proof ext fee out1 out2 = .ok (s', evs) := by
-  letI : LeanSpec.Groups := syscallGroups C
-  letI : LeanSpec.Pairing := syscallPairing C
-  letI : LeanSpec.Deployment := ⟨programKey C⟩
+  letI : Spec.Groups := syscallGroups C
+  letI : Spec.Pairing := syscallPairing C
+  letI : Spec.Deployment := ⟨programKey C⟩
   intro inputs pre
   -- the signer and the two nullifier addresses, as the spec sees them
   obtain ⟨ha0, ha1⟩ := newNullifierAccount_toWorld d rent s tx.signers a proof ext fee out1 out2
@@ -442,16 +442,16 @@ theorem execTransact_complete
       + ((rent nullifierAccountSpace).val - (s a.nullifier1).lamports.val) ≤ (s a.signer).lamports.val := by
     have hT0 : (toWorld d rent s).nullifierTopUp inputs 0
         = (rent nullifierAccountSpace).val - (s a.nullifier0).lamports.val := by
-      unfold LeanSpec.World.nullifierTopUp; rw [ha0]
+      unfold Spec.World.nullifierTopUp; rw [ha0]
       show _ - (s (fromPubkey (toPubkey a.nullifier0))).lamports.val = _; rw [fromPubkey_toPubkey]; rfl
     have hT1 : (toWorld d rent s).nullifierTopUp inputs 1
         = (rent nullifierAccountSpace).val - (s a.nullifier1).lamports.val := by
-      unfold LeanSpec.World.nullifierTopUp; rw [ha1]
+      unfold Spec.World.nullifierTopUp; rw [ha1]
       show _ - (s (fromPubkey (toPubkey a.nullifier1))).lamports.val = _; rw [fromPubkey_toPubkey]; rfl
     have hsb : (toWorld d rent s).balances inputs.s = (s a.signer).lamports.val := by
       show (s (fromPubkey (toPubkey a.signer))).lamports.val = _; rw [fromPubkey_toPubkey]
     have h := pre.signerSolvency
-    unfold LeanSpec.signerSolvent at h
+    unfold Spec.signerSolvent at h
     rw [hT0, hT1, hsb] at h
     split_ifs at h <;> omega
   obtain ⟨s₁, hinits⟩ := inits_some (pid := d.programId) (space := nullifierAccountSpace)
@@ -483,10 +483,10 @@ theorem execTransact_complete
         = TL (txKeys a) (fun k => (s₁ k).lamports.val) := by
       unfold TL
       have hk : ∀ k, ((env'.balances k).val : ℤ) = (s₁ k).lamports.val
-          + LeanSpec.balanceDelta inputs H (toPubkey k) := by
+          + Spec.balanceDelta inputs H (toPubkey k) := by
         intro k
         rw [hbal k]
-        have := LeanSpec.transactEffects_balances inputs H
+        have := Spec.transactEffects_balances inputs H
           allows.signerSolvency allows.poolSolvency allows.poolNotRecipient
           allows.signerNotPoolNotNullifiers allows.nullifierAccountsNew (toPubkey k)
         rw [this]
@@ -544,17 +544,17 @@ theorem step_accepts_of_spec
     (hashes : HashesAgree d.crypto) (assume : CompletenessAssumptions d.crypto C) (wf : WellFormed d s)
     (reach : ReachesProgram d rent s tx a proof ext fee out1 out2 tree tt config)
     (notL1 : ext.val ≠ 0) (notA0 : proof.proof_a.val ≠ List.replicate 64 0#u8) :
-    letI : LeanSpec.Groups := syscallGroups C
-    letI : LeanSpec.Pairing := syscallPairing C
-    letI : LeanSpec.Deployment := ⟨programKey C⟩
-    ∀ w : LeanSpec.World, toWorld d rent s = w →
-      LeanSpec.CanBeAccepted (toInputs tx.signers a proof ext fee out1 out2) w →
+    letI : Spec.Groups := syscallGroups C
+    letI : Spec.Pairing := syscallPairing C
+    letI : Spec.Deployment := ⟨programKey C⟩
+    ∀ w : Spec.World, toWorld d rent s = w →
+      Spec.CanBeAccepted (toInputs tx.signers a proof ext fee out1 out2) w →
       ∃ s' evs, step d s tx (.transact a proof ext fee out1 out2) = .ok (s', evs) := by
-  letI : LeanSpec.Groups := syscallGroups C
-  letI : LeanSpec.Pairing := syscallPairing C
-  letI : LeanSpec.Deployment := ⟨programKey C⟩
+  letI : Spec.Groups := syscallGroups C
+  letI : Spec.Pairing := syscallPairing C
+  letI : Spec.Deployment := ⟨programKey C⟩
   intro w hw haccept
-  have pre : LeanSpec.transactPreconditions (toInputs tx.signers a proof ext fee out1 out2)
+  have pre : Spec.transactPreconditions (toInputs tx.signers a proof ext fee out1 out2)
       (toWorld d rent s) := by
     rw [hw]; exact haccept.1
   have hsigned : a.signer ∈ tx.signers := by

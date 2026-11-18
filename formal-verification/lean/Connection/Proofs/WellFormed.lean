@@ -7,9 +7,9 @@ NOT FOR REVIEW: the statements are restated in `Connection/ConnectionTheorems.le
 
 namespace Connection
 
-variable [LeanSpec.PoseidonHashes] [LeanSpec.Sha]
+variable [Spec.PoseidonHashes] [Spec.Sha]
 
-omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
+omit [Spec.PoseidonHashes] [Spec.Sha] in
 /-- Anchor `init`, on either funding path: the account at `key` becomes the program's with
     `data`; every other account keeps its owner and data. -/
 theorem initAccount_ownerData {pid : Pubkey} {s s' : State} {mb : Nat → U64} {payer key : Pubkey}
@@ -33,7 +33,7 @@ theorem initAccount_ownerData {pid : Pubkey} {s s' : State} {mb : Nat → U64} {
   refine ⟨by simp, by simp, fun k hk => ?_⟩
   simp only [State.set, hk, if_false]; exact keep k
 
-omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
+omit [Spec.PoseidonHashes] [Spec.Sha] in
 theorem ugc_rates (c c' : zkcash_core.admin.GlobalConfig) (dep wd m : Option U16)
     (h : zkcash_core.admin.update_global_config c dep wd m = ok (.Ok (), c'))
     (hd : c.deposit_fee_rate.val ≤ 10000) (hw : c.withdrawal_fee_rate.val ≤ 10000)
@@ -49,7 +49,7 @@ theorem ugc_rates (c c' : zkcash_core.admin.GlobalConfig) (dep wd m : Option U16
     (try cases e1) <;>
     simp_all [UScalar.le_equiv]
 
-omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
+omit [Spec.PoseidonHashes] [Spec.Sha] in
 /-- Outside actions keep `WellFormed`: accounts the program owns keep their owner and data, and
     no other account can come to hold the program's account types. -/
 theorem wf_envStep {d : Deployment} {s s' : State}
@@ -77,13 +77,13 @@ theorem wf_envStep {d : Deployment} {s s' : State}
     obtain ⟨ho', hd'⟩ := own k ho ⟨_, hd, rfl⟩
     exact wf.storedSubtrees k t ⟨ho', hd' ▸ hd⟩
 
-omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
+omit [Spec.PoseidonHashes] [Spec.Sha] in
 /-- Changing one account's data to a value of a given kind, at an address that already held
     that kind: a helper for the admin instructions. -/
 theorem set_data_other {s : State} {key k : Pubkey} {acc : Account} (hk : k ≠ key) :
     (s.set key acc k) = s k := by simp [State.set, hk]
 
-omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
+omit [Spec.PoseidonHashes] [Spec.Sha] in
 theorem wf_updateDepositLimit {d : Deployment} {s s' : State} {tx : TxEnv}
     {a : UpdateDepositLimitAccounts} {newLimit : U64}
     (wf : WellFormed d s) (h : execUpdateDepositLimit d s tx a newLimit = .ok s') :
@@ -134,7 +134,7 @@ theorem wf_updateDepositLimit {d : Deployment} {s s' : State} {tx : TxEnv}
       rw [ht']; exact hr
     · rw [hk k hka'] at ho hd; exact wf.storedSubtrees k t ⟨ho, hd⟩
 
-omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
+omit [Spec.PoseidonHashes] [Spec.Sha] in
 theorem wf_updateGlobalConfig {d : Deployment} {s s' : State} {tx : TxEnv}
     {a : UpdateGlobalConfigAccounts} {dep wd m : Option U16}
     (wf : WellFormed d s) (h : execUpdateGlobalConfig d s tx a dep wd m = .ok s') :
@@ -182,7 +182,7 @@ theorem wf_updateGlobalConfig {d : Deployment} {s s' : State} {tx : TxEnv}
     · rw [hk k hka'] at ho hd; exact wf.storedSubtrees k t ⟨ho, hd⟩
 
 
-omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
+omit [Spec.PoseidonHashes] [Spec.Sha] in
 /-- Every successful `transact` keeps `WellFormed`.
     Needs that Poseidon's outputs are canonical (`HashesAgree.poseidonCanonical`): the two
     appends store Poseidon outputs as roots. -/
@@ -293,7 +293,7 @@ theorem wf_transact {d : Deployment} {s s' : State} {tx : TxEnv}
     exact wf.storedSubtrees k t ⟨e1 ▸ ho, e2 ▸ hd⟩
 
 
-omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
+omit [Spec.PoseidonHashes] [Spec.Sha] in
 /-- `init_tree` stores the zero hash of height 26 in slot 0 and keeps the other slots: if the
     zero hashes and the old slots are canonical, so are the new slots. -/
 theorem initTree_history {H : zkcash_core.merkle_tree.Hasher Unit}
@@ -341,7 +341,7 @@ theorem initTree_history {H : zkcash_core.merkle_tree.Hasher Unit}
     have hj' : (0 : ℕ) ≠ j.val := Ne.symm hj
     simpa [hj'] using this
 
-omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
+omit [Spec.PoseidonHashes] [Spec.Sha] in
 /-- `init_tree` fills the subtrees with the zero hashes `0 … 25`: canonical if they are. -/
 theorem initTree_subtrees {H : zkcash_core.merkle_tree.Hasher Unit}
     {t0 t : zkcash_core.merkle_tree.MerkleTreeAccount} {auth : Pubkey} {b : U8} {m : U64}
@@ -367,7 +367,7 @@ theorem initTree_subtrees {H : zkcash_core.merkle_tree.Hasher Unit}
   intro j
   exact initLoop_subtrees _ _ _ _ hzc (by simpa using hgv) (fun i hi => hs0 ⟨i, hi⟩) ha j.val j.isLt
 
-omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
+omit [Spec.PoseidonHashes] [Spec.Sha] in
 /-- The fresh tree account's subtrees are all zero bytes, which are canonical. -/
 theorem zeroTree_subtrees : ∀ j : Fin 26, Canonical zeroTree.subtrees.val[j.val]! := by
   intro j
@@ -376,7 +376,7 @@ theorem zeroTree_subtrees : ∀ j : Fin 26, Canonical zeroTree.subtrees.val[j.va
     simp only [zeroTree, Std.Array.repeat_val, List.getElem_replicate]
   rw [this]; exact zero_canonical
 
-omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
+omit [Spec.PoseidonHashes] [Spec.Sha] in
 /-- The fresh tree account's history is all zero bytes, which are canonical. -/
 theorem zeroTree_history : ∀ j : Fin 100, Canonical zeroTree.root_history.val[j.val]! := by
   intro j
@@ -385,7 +385,7 @@ theorem zeroTree_history : ∀ j : Fin 100, Canonical zeroTree.root_history.val[
     simp only [zeroTree, Std.Array.repeat_val, List.getElem_replicate]
   rw [this]; exact zero_canonical
 
-omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
+omit [Spec.PoseidonHashes] [Spec.Sha] in
 /-- What the extracted `admin::initialize` produces when it succeeds: a tree of the fixed shape
     (height 26, a history of 100 roots, current index 0) and a config with rates 0, 25, 500. -/
 theorem adminInitialize_ok {H : zkcash_core.merkle_tree.Hasher Unit}
@@ -434,7 +434,7 @@ theorem adminInitialize_ok {H : zkcash_core.merkle_tree.Hasher Unit}
   refine ⟨?_, ?_, ?_⟩ <;> simp [zkcash_core.admin.MERKLE_TREE_HEIGHT, zkcash_core.admin.ROOT_HISTORY_SIZE]
 
 
-omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
+omit [Spec.PoseidonHashes] [Spec.Sha] in
 /-- `initialize` keeps `WellFormed` (it creates the tree, pool and config at their canonical
     addresses, with the fixed tree shape and rates 0, 25, 500). -/
 theorem wf_initialize {d : Deployment} {s s' : State} {tx : TxEnv}
@@ -560,7 +560,7 @@ theorem wf_initialize {d : Deployment} {s s' : State} {tx : TxEnv}
     exact wf.storedSubtrees k t ⟨e1 ▸ ho, by rw [← (hoth k ht hp hc).2]; exact hd⟩
 
 
-omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
+omit [Spec.PoseidonHashes] [Spec.Sha] in
 theorem wf_step {d : Deployment} {s s' : State} {tx : TxEnv}
     {ix : Instruction} {evs : List CommitmentData}
     (hpc : ∀ a b h, d.crypto.hasher.hash_pair a b = ok h → Canonical h)
@@ -580,7 +580,7 @@ theorem wf_step {d : Deployment} {s s' : State} {tx : TxEnv}
   | transact a proof ext fee out1 out2 =>
     exact wf_transact hpc wf h
 
-omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
+omit [Spec.PoseidonHashes] [Spec.Sha] in
 theorem wf_run {d : Deployment} {s s' : State} {evs : List Event}
     (hpc : ∀ a b h, d.crypto.hasher.hash_pair a b = ok h → Canonical h)
     (hzc : ∃ z, d.crypto.hasher.zero_bytes = ok z ∧ ∀ i, i ≤ 26 → Canonical (z.val[i]!))
@@ -593,7 +593,7 @@ theorem wf_run {d : Deployment} {s s' : State} {evs : List Event}
   | env henv _ ih =>
     exact ih (wf_envStep wf henv)
 
-omit [LeanSpec.PoseidonHashes] [LeanSpec.Sha] in
+omit [Spec.PoseidonHashes] [Spec.Sha] in
 theorem wf_genesis {d : Deployment} {s : State} (hgen : Genesis d.programId s)
     (hpid : d.programId ≠ systemProgram) : WellFormed d s :=
   ⟨hpid, fun k _ h => absurd h.1 (hgen k), fun k _ h => absurd h.1 (hgen k),

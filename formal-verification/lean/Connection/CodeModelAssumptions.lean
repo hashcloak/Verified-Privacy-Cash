@@ -66,8 +66,8 @@ structure CryptoFacts (d : Deployment) (proof : zkcash_core.transact.Proof) : Pr
      d.pdaInput (nullifier1Seeds proof.input_nullifiers.val[1]!)}
 
 section
-variable {G1 G2 GT : Type} [AddCommGroup G1] [Module LeanSpec.F G1] [AddCommGroup G2]
-  [Module LeanSpec.F G2] [CommGroup GT]
+variable {G1 G2 GT : Type} [AddCommGroup G1] [Module Spec.F G1] [AddCommGroup G2]
+  [Module Spec.F G2] [CommGroup GT]
 
 /-- `PairingLaws e` (assumed, about the `alt_bn128` pairing, for the verifier bridge): pairing
     with `-a` gives the inverse. True of the BN254 optimal ate pairing. Needed because the code

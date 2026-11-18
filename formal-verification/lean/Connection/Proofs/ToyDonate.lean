@@ -93,9 +93,9 @@ theorem toy_donation_nonvacuous :
     have h0 := hpb 0 (by rw [hlen]; exact Nat.one_pos)
     simp only [List.getElem?_cons_zero, Option.some.injEq] at h0
     -- the spec's start world has the pool at its rent, 1 lamport
-    unfold LeanSpec.Run.donated LeanSpec.Run.donations
+    unfold Spec.Run.donated Spec.Run.donations
     rw [hlen, Finset.sum_range_one, r.start]
-    simp only [LeanSpec.World.poolBalance, LeanSpec.initWorld, Function.update_self]
+    simp only [Spec.World.poolBalance, Spec.initWorld, Function.update_self]
     rw [← hpool] at h0
     rw [← h0, hrent]; rfl
 

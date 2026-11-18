@@ -440,46 +440,46 @@ theorem dep_pre (s₂ : State) (tree : merkle_tree.MerkleTreeAccount) (config : 
     toy_alpha_decodes rfl toy_zeros_decodes
   have hk0 : depProof.input_nullifiers.val[0]! = zeros32 := rfl
   have hk1 : depProof.input_nullifiers.val[1]! = one32 := rfl
-  have h10 : (1 : LeanSpec.F) ≠ 0 := by decide
+  have h10 : (1 : Spec.F) ≠ 0 := by decide
   have he : (toInputs toyTx.signers depA depProof 2#i64 0#u64 emptySlice emptySlice).extAmt = 2 := by simp [toInputs]
   have hf : (toInputs toyTx.signers depA depProof 2#i64 0#u64 emptySlice emptySlice).f = 0 := by simp [toInputs]
-  refine @LeanSpec.transactPreconditions.mk _ (syscallGroups toyC) (inferInstanceAs (AddCommGroup Unit))
-    (inferInstanceAs (Module LeanSpec.F Unit))
+  refine @Spec.transactPreconditions.mk _ (syscallGroups toyC) (inferInstanceAs (AddCommGroup Unit))
+    (inferInstanceAs (Module Spec.F Unit))
     (inferInstanceAs (CommGroup Unit))
-    (syscallPairing toyC) (@LeanSpec.Deployment.mk (syscallGroups toyC) (programKey toyC)) _ _
+    (syscallPairing toyC) (@Spec.Deployment.mk (syscallGroups toyC) (programKey toyC)) _ _
     ?_ ?_ ?_ ?_ ⟨_, hdec, rfl⟩ ?_ ?_ hfacts.1 ?_ ?_ ?_ ?_ hfacts.2 ?_ ?_ ?_ ?_ ?_ ?_
-  · show LeanSpec.rootBytesKnown (toTree tree) (toBytes one32.val)
+  · show Spec.rootBytesKnown (toTree tree) (toBytes one32.val)
     rw [rootBytesKnown_iff]
     refine ⟨canonical_one32, ⟨⟨0, ?_⟩, by rw [toF_one32]; exact h10⟩⟩
     show toF (tree.root_history.val[0]!) = toF one32
     rw [hT0]
-  · show (LeanSpec.natOfLE (List.replicate 32 0) : LeanSpec.F) = toF zeros32
+  · show (Spec.natOfLE (List.replicate 32 0) : Spec.F) = toF zeros32
     rw [toF_zeros32]; rfl
-  · unfold LeanSpec.feeSufficient; rw [he, hf]; simp [handlerWorld, toConfig, hdr]
-  · unfold LeanSpec.pubAmtConsistent; rw [he, hf]
+  · unfold Spec.feeSufficient; rw [he, hf]; simp [handlerWorld, toConfig, hdr]
+  · unfold Spec.pubAmtConsistent; rw [he, hf]
     refine ⟨fun _ => by omega, ?_⟩
     show toF two32 = _; rw [toF_two32]; simp
-  · simp [LeanSpec.nullifiersFresh, LeanSpec.State.spent, handlerWorld]
+  · simp [Spec.nullifiersFresh, Spec.State.spent, handlerWorld]
   · show toF _ ≠ toF _
     rw [hk0, hk1, toF_zeros32, toF_one32]; exact h10.symm
   · intro _; rw [he]; show (2 : ℤ) ≤ (tree.max_deposit_amount.val : ℤ)
     exact_mod_cast hTm
-  · unfold LeanSpec.poolSolvent; rw [he, hf]
+  · unfold Spec.poolSolvent; rw [he, hf]
     exact ⟨fun h => by omega, fun h => by omega⟩
-  · unfold LeanSpec.signerSolvent; rw [he]
-    simp only [LeanSpec.World.nullifierTopUp, show (handlerWorld depA s₂ 1#u64 tree config ∅
+  · unfold Spec.signerSolvent; rw [he]
+    simp only [Spec.World.nullifierTopUp, show (handlerWorld depA s₂ 1#u64 tree config ∅
       (handlerAddr depA)).nullifierRent = 0 from rfl, Nat.zero_sub]
     show (s₂ (fromPubkey (toPubkey depA.signer))).lamports.val ≥ 0 + 0 + _
     rw [fromPubkey_toPubkey]; show (s₂ (pk 1#u8)).lamports.val ≥ _; rw [hsigB]; simp
   · exact List.mem_map_of_mem (f := toPubkey) (List.mem_singleton.mpr rfl)
   · show tree.next_index.val ≤ 2 ^ 26 - 2; rw [hTn]; simp
-  · unfold LeanSpec.amountsInRange; rw [he, hf]; norm_num
-  · simp [LeanSpec.encOutsFit, toInputs, emptySlice, toBytes]
+  · unfold Spec.amountsInRange; rw [he, hf]; norm_num
+  · simp [Spec.encOutsFit, toInputs, emptySlice, toBytes]
   · refine ⟨fun h => ?_, fun h => ?_⟩
     · rw [he] at h; omega
     · rw [hf] at h; omega
   · intro i
-    show LeanSpec.canonicalEncoding (toBytes ((publicInputs _)[i.val]!).val) _
+    show Spec.canonicalEncoding (toBytes ((publicInputs _)[i.val]!).val) _
     rw [canonicalEncoding_iff]
     fin_cases i
     · exact ⟨canonical_one32, rfl⟩
