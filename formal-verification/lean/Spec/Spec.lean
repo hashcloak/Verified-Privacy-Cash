@@ -11,7 +11,7 @@ namespace Spec
 
 -- Labels for what the spec adds beyond the documentation:
 -- ADDED MANUALLY (docs silent): a rule the documentation does not state; listed in
--- FINDINGS.md.
+-- REPORT_NOTES.md.
 -- SOLANA FACT: how Solana behaves, which the documentation leaves implicit; listed in
 -- REPORT_NOTES.md.
 

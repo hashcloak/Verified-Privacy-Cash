@@ -225,21 +225,61 @@ Each is how Solana works, not a rule of the program; keep this list in sync with
 
 ## Additions to the documentation the authors should make
 
-Includes the notes in `FINDINGS.md` ("Notes: behaviour the documentation should state");
-keep those in sync. Items that are not findings are listed only here.
+These are not defects. The code makes a reasonable choice that the documentation does not
+mention, so users and integrators cannot know it. Where the spec needs such a rule, it includes
+it, marked ADDED MANUALLY (docs silent).
 
-- The external amount `−2^63` is rejected.
-- The fee rates and the fee error margin are each at most 100%.
-- `initialize` takes no settings: it always sets the documented defaults (deposit limit 1000 SOL,
-  deposit fee 0%, withdrawal fee 0.25%, fee error margin 5%); only the admin instructions change
-  them afterwards. The documentation calls these values defaults but doesn't say this.
-- The deposit limit is a `u64` (below `2^64` lamports).
-- Only the admin key can initialize the pool; deployments must use a build with it set.
-- There are two authorities: one over the fee settings, one over the deposit limit.
-- Admins can change only the fee settings and the deposit limit (`update_global_config`,
-  `update_deposit_limit`).
-- A SOL-pool transaction names the SOL mint `11111111111111111111111111111112` in its external
-  data (`SOL_ADDRESS`); a transaction naming another mint is rejected.
-- Public inputs are canonically encoded (32 big-endian bytes, value below `p`).
-- The pool's own address can't be the recipient of a withdrawal or the fee recipient of a
-  non-zero fee; the runtime rejects such a transaction.
+- **The external amount `−2^63` is rejected.** The external amount is an `i64`, whose range
+  is `−2^63` to `2^63 − 1`. Negating `−2^63` overflows, so `check_public_amount` and
+  `validate_fee` reject it. This is reasonable: `2^63` lamports is about 9.2 billion SOL,
+  more than the total SOL supply, so no real withdrawal is affected. Our specification
+  includes this rule, but it is not in the documentation, which should state it.
+- **The fee error margin is at most 100%.** `update_global_config` refuses a fee error margin
+  above 10000 basis points. Our specification includes this rule, because its fee rule computes
+  `10000 − feeErrorMargin`; the documentation gives the default (5%) but no bound, and should
+  state it.
+- **The fee rates are at most 100%.** `update_global_config` refuses a deposit or withdrawal fee
+  rate above 10000 basis points. Our specification includes this rule, because without it admins
+  could set a rate that locks notes in the pool; the documentation gives defaults but no bound,
+  and should state it.
+- **The initial settings are always the defaults.** `initialize` takes no settings: it sets the
+  deposit limit to 1000 SOL, the deposit fee rate to 0%, the withdrawal fee rate to 0.25% and the
+  fee error margin to 5%. Only `update_global_config` and `update_deposit_limit` change them
+  afterwards. The documentation lists these values as defaults but doesn't say that initialization
+  always uses them. Our specification includes this rule; the documentation should state it.
+- **The deposit limit is a `u64`.** `update_deposit_limit` takes the new limit as a `u64`, so
+  it is below `2^64` lamports. No real deposit is affected. Our specification includes this rule;
+  the documentation should state it.
+- **Only the admin key can initialize the pool.** `initialize` checks the caller against a
+  hard-coded admin key; whoever initializes becomes the authority over fees and the deposit
+  limit. In the localnet and test builds there is no admin key, so anyone can initialize.
+  Our specification includes this rule; the documentation should state it, and that deployments
+  must use a build with the admin key set.
+- **Two authorities: one over the fee settings, one over the deposit limit.** The global
+  config's authority may change the fees (`update_global_config`); the Merkle tree's authority
+  may change the deposit limit (`update_deposit_limit`). `initialize` sets both to the
+  initializer, and nothing changes them afterwards. Our specification includes this rule; the
+  documentation should state who controls what.
+- **Admins can change only the fee settings and the deposit limit.** No other setting has an
+  admin instruction: `update_global_config` covers the fee rates and the fee error margin, and
+  `update_deposit_limit` covers the deposit limit. Our specification includes this rule; the
+  documentation should state what admins can change.
+- **Public inputs must be canonically encoded.** Each of the seven public inputs is 32
+  big-endian bytes whose value must be below the field modulus `p`; the code rejects larger
+  values. Without this, `x` and `x + p` would be two encodings of the same field element, so
+  one nullifier could be sent as two different byte strings. Our specification includes this
+  rule; the documentation should state the wire format.
+- **The sender chooses the fee recipient, by design.** `fee_recipient_account` can be any
+  account; the program checks only that it matches the external data hash and that the fee
+  meets the minimum. A sender can therefore pay the fee to themselves, which avoids the
+  protocol fee. The client confirmed this is intentional, for decentralization (Zigtur,
+  Kriko); Veridise recommends documenting it. Our specification leaves the fee recipient
+  unconstrained, as the code does; the documentation should state this.
+- **A SOL-pool transaction names the SOL mint.** The program hashes the external data with the
+  mint `11111111111111111111111111111112` (`SOL_ADDRESS`), so a transaction whose external data
+  names another mint fails the external data check. Our specification includes this rule
+  (`mintIsSol`), with the SOL mint left to the deployment (`Deployment.solMint`);
+  the documentation should state the rule and the value.
+- **The pool can't pay itself.** The pool's own address can't be the recipient of a withdrawal
+  or the fee recipient of a non-zero fee; the runtime rejects such a transaction. The
+  documentation should state it.

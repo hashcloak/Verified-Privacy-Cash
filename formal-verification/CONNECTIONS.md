@@ -80,5 +80,5 @@ Details and recommendations: `FINDINGS.md`. Lean: `Findings.lean`, except I1.
 | I1 | only the circuit keeps the two input nullifiers distinct | assumed (`CircuitFacts`); without it `transact_connection` fails (`Proofs/ToyDup.lean`) |
 | F7 | a root can be evicted (after about 50 transactions) before an honest proof lands | a limit on G3a (`rootKnown`) |
 
-Where the docs are silent, the spec adds rules marked ADDED MANUALLY; `FINDINGS.md` ("Notes")
-lists them as documentation the authors should add.
+Where the docs are silent, the spec adds rules marked ADDED MANUALLY; `REPORT_NOTES.md`
+("Additions to the documentation") lists them as documentation the authors should add.
