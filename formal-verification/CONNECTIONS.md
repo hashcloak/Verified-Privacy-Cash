@@ -57,12 +57,12 @@ Labels say why a hypothesis is fair to assume, as in the spec; definitions in `R
 
 | Theorem | Says | Adds | Non-vacuity |
 |---|---|---|---|
-| `transact_connection` | an accepted `transact` satisfies the spec's | execution + accepted step (premise); `PdasDoNotSign`, `CircuitFacts`, `SameRent` (asm) | `transact_connection_nonvacuous` |
+| `transact_connection` | if `step` accepts a `transact`, the spec's `transact` holds | execution (premise); `RuntimeFacts`, `PdasDoNotSign`, `CircuitFacts`, `SameRent` (asm) | `transact_connection_nonvacuous` |
 | `run_connection` | an execution is a spec run, or the pool is not initialized | execution (premise); `PdasDoNotSign`, `CircuitFacts` per `transact`, `SameRent` per instruction (asm) | `connection_nonvacuous`, `donation_nonvacuous`, `admin_change_nonvacuous` |
 | `transact_complete_except_L1_A0` | what the spec allows, `step` accepts, ending in the spec's `transactEffects` | execution, initialized, `AccountsListed` (premise); `CryptoSucceeds`, `RuntimeFacts`, `PdasOnlyByProgram`, `SameRent` (asm); `SignerIsPlain` (design); not L1, A0 (finding) | `transact_complete_nonvacuous` |
 | `run_complete_except_L1_A0` | a spec run is a code execution's run | the deployment's pool (premise); `CryptoSucceeds`, `RuntimeFacts` (asm); no L1, A0 (finding) | `run_complete_nonvacuous` |
 | G1a–d, G5a–b `_code` | the goal holds of the execution's run | as `run_connection`; initialized (premise) | `connection_nonvacuous`, `admin_change_nonvacuous` |
-| G2a, G4a–b `_code` | the goal holds of every accepted transaction | as `transact_connection` | `transact_connection_nonvacuous` |
+| G2a, G4a–b `_code` | the goal holds of every accepted transaction | execution + accepted step (premise); `PdasDoNotSign`, `CircuitFacts`, `SameRent` (asm) | `transact_connection_nonvacuous` |
 | `honestSpendIsAccepted_code` (G3a) | an honest spend is accepted, or a hash break | as `transact_complete`; nothing since the run's last transaction (premise); T1 (asm); `HonestSpend` (owner); `LimitsNotHit` (limit) | `liveness_code_nonvacuous` |
 | `adminsCannotLockWithdrawals_code` (G3b) | a withdrawal of `spentAmt ≥ 2` exists, half reaches the recipient, and is accepted | as G3a; no L1 (cannot arise); fewer limits | `liveness_code_nonvacuous` |
 

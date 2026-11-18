@@ -634,15 +634,6 @@ theorem transact_complete_pf
 
 /-! ## The result: what the spec allows ends in the spec's world -/
 
-
-omit [Spec.PoseidonHashes] [Spec.Sha] in
-/-- The spec's rent, positive and equal to the sysvar's, makes the transaction's rent positive. -/
-theorem rentPositive_of_sameRent {rent : Nat → U64} {tx : TxEnv} (runtime : RuntimeFacts rent)
-    (sameRent : SameRent rent tx.minimumBalance) : tx.RentPositive := by
-  intro mb h n
-  have : rent = mb := Option.some.inj (sameRent.symm.trans h)
-  subst this
-  exact runtime.rentPositive n
 omit [Spec.PoseidonHashes] [Spec.Sha] in
 /-- A world that agrees with another on every field is that world. -/
 theorem agrees_eq {i : Spec.TxInputs} {p q : Spec.World}
@@ -722,6 +713,27 @@ theorem transact_complete_square_pf
     (fun _ => pre.validZKP) rfl
   rw [hstep]
   exact agrees_eq htx.2
+
+/-- `transact_complete_square_pf` as `transact_complete_except_L1_A0` states it, arguments in
+    its order. -/
+theorem transact_complete_of {d : Deployment} {rent : Nat → U64} {tx : TransactTx}
+    {sysvarRent : Option (Nat → U64)} {s : State} (hpid : d.programId ≠ systemProgram)
+    (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
+    (hashes : HashesAgree d) (crypto : CryptoSucceeds d.crypto C) (runtime : RuntimeFacts rent)
+    (pdas : PdasOnlyByProgram d s) (sameRent : SameRent rent sysvarRent)
+    (signerPlain : SignerIsPlain s tx.accounts) (initialized : Initialized d s)
+    (reachable : Reachable d s) (accounts : AccountsListed d tx.accounts tx.args.proof)
+    (notL1 : tx.args.extAmount.val ≠ 0)
+    (notA0 : tx.args.proof.proof_a.val ≠ List.replicate 64 0#u8) :
+    SpecAllows C rent s tx →
+      withSyscallSpec C in
+      (match step d s (tx.env sysvarRent) tx.instruction with
+        | .ok (s', _) => toWorld d rent s' = Spec.transactEffects (toInputs tx) (toWorld d rent s)
+        | .error _ => False)
+      ∨ AddressCollision d {tx.args.proof} :=
+  fun hs => or_collision fun hc => transact_complete_square_pf reachable hpid C laws hashes crypto
+    runtime pdas (transactDistinct_of_noCollision (Set.mem_singleton _) hc) sameRent accounts
+    signerPlain initialized notL1 notA0 hs
 
 /-! ## What the code never accepts (findings L1 and A0) -/
 

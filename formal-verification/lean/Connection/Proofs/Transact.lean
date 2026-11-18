@@ -445,6 +445,14 @@ theorem rentEffects_of_inits
   have := congrFun (show (fun k => (s₁ k).lamports.val) = _ by rw [hlam1, hlamA]) (fromPubkey x)
   exact this.symm
 
+/-- The spec's rent, positive and equal to the sysvar's, makes the transaction's rent positive. -/
+theorem rentPositive_of_sameRent {rent : Nat → U64} {tx : TxEnv} (runtime : RuntimeFacts rent)
+    (sameRent : SameRent rent tx.minimumBalance) : tx.RentPositive := by
+  intro mb h n
+  have : rent = mb := Option.some.inj (sameRent.symm.trans h)
+  subst this
+  exact runtime.rentPositive n
+
 variable [Spec.PoseidonHashes] [Spec.Sha] [Spec.Groups]
   [AddCommGroup Spec.G1] [Module Spec.F Spec.G1]
   [CommGroup Spec.GT] [Spec.Pairing] [Spec.Deployment]

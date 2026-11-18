@@ -12,9 +12,8 @@ not for review.
 
 ## What we show: the code is sound and complete with respect to the spec
 
-The code and the spec are compared step by step. `toWorld` maps a code state to a spec world
-(it forgets what the spec does not model, e.g. rent); the code's step and the spec's step must
-then agree:
+`toWorld` maps a code state to a spec world (it forgets what the spec does not model, e.g.
+rent). The code's step and the spec's step must then agree:
 
     code state  s ──── code transact ────▶ s'
          │                                 │
@@ -22,17 +21,28 @@ then agree:
          ▼                                 ▼
     spec world  w ──── spec transact ────▶ w'
 
-- **Soundness (code ⟹ spec):** whenever the code accepts, the spec's `transact` holds between
-  `toWorld s` and `toWorld s'` (all preconditions, exact effects). `transact_connection`.
-- **Completeness (spec ⟹ code):** whenever the spec allows a transaction, the code accepts it
-  and ends in a state that maps to the spec's `w'`. `transact_complete_except_L1_A0`.
-  Over runs: every spec run is the run of some code execution. `run_complete_except_L1_A0`.
-- **Runs:** the square holds for every kind of step (`initialize`, `transact`, admin
-  instructions, outside actions), so every code execution from genesis is a spec run, with the
-  same transactions, admin changes and signers. The goals about histories (G1, G5) need this.
-  `run_connection`.
+- **Soundness (code ⟹ spec):** whenever `step` accepts, the spec's `transact` holds between
+  `toWorld s` and `toWorld s'` (all preconditions, exact effects). `transact_connection`; over
+  runs, every code execution is a spec run, `run_connection`.
+- **Completeness (spec ⟹ code):** whenever the spec allows a transaction, `step` accepts it
+  and ends in a state that maps to the spec's `w'`. `transact_complete_except_L1_A0`; over
+  runs, every spec run is a code execution, `run_complete_except_L1_A0`.
+
+**How this finds errors.** Each direction catches one kind of bug. Soundness fails if the code
+accepts what the spec forbids (a missing check: double spends, stolen funds). Completeness
+fails if the code rejects what the spec allows (an extra check: stuck funds, blocked users).
+Where the code and the spec differ, the theorem that should hold fails, and `Findings.lean`
+proves so with a counterexample.
+
+**Why two theorems.** The directions need different hypotheses: completeness needs more (e.g.
+the right accounts listed, the crypto returning values) and excludes findings L1 and A0. One
+theorem would carry both sets, and soundness would then hold only under completeness's
+hypotheses and exclusions. Kept apart, soundness holds for every transaction the code accepts.
+
+### Reading the theorems
+
 - **Breaks:** collision resistance of derived addresses is not assumed: theorems end in "… or
-  an address collision occurs" (`CodeModelAssumptions.lean`).
+  an address collision occurs" (`AddressCollision.lean`).
 - **Inputs** (marked `[input]` in each theorem; the theorems hold for all of them):
   - `d : Deployment`: the deployed program (its id, addresses, crypto, admin key).
   - `rent`: the rent-exempt minimum by account size that the spec uses (`toWorld`).
@@ -41,15 +51,12 @@ then agree:
     listed, `tx.args` the instruction data.
   - `sysvarRent`: the `Rent` sysvar as the runtime gives it; the sender does not choose it.
     `tx.env sysvarRent` is what the code receives besides accounts and data (`TxEnv`).
-  - `s`, `s'`: the chain states before and after a `transact`; `s` is reachable from genesis
-    (core-model's `Reachable`).
-  - Over runs: `sGenesis` the genesis state, `evs` the events from it to `s` (program
-    instructions and outside actions), `states` the states between.
-  - `events`: the logs (`CommitmentData`) the accepted `transact` emits.
+  - `oldState`: the chain state before a `transact`, reached by an execution (core-model's
+    `Reachable`); `newState`: the state `step` returns.
+  - Over runs: `sGenesis` a state where the program owns no account, `evs` the events from it
+    to `s` (program instructions and outside actions), `states` the states between.
   A hypothesis restricts an input only if it mentions it; none bounds `tx`'s values.
-
-Where the code and the spec differ, the theorem that should hold fails, and `Findings.lean`
-proves so with a counterexample. Non-vacuity is in `NonVacuityStatements.lean`.
+- **Non-vacuity** is in `NonVacuityStatements.lean`.
 
 ## Results
 
@@ -92,28 +99,35 @@ include notSystem laws hashes
 /-! ### 1a. Soundness of `transact`: what the code accepts, the spec allows -/
 
 /-- **Every `transact` the code accepts satisfies the spec's `transact`.** If an execution from
-    genesis reaches `s` and then accepts a `transact` (ending in `s'`), the spec's `transact`
-    holds for the mapped inputs (`toInputs`) between `toWorld s` and `toWorld s'`: every
-    precondition, the proof check included, and exactly the spec's effects. Or an address
-    collision occurs (`AddressCollision`). -/
+    genesis reaches `oldState` and `step` then accepts a `transact`, with new state `newState`,
+    the spec's `transact` holds for the mapped inputs (`toInputs`) between `toWorld oldState`
+    and `toWorld newState`: every precondition, the proof check included, and exactly the spec's
+    effects. Or an address collision occurs (`AddressCollision`). -/
 theorem transact_connection
     {tx : TransactTx}                                      -- [input] the transaction as sent: signers, accounts, data
     {sysvarRent : Option (Nat → U64)}                      -- [input] the `Rent` sysvar the runtime gives it
                                                            --   (core-model's `TxEnv.minimumBalance`: an `Option`
                                                            --   because `Rent::get()` can fail)
-    {s s' : CodeModel.State}                               -- [input] the state before, the state after
-    {events : List CodeModel.CommitmentData}               -- [input] the logs the transaction emits
+    {oldState : CodeModel.State}                           -- [input] the state before the `transact`
+    (runtime : RuntimeFacts rent)                          -- [assumption] 64-bit `usize`, positive rent
     (pdasDoNotSign : PdasDoNotSign d tx.ctx)               -- [assumption] no PDA signs
     (circuit : CircuitFacts d {tx.args.proof})             -- [assumption] the circuit keeps the nullifiers distinct (I1)
     (sameRent : SameRent rent sysvarRent)                  -- [assumption] same rent as the spec
-    (reachable : CodeModel.Reachable d s)                  -- [premise] an execution from genesis reached `s`
-    (hstep : CodeModel.Run d s [.program (tx.env sysvarRent) tx.instruction events] s') :
-                                                           -- [premise] ...then accepted a transact (one more step)
+    (reachable : CodeModel.Reachable d oldState) :         -- [premise] an execution reached `oldState`, starting
+                                                           --   where the program owns no account
+    -- If the code accepts a transaction and executes `transact`, the Spec `transact` also holds,
+    --    OR an address collision occurred (which we assume is infeasible).
+    -- If it's rejected, we don't check anything.
     withSyscallSpec C in
-    Spec.transact (toInputs tx) (toWorld d rent s) (toWorld d rent s')
+    (match CodeModel.step d oldState (tx.env sysvarRent) tx.instruction with
+      | .ok (newState, _logs) =>                          -- `step` accepts, with new state `newState`:
+          Spec.transact (toInputs tx)                     --   the spec's `transact` holds
+            (toWorld d rent oldState) (toWorld d rent newState)
+      | .error _ => True)                                 -- `step` rejects: no claim; soundness is only about
+                                                          --   what is accepted. Rejecting what the spec allows
+                                                          --   is ruled out by completeness (§2a)
       ∨ AddressCollision d {tx.args.proof} :=              -- or a break: an address collision
-  or_collision fun hc => transact_connection_pf reachable notSystem hstep C laws hashes pdasDoNotSign
-    (newDiffer_of_noCollision (Set.mem_singleton _) hc) circuit sameRent
+  transact_connection_of notSystem C laws hashes runtime pdasDoNotSign circuit sameRent reachable
 
 /-! ### 1b. Soundness over runs: every code execution is a spec run -/
 
@@ -148,8 +162,7 @@ theorem run_connection
       (withSyscallSpec C in
        IsSpecRun d rent sGenesis evs states s))
       ∨ AddressCollision d (proofsIn evs) :=               -- or a break: an address collision
-  or_collision fun hc => execution_is_spec_run_pf hgen hrun notSystem C laws hashes
-    (ExecutionFacts.of_assumptions assume hc) sameRent
+  run_connection_of notSystem C laws hashes assume sameRent hgen hrun
 
 /-! ## The completeness theorems -/
 
@@ -187,7 +200,8 @@ theorem transact_complete_except_L1_A0
     (signerPlain : SignerIsPlain oldState tx.accounts)     -- [design: not modelled] the signer is a plain
                                                            --   system account, so it can pay
     (initialized : Initialized d oldState)                 -- [premise] the pool is initialized
-    (reachable : CodeModel.Reachable d oldState)           -- [premise] an execution from genesis reached `oldState`
+    (reachable : CodeModel.Reachable d oldState)           -- [premise] an execution reached `oldState`, starting
+                                                           --   where the program owns no account
     (accounts : AccountsListed d tx.accounts tx.args.proof) -- [premise] the right accounts are listed in the
                                                            --   transaction's account slots
     (notL1 : tx.args.extAmount.val ≠ 0)                    -- [finding L1] excluded
@@ -200,9 +214,8 @@ theorem transact_complete_except_L1_A0
               = Spec.transactEffects (toInputs tx) (toWorld d rent oldState)
         | .error _ => False)                              -- `step` rejects: never
       ∨ AddressCollision d {tx.args.proof} :=              -- or a break: an address collision
-  fun hs => or_collision fun hc => transact_complete_square_pf reachable notSystem C laws hashes crypto
-    runtime pdas (transactDistinct_of_noCollision (Set.mem_singleton _) hc) sameRent accounts
-    signerPlain initialized notL1 notA0 hs
+  transact_complete_of notSystem C laws hashes crypto runtime pdas sameRent signerPlain
+    initialized reachable accounts notL1 notA0
 
 /-! ### 2b. Completeness over runs: every spec run is a code execution
 

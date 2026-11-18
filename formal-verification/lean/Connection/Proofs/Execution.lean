@@ -1122,6 +1122,55 @@ theorem transact_connection_pf {d : Deployment} {rent : Nat → U64} {s s' : Sta
   (transact_refines_verified C laws hs hashes (wf_reachable hgen hrun hpid hashes) solana hrentPos crypto circuit
     sameRent)
 
+/-- `transact_connection_pf` for `step` directly: if `step` accepts, the spec's `transact` holds. -/
+theorem transact_connection_step_pf {d : Deployment} {rent : Nat → U64} {s : State}
+    {tx : TxEnv} {a : TransactAccounts} {proof : zkcash_core.transact.Proof}
+    {extAmount : I64} {fee : U64} {out1 out2 : Slice U8}
+    (reachable : Reachable d s) (hpid : d.programId ≠ systemProgram) (rentPos : tx.RentPositive)
+    (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
+    (hashes : HashesAgree d) (solana : PdasDoNotSign d tx.toTxContext)
+    (crypto : NewNullifierAddressesDiffer d proof) (circuit : CircuitFacts d {proof})
+    (sameRent : SameRent rent tx.minimumBalance) :
+    withSyscallSpec C in
+    match step d s tx (.transact a proof extAmount fee out1 out2) with
+      | .ok (s', _) =>
+          Spec.transact (toInputs ⟨⟨tx.signers⟩, a, ⟨proof, extAmount, fee, out1, out2⟩⟩)
+            (toWorld d rent s) (toWorld d rent s')
+      | .error _ => True :=
+  match hs : step d s tx (.transact a proof extAmount fee out1 out2) with
+  | .ok (_, _) => transact_connection_pf reachable hpid (.program hs rentPos (.nil _)) C laws hashes
+      solana crypto circuit sameRent
+  | .error _ => trivial
+
+/-- `transact_connection_step_pf` as `transact_connection` states it, arguments in its order. -/
+theorem transact_connection_of {d : Deployment} {rent : Nat → U64} {tx : TransactTx}
+    {sysvarRent : Option (Nat → U64)} {s : State} (hpid : d.programId ≠ systemProgram)
+    (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
+    (hashes : HashesAgree d) (runtime : RuntimeFacts rent) (solana : PdasDoNotSign d tx.ctx)
+    (circuit : CircuitFacts d {tx.args.proof}) (sameRent : SameRent rent sysvarRent)
+    (reachable : Reachable d s) :
+    withSyscallSpec C in
+    (match step d s (tx.env sysvarRent) tx.instruction with
+      | .ok (s', _) => Spec.transact (toInputs tx) (toWorld d rent s) (toWorld d rent s')
+      | .error _ => True)
+      ∨ AddressCollision d {tx.args.proof} :=
+  or_collision fun hc => transact_connection_step_pf reachable hpid
+    (rentPositive_of_sameRent runtime sameRent) C laws hashes solana
+    (newDiffer_of_noCollision (Set.mem_singleton _) hc) circuit sameRent
+
+/-- `execution_is_spec_run_pf` as `run_connection` states it, arguments in its order. -/
+theorem run_connection_of {d : Deployment} {rent : Nat → U64} {s₀ s : State} {evs : List Event}
+    {states : List State} (hpid : d.programId ≠ systemProgram)
+    (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
+    (hashes : HashesAgree d) (assume : ExecutionAssumptions d evs)
+    (sameRent : ∀ tx ix em, .program tx ix em ∈ evs → SameRent rent tx.minimumBalance)
+    (hgen : Genesis d.programId s₀) (hrun : ExecutionPath d s₀ evs states s) :
+    ((NoProgramAccounts d s ∧ runTxs evs = []) ∨
+      (withSyscallSpec C in IsSpecRun d rent s₀ evs states s))
+      ∨ AddressCollision d (proofsIn evs) :=
+  or_collision fun hc => execution_is_spec_run_pf hgen hrun hpid C laws hashes
+    (ExecutionFacts.of_assumptions assume hc) sameRent
+
 end
 
 end Connection
