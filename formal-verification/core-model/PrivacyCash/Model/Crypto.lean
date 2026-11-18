@@ -41,17 +41,18 @@ def Crypto.bn254 (c : Crypto) : zkcash_core.groth16.Bn254 Unit := solanaBn254 c.
 def Crypto.proofVerifier (c : Crypto) : zkcash_core.transact.ProofVerifier Unit where
   verify p := zkcash_core.groth16.verify_proof c.bn254 p zkcash_core.verifying_key.VERIFYING_KEY
 
-/-! ## Hypotheses a theorem may take about the primitives
+/-! ## Hypotheses a theorem may take about the primitives, and their collisions
 
-Each is a property of the real implementation (checked by tests where noted),
-stated only for the inputs an execution actually uses where the property
-cannot hold for all inputs. -/
+Each hypothesis is a property of the real implementation (checked by tests
+where noted). Collision resistance is not among them: a hash has collisions,
+so a statement that could fail through one ends in "… or a collision occurs"
+instead, with the collision defined here (`PoseidonCollision`,
+`ExtDataHashCollision`). -/
 
-/-- **Hypothesis (Poseidon collision resistance, per execution):** no two of
-    the node pairs in `inputs` hash to the same value. -/
-def PoseidonCollisionFree (c : Crypto) (inputs : Set (Pubkey × Pubkey)) : Prop :=
-  ∀ x ∈ inputs, ∀ y ∈ inputs, ∀ h,
-    c.hasher.hash_pair x.1 x.2 = ok h → c.hasher.hash_pair y.1 y.2 = ok h → x = y
+/-- **Collision (Poseidon):** two different node pairs `x` and `y` hash to the
+    same value. -/
+def PoseidonCollision (c : Crypto) (x y : Pubkey × Pubkey) : Prop :=
+  x ≠ y ∧ ∃ h, c.hasher.hash_pair x.1 x.2 = ok h ∧ c.hasher.hash_pair y.1 y.2 = ok h
 
 /-- **Hypothesis (Poseidon's zero hashes):** entry `i + 1` of `zero_bytes` is
     the hash of two copies of entry `i`, so it is the root of an empty subtree
@@ -61,14 +62,13 @@ def ZeroBytesConsistent (c : Crypto) : Prop :=
   ∃ z, c.hasher.zero_bytes = ok z ∧
     ∀ i, i + 1 < 41 → c.hasher.hash_pair (z.val[i]!) (z.val[i]!) = ok (z.val[i + 1]!)
 
-/-- **Hypothesis (SHA-256 collision resistance, per execution):** no two of the
-    serialized ext data in `inputs` give the same field element after
-    `transact`'s `Fr::from_le_bytes_mod_order(sha256(..))`, i.e. the digest
-    read little-endian and reduced mod r. -/
-def ExtDataHashCollisionFree (c : Crypto) (inputs : Set (Slice U8)) : Prop :=
-  ∀ x ∈ inputs, ∀ y ∈ inputs, ∀ hx hy,
-    c.sha256.hash x = ok hx → c.sha256.hash y = ok hy →
-    (leNat hx : Fr) = (leNat hy : Fr) → x = y
+/-- **Collision (external data hash):** two different serialized ext data `x`
+    and `y` give the same field element after `transact`'s
+    `Fr::from_le_bytes_mod_order(sha256(..))`, i.e. the digest read
+    little-endian and reduced mod r. -/
+def ExtDataHashCollision (c : Crypto) (x y : Slice U8) : Prop :=
+  x ≠ y ∧ ∃ hx hy, c.sha256.hash x = ok hx ∧ c.sha256.hash y = ok hy ∧
+    (leNat hx : Fr) = (leNat hy : Fr)
 
 /-- A proof's 7 public inputs, in circuit order (as `verify_proof` passes them). -/
 def publicInputs (p : zkcash_core.transact.Proof) : List (Std.Array U8 32#usize) :=

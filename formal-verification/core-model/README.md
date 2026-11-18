@@ -89,8 +89,9 @@ anyway. Accounts below their rent-exempt minimum but above 0 are not deleted
   derived from it, since the verifier is proven to check the equation;
 - the circuit (`circuits/transaction2.circom`) enforces the protocol's
   relation. Nothing here checks the circuit itself;
-- `PoseidonCollisionFree`, `ExtDataHashCollisionFree`, `PdaCollisionFree`:
-  no collisions among the inputs an execution uses;
+- no collision resistance: a statement that could fail through a hash
+  collision ends in "… or a collision occurs" on named inputs
+  (`PoseidonCollision`, `ExtDataHashCollision`, `PdaCollision`);
 - `AltBn128Contracts`: what a successful `alt_bn128` syscall computes (scalar
   multiplication, addition, the four-pairing product), over abstract groups
   that the syscall's concrete point decoding embeds into;

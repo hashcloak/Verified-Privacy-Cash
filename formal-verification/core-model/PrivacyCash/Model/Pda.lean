@@ -10,9 +10,10 @@ last one-byte seed, so the model takes the joined seed bytes, bump included.
 
 The derivation is a hash, so it is NOT injective (there are infinitely many
 seed strings and only 2^256 addresses). What we rely on is that nobody finds
-two seed strings with the same address. That is never an axiom here: theorems
-take `PdaCollisionFree S` as a hypothesis for the finitely many seed strings
-`S` they are about, which is true of SHA-256 on any real execution.
+two seed strings with the same address. That is never assumed: a theorem that
+needs two derived addresses to differ ends in "… or a collision occurs"
+(`PdaCollision`), which is a SHA-256 collision, since different seed strings
+give different hash inputs.
 -/
 import PrivacyCash.Model.Basic
 open Aeneas Aeneas.Std
@@ -43,10 +44,10 @@ def Addresses.pdaInput (A : Addresses) (seeds : List U8) : List U8 := seeds ++ [
 /-- `find_program_address(seeds, program_id).0`: the canonical PDA of `seeds`. -/
 def Addresses.pda (A : Addresses) (seeds : List U8) : Pubkey := A.createProgramAddress (A.pdaInput seeds)
 
-/-- **Hypothesis (SHA-256 collision resistance, per execution):** no two of the
-    seed strings in `inputs` (bumps included) derive the same address. -/
-def PdaCollisionFree (A : Addresses) (inputs : Set (List U8)) : Prop :=
-  ∀ s₁ ∈ inputs, ∀ s₂ ∈ inputs, A.createProgramAddress s₁ = A.createProgramAddress s₂ → s₁ = s₂
+/-- **Collision (address derivation):** two different seed strings `s₁` and `s₂`
+    (bumps included) derive the same address. -/
+def PdaCollision (A : Addresses) (s₁ s₂ : List U8) : Prop :=
+  s₁ ≠ s₂ ∧ A.createProgramAddress s₁ = A.createProgramAddress s₂
 
 /-! ## The PDAs of Privacy Cash (seeds from `#[derive(Accounts)]` in lib.rs) -/
 
@@ -101,59 +102,72 @@ theorem seed_lengths (mint n : Pubkey) :
   simp [merkleTreeSeeds, splMerkleTreeSeeds, treeTokenSeeds, globalConfigSeeds,
     nullifier0Seeds, nullifier1Seeds, ascii]
 
-/-! ## Distinct addresses, given collision-freedom of the inputs involved -/
+/-! ## Distinct addresses, or a collision on the inputs involved -/
 
 variable {A : Addresses}
 
-/-- Different inputs in a collision-free set derive different addresses. -/
-theorem createProgramAddress_ne {S : Set (List U8)} (hcf : PdaCollisionFree A S)
-    {s₁ s₂ : List U8} (h₁ : s₁ ∈ S) (h₂ : s₂ ∈ S) (hne : s₁ ≠ s₂) :
-    A.createProgramAddress s₁ ≠ A.createProgramAddress s₂ :=
-  fun e => hne (hcf s₁ h₁ s₂ h₂ e)
+/-- Different seed strings derive different addresses, or they collide. -/
+theorem createProgramAddress_ne_or {s₁ s₂ : List U8} (hne : s₁ ≠ s₂) :
+    A.createProgramAddress s₁ ≠ A.createProgramAddress s₂ ∨ PdaCollision A s₁ s₂ := by
+  by_cases h : A.createProgramAddress s₁ = A.createProgramAddress s₂
+  · exact Or.inr ⟨hne, h⟩
+  · exact Or.inl h
 
-/-- Nullifier accounts of the same slot are equal only for the same nullifier. -/
+/-- Nullifier accounts of the same slot are equal only for the same nullifier, or their seeds
+    collide. -/
 theorem nullifier0_pda_inj {n m : Pubkey}
-    (hcf : PdaCollisionFree A {A.pdaInput (nullifier0Seeds n), A.pdaInput (nullifier0Seeds m)})
-    (h : A.pda (nullifier0Seeds n) = A.pda (nullifier0Seeds m)) : n = m :=
-  nullifier0Seeds_inj (hcf _ (by simp) _ (by simp) h :)
+    (h : A.pda (nullifier0Seeds n) = A.pda (nullifier0Seeds m)) :
+    n = m ∨ PdaCollision A (A.pdaInput (nullifier0Seeds n)) (A.pdaInput (nullifier0Seeds m)) := by
+  by_cases hs : A.pdaInput (nullifier0Seeds n) = A.pdaInput (nullifier0Seeds m)
+  · exact Or.inl (nullifier0Seeds_inj hs)
+  · exact Or.inr ⟨hs, h⟩
 
 theorem nullifier1_pda_inj {n m : Pubkey}
-    (hcf : PdaCollisionFree A {A.pdaInput (nullifier1Seeds n), A.pdaInput (nullifier1Seeds m)})
-    (h : A.pda (nullifier1Seeds n) = A.pda (nullifier1Seeds m)) : n = m :=
-  nullifier1Seeds_inj (hcf _ (by simp) _ (by simp) h :)
+    (h : A.pda (nullifier1Seeds n) = A.pda (nullifier1Seeds m)) :
+    n = m ∨ PdaCollision A (A.pdaInput (nullifier1Seeds n)) (A.pdaInput (nullifier1Seeds m)) := by
+  by_cases hs : A.pdaInput (nullifier1Seeds n) = A.pdaInput (nullifier1Seeds m)
+  · exact Or.inl (nullifier1Seeds_inj hs)
+  · exact Or.inr ⟨hs, h⟩
 
-/-- A slot-0 nullifier account is never a slot-1 one. -/
-theorem nullifier0_ne_nullifier1 {n m : Pubkey}
-    (hcf : PdaCollisionFree A {A.pdaInput (nullifier0Seeds n), A.pdaInput (nullifier1Seeds m)}) :
-    A.pda (nullifier0Seeds n) ≠ A.pda (nullifier1Seeds m) :=
-  createProgramAddress_ne hcf (by simp) (by simp) (nullifier0Seeds_ne_nullifier1Seeds n m _ _)
+/-- A slot-0 nullifier account is never a slot-1 one, or their seeds collide. -/
+theorem nullifier0_ne_nullifier1 (n m : Pubkey) :
+    A.pda (nullifier0Seeds n) ≠ A.pda (nullifier1Seeds m) ∨
+      PdaCollision A (A.pdaInput (nullifier0Seeds n)) (A.pdaInput (nullifier1Seeds m)) :=
+  createProgramAddress_ne_or (nullifier0Seeds_ne_nullifier1Seeds n m _ _)
 
 /-- Inputs of different lengths are different inputs. -/
 theorem ne_of_length_ne {s₁ s₂ : List U8} (h : s₁.length ≠ s₂.length) : s₁ ≠ s₂ :=
   fun e => h (congrArg List.length e)
 
-/-- The SOL tree, pool and config (with any bumps) are three different accounts. -/
-theorem singleton_pdas_distinct (b₁ b₂ b₃ : U8)
-    (hcf : PdaCollisionFree A
-      {merkleTreeSeeds ++ [b₁], treeTokenSeeds ++ [b₂], globalConfigSeeds ++ [b₃]}) :
-    A.createProgramAddress (merkleTreeSeeds ++ [b₁]) ≠ A.createProgramAddress (treeTokenSeeds ++ [b₂]) ∧
-    A.createProgramAddress (merkleTreeSeeds ++ [b₁]) ≠ A.createProgramAddress (globalConfigSeeds ++ [b₃]) ∧
-    A.createProgramAddress (treeTokenSeeds ++ [b₂]) ≠ A.createProgramAddress (globalConfigSeeds ++ [b₃]) := by
+/-- The SOL tree, pool and config (with any bumps) are three different accounts, or two of their
+    seeds collide. -/
+theorem singleton_pdas_distinct (b₁ b₂ b₃ : U8) :
+    (A.createProgramAddress (merkleTreeSeeds ++ [b₁]) ≠
+        A.createProgramAddress (treeTokenSeeds ++ [b₂]) ∨
+      PdaCollision A (merkleTreeSeeds ++ [b₁]) (treeTokenSeeds ++ [b₂])) ∧
+    (A.createProgramAddress (merkleTreeSeeds ++ [b₁]) ≠
+        A.createProgramAddress (globalConfigSeeds ++ [b₃]) ∨
+      PdaCollision A (merkleTreeSeeds ++ [b₁]) (globalConfigSeeds ++ [b₃])) ∧
+    (A.createProgramAddress (treeTokenSeeds ++ [b₂]) ≠
+        A.createProgramAddress (globalConfigSeeds ++ [b₃]) ∨
+      PdaCollision A (treeTokenSeeds ++ [b₂]) (globalConfigSeeds ++ [b₃])) := by
   obtain ⟨h1, -, h3, h4, -, -⟩ := seed_lengths default default
-  refine ⟨createProgramAddress_ne hcf (by simp) (by simp) (ne_of_length_ne ?_),
-    createProgramAddress_ne hcf (by simp) (by simp) (ne_of_length_ne ?_),
-    createProgramAddress_ne hcf (by simp) (by simp) (ne_of_length_ne ?_)⟩ <;> simp [h1, h3, h4]
+  refine ⟨createProgramAddress_ne_or (ne_of_length_ne ?_),
+    createProgramAddress_ne_or (ne_of_length_ne ?_),
+    createProgramAddress_ne_or (ne_of_length_ne ?_)⟩ <;> simp [h1, h3, h4]
 
-/-- A nullifier account (any bump) is never the SOL tree, pool or config (any bumps). -/
+/-- A nullifier account (any bump) is never the SOL tree, pool or config (any bumps), or their
+    seeds collide. -/
 theorem nullifier_ne_singletons (n : Pubkey) (b : U8) (s : List U8)
-    (hs : s ∈ [merkleTreeSeeds, treeTokenSeeds, globalConfigSeeds]) (c : U8)
-    (hcf : PdaCollisionFree A {nullifier0Seeds n ++ [b], nullifier1Seeds n ++ [b], s ++ [c]}) :
-    A.createProgramAddress (nullifier0Seeds n ++ [b]) ≠ A.createProgramAddress (s ++ [c]) ∧
-    A.createProgramAddress (nullifier1Seeds n ++ [b]) ≠ A.createProgramAddress (s ++ [c]) := by
+    (hs : s ∈ [merkleTreeSeeds, treeTokenSeeds, globalConfigSeeds]) (c : U8) :
+    (A.createProgramAddress (nullifier0Seeds n ++ [b]) ≠ A.createProgramAddress (s ++ [c]) ∨
+      PdaCollision A (nullifier0Seeds n ++ [b]) (s ++ [c])) ∧
+    (A.createProgramAddress (nullifier1Seeds n ++ [b]) ≠ A.createProgramAddress (s ++ [c]) ∨
+      PdaCollision A (nullifier1Seeds n ++ [b]) (s ++ [c])) := by
   obtain ⟨h1, -, h3, h4, h5, h6⟩ := seed_lengths default n
   simp only [List.mem_cons, List.not_mem_nil, or_false] at hs
-  refine ⟨createProgramAddress_ne hcf (by simp) (by simp) (ne_of_length_ne ?_),
-    createProgramAddress_ne hcf (by simp) (by simp) (ne_of_length_ne ?_)⟩ <;>
+  refine ⟨createProgramAddress_ne_or (ne_of_length_ne ?_),
+    createProgramAddress_ne_or (ne_of_length_ne ?_)⟩ <;>
   rcases hs with rfl | rfl | rfl <;> simp [h1, h3, h4, h5, h6]
 
 end PrivacyCash.Model

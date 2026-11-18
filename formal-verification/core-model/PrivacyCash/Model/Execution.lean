@@ -79,9 +79,9 @@ inductive Event where
 /-- `Run d s events s'`: starting from `s`, the events happen in order, each
     succeeding, and the chain ends in `s'`. (Failed instructions revert and
     change nothing, so they are simply left out of a run.) Keeping the events
-    lets theorems state hypotheses about exactly the inputs a run used, such
-    as collision-freedom of the nullifiers it spent. Each program step has
-    positive rent (`TxEnv.RentPositive`; see the module comment). -/
+    lets theorems name exactly the inputs a run used, such as the nullifiers
+    it spent (e.g. in "… or a collision occurs among them"). Each program step
+    has positive rent (`TxEnv.RentPositive`; see the module comment). -/
 inductive Run (d : Deployment) : State → List Event → State → Prop where
   | nil (s : State) : Run d s [] s
   | program {s s' s'' : State} {tx : TxEnv} {ix : Instruction} {emitted : List CommitmentData}
