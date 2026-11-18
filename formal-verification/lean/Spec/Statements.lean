@@ -130,7 +130,8 @@ was initialized:
 - `txs[j]`: the `j`-th transaction the program accepted (`transact`).
 - `updatedValues j`: the balances and config just before transaction `j`, after what happened
   outside `transact` since the previous one, limited to what Solana and the program allow
-  (`UpdatedValuesBetweenTransacts.Allowed`): SOL sent to any account, other accounts spending,
+  (`UpdatedValuesBetweenTransacts.Allowed`): SOL sent to any account, accounts other than the
+  program's (the pool, the nullifier accounts) spending,
   config changes signed by the right authority, each recorded with its signers.
 - `ws j`: the world (pool state, balances, config) before `updatedValues j`.
 Every world the pool can reach is the end of some history (`ReachableWorld.exists_run`),
@@ -500,7 +501,8 @@ Why the two hypotheses suffice: each check of `transact`, the fields of `HonestS
 | `encOutLength` | `H.wellFormed.encOutLength` |
 | `poolNotRecipient` | `H.wellFormed.poolNotRecipient` |
 | `canonicalInputs` | `H.wellFormed.encodings` |
-| `balancesFit` | `L.balancesFit` | -/
+| `balancesFit` | `L.balancesFit` |
+| `solMint` | `H.wellFormed.solMint` | -/
 
 /-- **G3a.** An honest owner's spend is accepted, or an attacker-side hash break occurs. -/
 theorem honest_spend_is_accepted

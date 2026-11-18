@@ -161,10 +161,16 @@ keep those in sync. Items that are not findings are listed only here.
 
 - The external amount `−2^63` is rejected.
 - The fee rates and the fee error margin are each at most 100%.
+- `initialize` takes no settings: it always sets the documented defaults (deposit limit 1000 SOL,
+  deposit fee 0%, withdrawal fee 0.25%, fee error margin 5%); only the admin instructions change
+  them afterwards. The documentation calls these values defaults but doesn't say this.
+- The deposit limit is a `u64` (below `2^64` lamports).
 - Only the admin key can initialize the pool; deployments must use a build with it set.
 - There are two authorities: one over the fee settings, one over the deposit limit.
 - Admins can change only the fee settings and the deposit limit (`update_global_config`,
   `update_deposit_limit`).
+- A SOL-pool transaction names the SOL mint `11111111111111111111111111111112` in its external
+  data (`SOL_ADDRESS`); a transaction naming another mint is rejected.
 - Public inputs are canonically encoded (32 big-endian bytes, value below `p`).
 - The pool's own address can't be the recipient of a withdrawal or the fee recipient of a
   non-zero fee; the runtime rejects such a transaction.

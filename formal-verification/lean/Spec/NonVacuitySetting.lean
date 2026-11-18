@@ -38,8 +38,8 @@ attribute [local instance] toyG1Module toyG2Module toyGTGroup
 /-- Toy pairing: always `1` (`GT = Unit` has no other element). -/
 @[reducible] def toyPairing : Pairing := ⟨fun _ _ => 1⟩
 
-/-- Toy key: all points `0`. -/
-@[reducible] def toyDeployment : Deployment := ⟨⟨0, 0, 0, 0, fun _ => 0⟩⟩
+/-- Toy deployment: the key has all points `0`; the SOL mint is the address `0`. -/
+@[reducible] def toyDeployment : Deployment := ⟨⟨0, 0, 0, 0, fun _ => 0⟩, 0⟩
 
 
 end LeanSpec.NonVacuity

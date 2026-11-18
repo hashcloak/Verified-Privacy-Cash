@@ -287,6 +287,7 @@ end Groth16
 
 class Deployment where
   vk: Groth16.VerificationKey -- the deployed verification key (a fixed circuit)
+  solMint: Pubkey             -- the address the external data names as the mint of SOL
 
 variable [Deployment]
 
@@ -330,6 +331,17 @@ structure State where
   -- input slot. Fixed for the deployment.
   nullifierAddr: Fin 2 → Bytes → Pubkey
   config: config
+  -- SOLANA FACT: the addresses of the program's two other accounts, which hold the tree
+  -- (`tree`) and the config (`config`). Program-derived addresses, fixed for the deployment.
+  -- The spec needs them because the program owns these accounts: no one else can debit them
+  -- (`UpdatedValuesBetweenTransacts.Allowed`), and they can't sign (`signerNotPoolNotNullifiers`).
+  treeAccount: Pubkey
+  configAccount: Pubkey
+
+/-- `st.IsProgramAccount x`: `x` is one of the program's accounts: the pool, a nullifier
+    account, the tree's account or the config's account. The program owns them. -/
+def State.IsProgramAccount (st : State) (x : Pubkey) : Prop :=
+  x = st.pool ∨ x ∈ st.nullifierAccounts ∨ x = st.treeAccount ∨ x = st.configAccount
 
 -- Needed: `balances` is how deposits/withdrawals/fees actually move real SOL between
 -- accounts (`transferEffects`, `transactEffects`), how `AgreesOnProgramEffects`
@@ -392,7 +404,7 @@ structure TxInputs where
   outC1: F -- output commitment 1
   extAmt: ℤ -- external amount
   f: ℕ -- fee
-  s: Pubkey -- signer
+  s: Pubkey -- the account named as signer (pays deposits); `signerSigned` requires it signed
   -- SOLANA FACT: the accounts that signed the transaction. Not part of the external data, so a
   -- relayer can submit a copy of a proof under its own signature (G2a).
   signers: List Pubkey
@@ -574,13 +586,13 @@ def publicInputsEncoded (inputs: TxInputs): Prop :=
 def nullifiersFresh (st: State) (inputs: TxInputs): Prop :=
   ¬ st.spent (inputs.nullifierBytes 0) ∧ ¬ st.spent (inputs.nullifierBytes 1)
 
--- The two new nullifier accounts can be created: no account exists at their addresses yet
--- (`nullifiersFresh` covers the existing nullifier accounts).
--- SOLANA FACT: Anchor's `init` fails if an account already exists at the address. The pool's
--- account exists, and the account for input 0 is created before the one for input 1.
+-- The two new nullifier accounts can be created: no account exists at their addresses yet.
+-- SOLANA FACT: Anchor's `init` fails if an account already exists at the address. The
+-- program's accounts exist, and the account for input 0 is created before the one for input 1.
 def nullifierAccountsCreatable (st: State) (inputs: TxInputs): Prop :=
   st.newNullifierAccount inputs 0 ≠ st.newNullifierAccount inputs 1 ∧
-  st.newNullifierAccount inputs 0 ≠ st.pool ∧ st.newNullifierAccount inputs 1 ≠ st.pool
+  ¬ st.IsProgramAccount (st.newNullifierAccount inputs 0) ∧
+  ¬ st.IsProgramAccount (st.newNullifierAccount inputs 1)
 
 -- The two input nullifiers differ. Enforced by the circuit (`noDuplicateNullifiers`),
 -- not checked by the program itself.
@@ -612,13 +624,14 @@ def signerSolvent (balances: Pubkey → ℕ) (s: Pubkey) (extAmt: ℤ) (topUps: 
 def signerSigned (inputs: TxInputs): Prop :=
   inputs.s ∈ inputs.signers
 
--- The signer is none of the program's own accounts: not the pool, and not the two new
+-- The signer is none of the program's accounts (`State.IsProgramAccount`), and not the two new
 -- nullifier accounts.
 -- SOLANA FACT: these are program-derived addresses (PDAs), which have no private key, so they
--- can't sign. Without this rule the signer could be paid its own nullifier rent, and the pool
--- could pay a deposit to itself.
+-- can't sign. Without this rule the signer could be paid its own nullifier rent, the pool
+-- could pay a deposit to itself, and a nullifier account could pay a deposit (and be deleted
+-- by Solana at 0 lamports, re-opening its note).
 def signerNotPoolNotNullifiers (inputs: TxInputs) (st: State): Prop :=
-  inputs.s ≠ st.pool ∧
+  ¬ st.IsProgramAccount inputs.s ∧
   inputs.s ≠ st.newNullifierAccount inputs 0 ∧ inputs.s ≠ st.newNullifierAccount inputs 1
 
 -- There is room in the tree for the two output commitments (the tree holds `2^26` leaves).
@@ -663,6 +676,13 @@ def balancesFit (inputs: TxInputs) (w: World): Prop :=
   (∀ k, 0 < balanceDelta inputs w k → (w.balances k : ℤ) + balanceDelta inputs w k < 2^64) ∧
   (inputs.extAmt > 0 → (w.poolBalance : ℤ) + inputs.extAmt < 2^64)
 
+-- The transaction is for the SOL pool: its external data names the SOL mint, the deployment's
+-- `solMint` (the spec leaves its value to the deployment, as it does the verifying key).
+-- ADDED MANUALLY (docs silent). The spec needs it to say which transactions the SOL pool takes:
+-- without it, a transaction whose external data names another mint would be allowed.
+def mintIsSol (inputs: TxInputs): Prop :=
+  inputs.mintAddr = Deployment.solMint
+
 structure transactPreconditions
   (inputs: TxInputs)
   (oldWorld: World): Prop where
@@ -687,6 +707,7 @@ structure transactPreconditions
   poolNotRecipient: poolNotRecipient inputs oldWorld.state.pool
   canonicalInputs: publicInputsEncoded inputs
   balancesFit: balancesFit inputs oldWorld
+  solMint: mintIsSol inputs
 
 /-- `actual` agrees with `predicted` on everything, field by field: every account balance
     (uninvolved accounts stay unchanged, the pool's included), the pool's address, the tree, the
@@ -698,6 +719,8 @@ structure AgreesOnProgramEffects (inputs : TxInputs) (predicted actual : World) 
   pool          : actual.state.pool = predicted.state.pool
   nullifierAddr : actual.state.nullifierAddr = predicted.state.nullifierAddr
   config        : actual.state.config = predicted.state.config
+  treeAccount   : actual.state.treeAccount = predicted.state.treeAccount
+  configAccount : actual.state.configAccount = predicted.state.configAccount
   rentExemptMin : actual.rentExemptMin = predicted.rentExemptMin
   nullifierRent : actual.nullifierRent = predicted.nullifierRent
   balances      : actual.balances = predicted.balances
@@ -748,8 +771,20 @@ structure InitParams where
   pool : Pubkey
   -- SOLANA FACT: where nullifier accounts are created (`State.nullifierAddr`).
   nullifierAddr : Fin 2 → Bytes → Pubkey
+  -- SOLANA FACT: the accounts holding the tree and the config (`State.treeAccount`,
+  -- `State.configAccount`), and their rent-exempt minimums: `initialize` creates them holding
+  -- exactly that, like the pool.
+  treeAccount : Pubkey
+  configAccount : Pubkey
+  treeRent : ℕ
+  configRent : ℕ
+  -- SOLANA FACT: every balance is below 2^64 (Solana balances are `u64`).
+  balances_fit : ∀ x, balances x < 2 ^ 64
   -- Who initialized the pool.
   initializer : Pubkey
+  -- SOLANA FACT: the initializer is none of the three accounts `initialize` creates. They are
+  -- program-derived addresses, which can't sign, and the initializer pays for them.
+  initializer_not_created : initializer ≠ pool ∧ initializer ≠ treeAccount ∧ initializer ≠ configAccount
   -- SOLANA FACT: the accounts that signed the `initialize` transaction.
   signers : List Pubkey
   -- SOLANA FACT: the initializer really signed it (Anchor's `Signer` check). Without this rule,
@@ -766,16 +801,17 @@ structure InitParams where
   -- admin key. Taken from the code (`check_admin`). The spec needs it for security: whoever
   -- initializes controls the fees and the deposit limit.
   admin_init : ∀ a, admin = some a → initializer = a
-  -- ADDED MANUALLY (docs silent): the fee error margin limit cfg.feeErrorMargin ≤ 10000 on the
-  -- initial config. In the code it holds without a check: `initialize` sets it to 500. The spec
-  -- needs it because `feeSufficient` computes `10000 − feeErrorMargin`, which means nothing
-  -- above 100%.
-  feeErrorMargin_init : cfg.feeErrorMargin ≤ 10000
-  -- ADDED MANUALLY (docs silent): the fee rate limit, at most 10000 basis points, on the initial
-  -- config. In the code it holds without a check: `initialize` sets the rates to 0 and 25. The spec
-  -- needs it for security: with no limit, admins could set a rate that locks notes (G3b).
-  depositFeeRate_init : cfg.depositFeeRate ≤ 10000
-  withdrawalFeeRate_init : cfg.withdrawalFeeRate ≤ 10000
+  -- ADDED MANUALLY (docs silent): the initial config is the documented defaults. The docs give
+  -- each setting's default but don't say that `initialize` always sets these values (it takes no
+  -- settings) and that only the admin instructions change them afterwards.
+  -- Deposit fee rate: 0%.
+  depositFeeRate_default : cfg.depositFeeRate = 0
+  -- Withdrawal fee rate: 25 basis points (0.25%).
+  withdrawalFeeRate_default : cfg.withdrawalFeeRate = 25
+  -- Fee error margin: 500 basis points (5%).
+  feeErrorMargin_default : cfg.feeErrorMargin = 500
+  -- Deposit limit: 1_000_000_000_000 lamports (1000 SOL).
+  maxDepositLimit_default : cfg.maxDepositLimit = 1_000_000_000_000
 
 def initWorld (params : InitParams) : World := {
   state := {
@@ -784,13 +820,19 @@ def initWorld (params : InitParams) : World := {
     pool := params.pool
     nullifierAddr := params.nullifierAddr
     config := params.cfg
+    treeAccount := params.treeAccount
+    configAccount := params.configAccount
   }
   -- Function.update from Lean Mathlib
   -- https://leanprover-community.github.io/mathlib4_docs/Mathlib/Logic/Function/Basic.html#Function.update
   -- "Function.update f a' v a = if h : a = a' then ⋯ ▸ v else f a"
-  -- So it keeps value of params.balances everywhere, except when the input is the pool,
-  -- then it returns rentExemptMin
-  balances := Function.update params.balances params.pool params.rentExemptMin
+  -- So it keeps value of params.balances everywhere, except at the three accounts `initialize`
+  -- creates: the tree's and the config's account hold their rent, and the pool its rent
+  -- (written last, so the pool holds `rentExemptMin` whatever the other addresses are).
+  balances := Function.update
+    (Function.update (Function.update params.balances params.treeAccount params.treeRent)
+      params.configAccount params.configRent)
+    params.pool params.rentExemptMin
   rentExemptMin := params.rentExemptMin
   nullifierRent := params.nullifierRent
 }
@@ -825,7 +867,8 @@ inductive AdminResult where
       ADDED MANUALLY (docs silent): the fee rate limit checks d ≤ 10000 and w ≤ 10000. Taken from
       the code (`update_global_config`). The spec needs them for security: with no limit, admins
       could set a rate that locks notes (G3b).
-    - **New deposit limit:** the limit authority must be among the signers.
+    - **New deposit limit:** the limit authority must be among the signers, and the limit is
+      below `2^64`. ADDED MANUALLY (docs silent): the limit is the instruction's `u64` argument.
 
     Nothing else changes; no admin change touches the authorities. -/
 def AdminChange.apply (ch : AdminChange) (c : config) : AdminResult :=
@@ -835,7 +878,9 @@ def AdminChange.apply (ch : AdminChange) (c : config) : AdminResult :=
       .accepted { c with depositFeeRate := d, withdrawalFeeRate := w, feeErrorMargin := m }
     else .rejected
   | .depositLimit l =>
-    if c.limitAuthority ∈ ch.signers then .accepted { c with maxDepositLimit := l } else .rejected
+    -- ADDED MANUALLY (docs silent): the limit is a u64 (the instruction's argument).
+    if c.limitAuthority ∈ ch.signers ∧ l < 2 ^ 64 then .accepted { c with maxDepositLimit := l }
+    else .rejected
 
 /-- `ReachableByAdminChanges chs c1 c2`: the admin changes `chs`, applied in order, are each
     accepted and take the config from `c1` to `c2`. Built the same way as `ReachableWorld` below. -/
@@ -875,13 +920,20 @@ def World.withUpdatedValues (w : World) (b : UpdatedValuesBetweenTransacts) : Wo
 /-- `b.Allowed w`: the updated values `b` can follow world `w`, as Solana allows it.
 
     Allowed changes:
-    - Anyone can send SOL to any account at any time, so the pool's balance can only grow: only
-    the program can take SOL out of it, and only in a transaction. Every other account can
-    change arbitrarily (its owner can also spend from it).
-    - The config changes only by the recorded admin changes. -/
+    - **The program's accounts only gain** (`State.IsProgramAccount`: the pool, the nullifier
+      accounts, the tree's and the config's account). Anyone can send SOL to any account, but
+      only an account's owner can take SOL out of it, and the program does so only in a
+      transaction (from the pool only).
+    - **Every other account can change arbitrarily:** its owner can also spend from it.
+    - **Every balance stays below 2^64.**
+    - **The config changes only by the recorded admin changes.** -/
 structure UpdatedValuesBetweenTransacts.Allowed (w : World) (b : UpdatedValuesBetweenTransacts) :
     Prop where
-  poolGains : w.poolBalance ≤ b.balances w.state.pool
+  -- SOLANA FACT: only an account's owner can debit it, and the program debits nothing outside
+  -- `transact`.
+  programAccountsGain : ∀ x, w.state.IsProgramAccount x → w.balances x ≤ b.balances x
+  -- SOLANA FACT: Solana balances are `u64`.
+  balancesFit : ∀ x, b.balances x < 2 ^ 64
   config : ReachableByAdminChanges b.adminChanges w.state.config b.config
 
 -- A claim about a pair of worlds; can we go from w1 to w2?

@@ -12,6 +12,17 @@ open PoseidonHashes Sha
     instance is not found automatically). -/
 instance : NeZero p := ⟨by decide⟩
 
+/-- The initial fee error margin is at most 100% (it is the default, 5%). -/
+lemma InitParams.feeErrorMargin_init (params : InitParams) : params.cfg.feeErrorMargin ≤ 10000 := by
+  rw [params.feeErrorMargin_default]; decide
+/-- The initial deposit fee rate is at most 100% (it is the default, 0%). -/
+lemma InitParams.depositFeeRate_init (params : InitParams) : params.cfg.depositFeeRate ≤ 10000 := by
+  rw [params.depositFeeRate_default]; decide
+/-- The initial withdrawal fee rate is at most 100% (it is the default, 0.25%). -/
+lemma InitParams.withdrawalFeeRate_init (params : InitParams) :
+    params.cfg.withdrawalFeeRate ≤ 10000 := by
+  rw [params.withdrawalFeeRate_default]; decide
+
 variable [PoseidonHashes] [Sha] [Groups]
 variable [AddCommGroup G1] [Module F G1] [AddCommGroup G2] [Module F G2] [CommGroup GT]
 variable [Pairing] [Deployment]
@@ -41,12 +52,14 @@ def stepPair (k : ℕ) (sib : ℕ → F) (acc : F) (h : ℕ) : F × F :=
 /-- `O.siblings` as a plain `ℕ → F` (default `0` past height 26, never read). -/
 def OpeningSib (O : Opening) : ℕ → F := O.sibling
 
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 lemma nodeAt_eq_foldUpTo (O : Opening) (leaf : F) (h : ℕ) :
     O.nodeAt leaf h = foldUpTo (stepFn O.index.val (OpeningSib O)) h leaf := by
   induction h with
   | zero => rfl
   | succ h ih => simp only [Opening.nodeAt, foldUpTo, stepFn, OpeningSib, ih]
 
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 lemma inputsAt_eq_stepPair (O : Opening) (leaf : F) (h : ℕ) :
     O.inputsAt leaf h = stepPair O.index.val (OpeningSib O) (foldUpTo (stepFn O.index.val (OpeningSib O)) h leaf) h := by
   simp only [Opening.inputsAt, stepPair, OpeningSib, nodeAt_eq_foldUpTo]
@@ -57,6 +70,7 @@ lemma inputsAt_eq_stepPair (O : Opening) (leaf : F) (h : ℕ) :
 -- LEMMA (used by G1b): the same note (amount, secret key, blinding, mint) at the same leaf
 -- index gives the same nullifier. Secret keys are compared directly: two keys could share
 -- a public key `H1 sk` if `H1` collides.
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 lemma same_note_same_nullifier
   (witness1 witness2: Witness)
   (pubInput1 pubInput2: PubInputs)
@@ -82,6 +96,7 @@ lemma same_note_same_nullifier
 
 -- LEMMA (used by G1b): the same commitment at the same leaf index gives the same nullifier,
 -- or an `H1` collision (secret keys) or an `H4` collision (note contents).
+omit [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 lemma same_commitment_same_nullifier_or_collision
   (witness1 witness2: Witness)
   (pubInput1 pubInput2: PubInputs)
@@ -109,6 +124,8 @@ lemma same_commitment_same_nullifier_or_collision
 
 
 -- LEMMA: `moveLamports` in ℤ, when the source can pay.
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma moveLamports_apply (b : Pubkey → ℕ) (src dst : Pubkey) (x : ℕ) (hsd : src ≠ dst)
     (hx : x ≤ b src) (k : Pubkey) :
     (moveLamports b src dst x k : ℤ)
@@ -125,15 +142,21 @@ lemma moveLamports_apply (b : Pubkey → ℕ) (src dst : Pubkey) (x : ℕ) (hsd 
 
 -- LEMMA: the effect functions leave the state (tree, nullifiers, pool address, config) to
 -- `transactEffects`.
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 @[simp] lemma nullifierRentEffects_state (inputs: TxInputs) (w: World) :
     (nullifierRentEffects inputs w).state = w.state := rfl
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma transferEffects_state (inputs: TxInputs) (w: World) :
     (transferEffects inputs w).state = w.state := by
   unfold transferEffects; split_ifs <;> rfl
 
 -- LEMMA: the rent step pays each new nullifier account its top-up from the signer. Needs the
 -- signer to be able to pay, and the signer and the two addresses to be three different accounts.
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma nullifierRentEffects_balances (inputs : TxInputs) (old : World)
     (hSolv : old.nullifierTopUp inputs 0 + old.nullifierTopUp inputs 1 ≤ old.balances inputs.s)
     (hs0 : inputs.s ≠ old.state.newNullifierAccount inputs 0)
@@ -167,6 +190,7 @@ lemma nullifierRentEffects_balances (inputs : TxInputs) (old : World)
 -- LEMMA (used by G1c, G3a, G4): the predicted world moves every account by exactly
 -- `balanceDelta`. The solvency preconditions rule out ℕ underflow; `poolNotRecipient`,
 -- `signerNotPoolNotNullifiers` and `nullifierAccountsCreatable` keep the roles apart where it matters.
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 lemma transactEffects_balances (inputs : TxInputs) (old : World)
     (hSolv : signerSolvent old.balances inputs.s inputs.extAmt
       (old.nullifierTopUp inputs 0 + old.nullifierTopUp inputs 1))
@@ -177,7 +201,10 @@ lemma transactEffects_balances (inputs : TxInputs) (old : World)
       = old.balances k + balanceDelta inputs old k := by
   obtain ⟨hAP, htP⟩ := hSep
   obtain ⟨hsP, hs0, hs1⟩ := hPda
+  replace hsP : inputs.s ≠ old.state.pool := fun e => hsP (Or.inl e)
   obtain ⟨h01, h0P, h1P⟩ := hNew
+  replace h0P : old.state.newNullifierAccount inputs 0 ≠ old.state.pool := fun e => h0P (Or.inl e)
+  replace h1P : old.state.newNullifierAccount inputs 1 ≠ old.state.pool := fun e => h1P (Or.inl e)
   obtain ⟨hPw, hPd⟩ := hPool
   unfold signerSolvent at hSolv
   unfold World.poolBalance at hPw hPd
@@ -211,7 +238,7 @@ lemma transactEffects_balances (inputs : TxInputs) (old : World)
         simp only [hz, if_false, hpos, if_true]
         rw [hw0P, moveLamports_apply _ _ _ _ hsP hcan, habs]
         by_cases hxs : x = inputs.s <;> by_cases hxP : x = P <;>
-          simp [hxs, hxP, hsP, not_lt.mpr (le_of_lt hpos)] <;> (try ring)
+          simp [hxs, hxP, hsP, not_lt.mpr (le_of_lt hpos)]
       · have hneg : inputs.extAmt < 0 := by omega
         have habs : (inputs.extAmt.natAbs : ℤ) = -inputs.extAmt := by omega
         have hcan : inputs.extAmt.natAbs ≤ w0.balances P := by
@@ -223,7 +250,7 @@ lemma transactEffects_balances (inputs : TxInputs) (old : World)
         have hAP' := hAP hneg
         rw [hw0P, moveLamports_apply _ _ _ _ (Ne.symm hAP') hcan, habs]
         by_cases hxA : x = inputs.A <;> by_cases hxP : x = P <;>
-          simp [hxA, hxP, hAP', hneg] <;> (try ring)
+          simp [hxA, hxP, hAP', hneg]; ring
   -- the fee step
   have hfee : inputs.f ≤ w1.balances P := by
     have h1 := htr P
@@ -255,8 +282,11 @@ lemma sol_balance_correctness_step
   := by
   obtain ⟨hpre, heff⟩ := h1
   obtain ⟨hAP, htP⟩ := hpre.poolNotRecipient
-  obtain ⟨hsP, -, -⟩ := hpre.signerNotPoolNotNullifiers
-  obtain ⟨-, h0P, h1P⟩ := hpre.nullifierAccountsNew
+  have hsP : inputs.s ≠ oldWorld.state.pool := fun e => hpre.signerNotPoolNotNullifiers.1 (Or.inl e)
+  have h0P : oldWorld.state.newNullifierAccount inputs 0 ≠ oldWorld.state.pool :=
+    fun e => hpre.nullifierAccountsNew.2.1 (Or.inl e)
+  have h1P : oldWorld.state.newNullifierAccount inputs 1 ≠ oldWorld.state.pool :=
+    fun e => hpre.nullifierAccountsNew.2.2 (Or.inl e)
   have hpool : newWorld.state.pool = oldWorld.state.pool := by
     rw [heff.pool]; simp only [transactEffects, transferEffects_state, nullifierRentEffects_state]
   unfold World.poolBalance
@@ -277,34 +307,61 @@ lemma sol_balance_correctness_step
     rw [if_neg ht]; ring
 
 -- HELPERS: what happens between transactions changes only the balances and the config.
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 @[simp] lemma World.withUpdatedValues_tree (w : World) (b : UpdatedValuesBetweenTransacts) :
     (w.withUpdatedValues b).state.tree = w.state.tree := rfl
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 @[simp] lemma World.withUpdatedValues_nullifierAccounts (w : World)
     (b : UpdatedValuesBetweenTransacts) :
     (w.withUpdatedValues b).state.nullifierAccounts = w.state.nullifierAccounts := rfl
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 @[simp] lemma World.withUpdatedValues_nullifierAddr (w : World) (b : UpdatedValuesBetweenTransacts) :
     (w.withUpdatedValues b).state.nullifierAddr = w.state.nullifierAddr := rfl
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 @[simp] lemma World.withUpdatedValues_pool (w : World) (b : UpdatedValuesBetweenTransacts) :
     (w.withUpdatedValues b).state.pool = w.state.pool := rfl
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 @[simp] lemma World.withUpdatedValues_config (w : World) (b : UpdatedValuesBetweenTransacts) :
     (w.withUpdatedValues b).state.config = b.config := rfl
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 @[simp] lemma World.withUpdatedValues_balances (w : World) (b : UpdatedValuesBetweenTransacts) :
     (w.withUpdatedValues b).balances = b.balances := rfl
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 @[simp] lemma World.withUpdatedValues_rentExemptMin (w : World)
     (b : UpdatedValuesBetweenTransacts) :
     (w.withUpdatedValues b).rentExemptMin = w.rentExemptMin := rfl
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 @[simp] lemma World.withUpdatedValues_nullifierRent (w : World)
     (b : UpdatedValuesBetweenTransacts) :
     (w.withUpdatedValues b).nullifierRent = w.nullifierRent := rfl
 /-- The values `w` already has: nothing happened between two transactions. -/
 def UpdatedValuesBetweenTransacts.unchanged (w : World) : UpdatedValuesBetweenTransacts :=
   ⟨w.balances, w.state.config, []⟩
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 @[simp] lemma World.withUpdatedValues_self (w : World) :
     w.withUpdatedValues (UpdatedValuesBetweenTransacts.unchanged w) = w := by
   rcases w with ⟨⟨⟩⟩; rfl
-lemma UpdatedValuesBetweenTransacts.Allowed.self (w : World) :
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
+lemma UpdatedValuesBetweenTransacts.Allowed.self (w : World) (hfit : ∀ x, w.balances x < 2 ^ 64) :
     UpdatedValuesBetweenTransacts.Allowed w (UpdatedValuesBetweenTransacts.unchanged w) :=
-  ⟨le_rfl, .noChange _⟩
+  ⟨fun _ _ => le_rfl, hfit, .noChange _⟩
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
+/-- An allowed change never lowers the pool's balance. -/
+lemma UpdatedValuesBetweenTransacts.Allowed.poolGains {w : World}
+    {b : UpdatedValuesBetweenTransacts} (h : b.Allowed w) :
+    w.poolBalance ≤ b.balances w.state.pool :=
+  h.programAccountsGain _ (.inl rfl)
 /-- The pool's balance just before transaction `j`: after it, plus what was sent to it. -/
 lemma Run.poolBalance_withUpdatedValues {w0 : World} (r : Run w0) (j : ℕ)
     (hj : j < r.txs.length) :
@@ -315,6 +372,8 @@ lemma Run.poolBalance_withUpdatedValues {w0 : World} (r : Run w0) (j : ℕ)
     World.withUpdatedValues_pool, Run.donations] at h ⊢
   omega
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 /-- HELPER: `transferEffects` doesn't touch the tree. -/
 lemma transferEffects_tree (inputs: TxInputs) (oldWorld: World) :
     (transferEffects inputs oldWorld).state.tree = oldWorld.state.tree := by
@@ -322,6 +381,8 @@ lemma transferEffects_tree (inputs: TxInputs) (oldWorld: World) :
   split_ifs <;> rfl
 
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 /-- HELPER: a value in the range of `Function.update f i v` is `v`, or was already in
     the range of `f`. -/
 lemma mem_range_update_or_mem_range {α β} [DecidableEq α] (f: α → β) (i: α) (v y: β)
@@ -332,11 +393,13 @@ lemma mem_range_update_or_mem_range {α β} [DecidableEq α] (f: α → β) (i: 
   · exact Or.inl hx.symm
   · exact Or.inr ⟨x, hx⟩
 
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 /-- HELPER: `appendEffects` writes its new root into the next `history` slot. -/
 lemma appendEffects_history (c: F) (t: Tree) :
     (appendEffects c t).history
       = Function.update t.history (t.rootIndex + 1) (appendEffects c t).root := rfl
 
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 /-- HELPER: `nextIndex` of `foldAppend cs initTree` is `cs.length`. -/
 lemma foldAppend_nextIndex (cs : List F) : (foldAppend cs initTree).nextIndex = cs.length := by
   induction cs using List.reverseRecOn with
@@ -356,6 +419,8 @@ lemma foldAppend_nextIndex (cs : List F) : (foldAppend cs initTree).nextIndex = 
 -- (`opening_forward_preservation`): a written leaf keeps a valid opening as leaves are added.
 
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma foldUpTo_congr {α : Type} : ∀ (n : ℕ) {f f' : α → ℕ → α} (x : α),
     (∀ y k, k < n → f y k = f' y k) → foldUpTo f n x = foldUpTo f' n x
   | 0, _, _, x, _ => by simp [foldUpTo]
@@ -364,6 +429,8 @@ lemma foldUpTo_congr {α : Type} : ∀ (n : ℕ) {f f' : α → ℕ → α} (x :
     rw [foldUpTo_congr n x (fun y k hk => hh y k (Nat.lt_succ_of_lt hk))]
     exact hh _ n (Nat.lt_succ_self n)
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma fin_foldl_eq_foldUpTo {α : Type} :
     ∀ (n : ℕ) (g : α → Fin n → α) (x : α),
       Fin.foldl n g x = foldUpTo (fun x h => if hh : h < n then g x ⟨h, hh⟩ else x) n x
@@ -383,6 +450,8 @@ lemma fin_foldl_eq_foldUpTo {α : Type} :
     simp only [foldUpTo, dif_pos (Nat.lt_succ_self n)]
     rfl
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 /-- `fin_foldl_eq_foldUpTo` for an `f` that agrees with `g` pointwise. -/
 lemma fin_foldl_eq_foldUpTo_plain {α : Type} {n : ℕ} (g : α → Fin n → α) (f : α → ℕ → α)
     (hagree : ∀ x (h : ℕ) (hh : h < n), f x h = g x ⟨h, hh⟩) (x : α) :
@@ -394,16 +463,24 @@ lemma fin_foldl_eq_foldUpTo_plain {α : Type} {n : ℕ} (g : α → Fin n → α
 
 -- HELPER: small `Nat.testBit`/`>>>` facts the carry-propagation arguments below rely on.
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma testBit_shiftRight_eq (k h : ℕ) : Nat.testBit k h = decide ((k >>> h) % 2 = 1) := by
   rw [← Nat.testBit_zero (k >>> h), Nat.testBit_shiftRight, Nat.add_zero]
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma shiftRight_succ_eq (k h : ℕ) : k >>> h = 2 * (k >>> (h+1)) + (k >>> h) % 2 := by
   rw [Nat.shiftRight_succ]; omega
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma div_two_shiftRight (n h : ℕ) : n >>> (h+1) = (n / 2) >>> h := by
   rw [Nat.shiftRight_eq_div_pow, Nat.shiftRight_eq_div_pow, pow_succ, Nat.div_div_eq_div_mul,
       Nat.mul_comm]
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 /-- Binary increment: if bit `h` of `n+1` is set, either it was already set (and the
     height-`h` block index is unchanged), or it was just flipped (and the index moves up
     by one). -/
@@ -440,10 +517,14 @@ lemma testBit_succ_cases : ∀ (h n : ℕ), Nat.testBit (n+1) h = true →
       · exact Or.inl ⟨hbt, by rw [div_two_shiftRight, div_two_shiftRight, hnd, hn1d]; exact hs⟩
       · exact Or.inr ⟨hbf, by rw [div_two_shiftRight, div_two_shiftRight, hnd, hn1d]; exact hs⟩
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma div_mul_le (n h : ℕ) : (n >>> h) * 2^h ≤ n := by
   rw [Nat.shiftRight_eq_div_pow]
   exact Nat.div_mul_le_self n (2^h)
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 /-- The block after leaf `n`'s height-`h` block starts after position `n`. -/
 lemma succ_le_shiftRight_succ_mul (n h : ℕ) : n + 1 ≤ (n >>> h + 1) * 2^h := by
   rw [Nat.shiftRight_eq_div_pow]
@@ -458,17 +539,20 @@ lemma succ_le_shiftRight_succ_mul (n h : ℕ) : n + 1 ≤ (n >>> h + 1) * 2^h :=
 -- HELPER: `treeHash` under appending: a block inside the old list doesn't change
 -- (`treeHash_ext`), and a block past the end is the zero hash (`treeHash_zero`).
 
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 lemma leafAt_append_left (cs extra : List F) (i : ℕ) (h : i < cs.length) :
     leafAt (cs ++ extra) i = leafAt cs i := by
   unfold leafAt
   have hlen : (cs ++ extra).length = cs.length + extra.length := by simp
   rw [dif_pos (by omega : i < (cs ++ extra).length), dif_pos h, List.getElem_append_left h]
 
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 lemma leafAt_own (cs : List F) (y : F) : leafAt (cs ++ [y]) cs.length = y := by
   unfold leafAt
   rw [dif_pos (by simp : cs.length < (cs ++ [y]).length)]
   simp
 
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 lemma treeHash_ext (cs extra : List F) : ∀ (h idx : ℕ), (idx+1) * 2^h ≤ cs.length →
     treeHash (cs ++ extra) h idx = treeHash cs h idx
   | 0, idx, hb => by
@@ -485,6 +569,7 @@ lemma treeHash_ext (cs extra : List F) : ∀ (h idx : ℕ), (idx+1) * 2^h ≤ cs
       rw [show 2*idx+1+1 = 2*idx+2 from rfl]; exact hb
     rw [treeHash_ext cs extra h (2*idx) hleft, treeHash_ext cs extra h (2*idx+1) hright]
 
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 lemma treeHash_zero (cs : List F) : ∀ (h idx : ℕ), cs.length ≤ idx * 2^h →
     treeHash cs h idx = Z h
   | 0, idx, hb => by
@@ -529,6 +614,7 @@ def canonicalOpening (cs : List F) (k : Fin (2^26)) : Opening where
 -- HELPER: the canonical opening of any `k` hashes to the tree's root (pure path
 -- arithmetic, independent of `appendEffects`).
 
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 lemma calcRoot_canonicalOpening_aux (cs : List F) (k : ℕ) :
     ∀ H : ℕ, foldUpTo (fun acc h =>
         if Nat.testBit k h then H2 (treeHash cs h (siblingIdx k h)) acc
@@ -564,6 +650,7 @@ lemma calcRoot_canonicalOpening_aux (cs : List F) (k : ℕ) :
       have hown : k >>> H = 2 * (k >>> (H+1)) := by omega
       simp [hbf, hidx, hown]
 
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 lemma calcRoot_canonicalOpening (cs : List F) (k : Fin (2^26)) :
     (canonicalOpening cs k).calcRoot (leafAt cs k.val) = treeHash cs 26 0 := by
   unfold Opening.calcRoot
@@ -579,6 +666,7 @@ lemma calcRoot_canonicalOpening (cs : List F) (k : Fin (2^26)) :
 
 -- HELPER: going up the canonical opening, the node reached at level `h` is the tree's node
 -- above leaf `k`; so the pair it hashes at level `h` is `realInputsAt`.
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 lemma canonical_nodeAt (cs : List F) (k : Fin (2^26)) : ∀ h, h ≤ 26 →
     (canonicalOpening cs k).nodeAt (leafAt cs k.val) h = treeHash cs h (k.val >>> h)
   | 0, _ => by simp [Opening.nodeAt, treeHash]
@@ -601,6 +689,7 @@ lemma canonical_nodeAt (cs : List F) (k : Fin (2^26)) : ∀ h, h ≤ 26 →
     rw [calcRoot_canonicalOpening_aux cs k.val h]
     rfl
 
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 lemma canonical_inputsAt (cs : List F) (k : Fin (2^26)) (h : ℕ) (hh : h < 26) :
     (canonicalOpening cs k).inputsAt (leafAt cs k.val) h = realInputsAt cs k.val h := by
   have hs : (canonicalOpening cs k).sibling h = treeHash cs h (siblingIdx k.val h) := by
@@ -636,11 +725,13 @@ def appendBody (n : ℕ) : (F × (Fin 26 → F)) → Fin 26 → (F × (Fin 26 �
 def appendBodyN (n : ℕ) : (F × (Fin 26 → F)) → ℕ → (F × (Fin 26 → F)) :=
   fun x h => if hh : h < 26 then appendBody n x ⟨h, hh⟩ else x
 
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 lemma appendEffects_eq (c : F) (t : Tree) :
     (appendEffects c t).root = (Fin.foldl 26 (appendBody t.nextIndex) (c, t.subtrees)).1
     ∧ (appendEffects c t).subtrees = (Fin.foldl 26 (appendBody t.nextIndex) (c, t.subtrees)).2 := by
   constructor <;> rfl
 
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 /-- Loop invariant of `appendEffects` after the first `H ≤ 26` heights: the running hash
     is the block containing position `n`; each processed slot (`h < H`) is unchanged if
     bit `h` of `n` is set, else holds the just-completed block; other slots are
@@ -770,6 +861,7 @@ lemma appendFold_aux (n : ℕ) (cs : List F) (hcs : cs.length = n) (y : F)
         rw [Function.update_of_ne hne]
         exact ih2 h (by omega)
 
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 /-- `appendFold_aux` at `H = 26`, restated with the bits of the new length (via
     `testBit_succ_cases`), as `foldAppend_spec` needs. -/
 lemma appendEffects_root_subtrees (cs : List F) (hcap : cs.length < 2^26) (y : F)
@@ -823,6 +915,7 @@ lemma appendEffects_root_subtrees (cs : List F) (hcap : cs.length < 2^26) (y : F
       generalize n >>> h.val = m
       omega
 
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 /-- `foldAppend cs initTree` (with `cs.length < 2^26`) is the expected tree: `nextIndex`
     is `cs.length`, `root` is the `treeHash` root, and every `subtrees` slot
     `appendEffects` reads holds the right completed block. -/
@@ -868,11 +961,13 @@ lemma foldAppend_spec : ∀ cs : List F, cs.length < 2^26 →
 -- collision.
 
 
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 lemma stepFn_eq (k : ℕ) (sib : ℕ → F) (acc : F) (h : ℕ) :
     stepFn k sib acc h = H2 (stepPair k sib acc h).1 (stepPair k sib acc h).2 := by
   unfold stepFn stepPair
   split_ifs <;> rfl
 
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 lemma telescope (k : ℕ) (sib1 sib2 : ℕ → F) (leaf1 leaf2 : F) : ∀ H : ℕ,
     foldUpTo (stepFn k sib1) H leaf1 = foldUpTo (stepFn k sib2) H leaf2 →
     (leaf1 = leaf2 ∧ ∀ h, h < H → sib1 h = sib2 h)
@@ -907,6 +1002,7 @@ lemma telescope (k : ℕ) (sib1 sib2 : ℕ → F) (leaf1 leaf2 : F) : ∀ H : �
 -- (the zero leaf if unwritten), or the two paths give a `PathCollision`.
 
 
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 lemma calcRoot_eq_foldUpTo (O : Opening) (leaf : F) :
     O.calcRoot leaf = foldUpTo (stepFn O.index.val (OpeningSib O)) 26 leaf := by
   unfold Opening.calcRoot
@@ -916,6 +1012,7 @@ lemma calcRoot_eq_foldUpTo (O : Opening) (leaf : F) :
   rw [dif_pos hh]
 
 
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 lemma opening_extractable_or_collision
     (cs : List F) (hcap : cs.length < 2^26) (O : Opening) (c : F)
     (hValid : O.Valid c (foldAppend cs initTree).root) :
@@ -942,6 +1039,7 @@ lemma opening_extractable_or_collision
 
 -- LEMMA (used by G3a): preservation. A written leaf `k` of `cs` keeps a valid opening at
 -- index `k` after more leaves are appended.
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 lemma opening_forward_preservation
     (cs later : List F) (k : ℕ) (hk : k < cs.length) (c : F) (hc : cs[k]'hk = c)
     (hcap : (cs ++ later).length < 2^26) :
@@ -973,6 +1071,8 @@ lemma config_and_rent_exempt_min_step
   · rw [heff.rentExemptMin]; unfold transactEffects transferEffects; split_ifs <;> rfl
 
 -- LEMMA (used by G5): allowed admin changes compose.
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma ReachableByAdminChanges.trans {a b : List AdminChange} {c c' c'' : config}
     (h₁ : ReachableByAdminChanges a c c') (h₂ : ReachableByAdminChanges b c' c'') :
     ReachableByAdminChanges (a ++ b) c c'' := by
@@ -982,6 +1082,8 @@ lemma ReachableByAdminChanges.trans {a b : List AdminChange} {c c' c'' : config}
 
 -- LEMMA (used by G5): an allowed admin change keeps the authorities and the limits on the fee
 -- error margin and the fee rates.
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma AdminChange.apply_keeps {ch : AdminChange} {c c' : config}
     (h : ch.apply c = .accepted c') :
     c'.authority = c.authority ∧ c'.limitAuthority = c.limitAuthority ∧
@@ -995,6 +1097,8 @@ lemma AdminChange.apply_keeps {ch : AdminChange} {c c' : config}
   · split_ifs at h
     · cases h; exact ⟨rfl, rfl, id, id, id⟩
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma ReachableByAdminChanges.keeps {chs : List AdminChange} {c c' : config}
     (h : ReachableByAdminChanges chs c c') :
     c'.authority = c.authority ∧ c'.limitAuthority = c.limitAuthority ∧
@@ -1026,6 +1130,8 @@ lemma config_and_rent_exempt_min_constant
 
 
 -- HELPER: a zero input is trivially bounded, so the `≠ 0` hypothesis can be dropped.
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma inAmt_val_bound (witness : Witness)
     (hInBound : ∀ i, witness.inAmt i ≠ 0 → (witness.inAmt i).val < 2^248) :
     ∀ i, (witness.inAmt i).val < 2^248 := by
@@ -1036,6 +1142,8 @@ lemma inAmt_val_bound (witness : Witness)
 
 -- HELPER: an `F` equation between integers is an integer equation when their difference
 -- is below `p`.
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma zmod_eq_iff_int_eq (a b : ℤ) (hbound : |a - b| < (p:ℤ)) (heq : (a : F) = (b : F)) :
     a = b := by
   have hdvd : (p:ℤ) ∣ (a - b) := (ZMod.intCast_eq_intCast_iff_dvd_sub b a p).mp heq.symm
@@ -1044,6 +1152,8 @@ lemma zmod_eq_iff_int_eq (a b : ℤ) (hbound : |a - b| < (p:ℤ)) (heq : (a : F)
 
 -- LEMMA (used by G1c): one step, in ℤ: output value − input value = extAmt − f. Lifts
 -- `amountConservation` from `F`; needs every amount below `2^248`, so nothing wraps mod `p`.
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma value_delta_eq_ext_sub_fee
     (witness : Witness) (pubInputs : PubInputs) (extAmt : ℤ) (f : ℕ)
     (hAC : witness.inAmt 0 + witness.inAmt 1 + pubInputs.pubAmt = witness.outAmt 0 + witness.outAmt 1)
@@ -1089,6 +1199,7 @@ lemma value_delta_eq_ext_sub_fee
 
 -- HELPERS: the root's bytes and the root's field element (`knownRoot`, `canonicalInputs`).
 
+omit [PoseidonHashes] in
 /-- An accepted transaction's root is a known root. -/
 lemma transactPreconditions.rootKnown {inputs : TxInputs} {w : World}
     (h : transactPreconditions inputs w) : rootKnown w.state.tree inputs.R := by
@@ -1096,6 +1207,8 @@ lemma transactPreconditions.rootKnown {inputs : TxInputs} {w : World}
   obtain ⟨_, _, he⟩ := h.canonicalInputs 0
   rw [he] at hR; exact hR
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 /-- Canonically encoded, a known root's bytes are known. -/
 lemma rootBytesKnown_of {T : Tree} {inputs : TxInputs} (hEnc : publicInputsEncoded inputs)
     (h : rootKnown T inputs.R) : rootBytesKnown T (inputs.pubInputBytes 0) :=
@@ -1111,9 +1224,13 @@ lemma Run.WitnessesFor.relation {w0 : World} {r : Run w0} {wit : ℕ → Witness
 
 -- LEMMAS (not for review) about `leaves`.
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma leaves_append (a b : List TxInputs) : leaves (a ++ b) = leaves a ++ leaves b := by
   simp [leaves, List.flatMap_append]
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma leaves_length (txs : List TxInputs) : (leaves txs).length = 2 * txs.length := by
   induction txs with
   | nil => rfl
@@ -1122,6 +1239,7 @@ lemma leaves_length (txs : List TxInputs) : (leaves txs).length = 2 * txs.length
       List.length_nil] at ih ⊢
     omega
 
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 lemma leafAt_cons_cons (a b : F) (L : List F) (n : ℕ) :
     leafAt (a :: b :: L) (n + 2) = leafAt L n := by
   unfold leafAt
@@ -1129,12 +1247,14 @@ lemma leafAt_cons_cons (a b : F) (L : List F) (n : ℕ) :
   · rw [dif_pos (by simp; omega), dif_pos h]; simp
   · rw [dif_neg (by simp; omega), dif_neg h]
 
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 lemma leafAt_take (cs : List F) (k pos : ℕ) (h : pos < k) : leafAt (cs.take k) pos = leafAt cs pos := by
   unfold leafAt
   by_cases hpos : pos < cs.length
   · rw [dif_pos (by simp; omega), dif_pos hpos]; simp
   · rw [dif_neg (by simp; omega), dif_neg hpos]
 
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 /-- Leaf `2m + o` is output `o` of transaction `m`. -/
 lemma leafAt_leaves (txs : List TxInputs) (m : ℕ) (hm : m < txs.length) (o : Fin 2) :
     leafAt (leaves txs) (2 * m + o.val) = txs[m].pubInputs.outCommitments o := by
@@ -1175,6 +1295,8 @@ lemma Run.reachable {w0 : World} (r : Run w0) :
     intro hj
     exact ReachableWorld.extend _ _ (ih (by omega)) (r.allowed j (by omega)) (r.step j (by omega))
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 /-- Two updates in a row are one: the second replaces the values the first set. -/
 @[simp] lemma World.withUpdatedValues_twice (w : World) (b b' : UpdatedValuesBetweenTransacts) :
     (w.withUpdatedValues b).withUpdatedValues b' = w.withUpdatedValues b' := rfl
@@ -1184,17 +1306,20 @@ def UpdatedValuesBetweenTransacts.andThen (b b' : UpdatedValuesBetweenTransacts)
     UpdatedValuesBetweenTransacts :=
   { b' with adminChanges := b.adminChanges ++ b'.adminChanges }
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 @[simp] lemma World.withUpdatedValues_andThen (w : World) (b b' : UpdatedValuesBetweenTransacts) :
     w.withUpdatedValues (b.andThen b') = w.withUpdatedValues b' := rfl
 
-/-- Two allowed changes in a row are allowed: the pool's balance only grew, and the config only
-    changed by the two lists of admin changes, in order. -/
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
+/-- Two allowed changes in a row are allowed: the program's accounts only gained, and the config
+    only changed by the two lists of admin changes, in order. -/
 lemma UpdatedValuesBetweenTransacts.Allowed.trans {w : World} {b b' : UpdatedValuesBetweenTransacts}
     (h : b.Allowed w)
-    (h' : b'.Allowed (w.withUpdatedValues b)) : (b.andThen b').Allowed w := by
-  refine ⟨le_trans h.poolGains ?_, h.config.trans ?_⟩
-  · exact h'.poolGains
-  · exact h'.config
+    (h' : b'.Allowed (w.withUpdatedValues b)) : (b.andThen b').Allowed w :=
+  ⟨fun x hx => le_trans (h.programAccountsGain x hx) (h'.programAccountsGain x hx),
+    h'.balancesFit, h.config.trans h'.config⟩
 
 /-- A run extended by one more transaction: what happened after its last transaction (allowed),
     then the transaction. -/
@@ -1329,6 +1454,7 @@ lemma Run.final_nextIndex {params : InitParams} (r : Run (initWorld params)) :
   have h := (r.tree r.txs.length le_rfl).1
   rw [show r.final = r.ws r.txs.length from rfl, h, foldAppend_nextIndex, r.leaves_take_length _ le_rfl]
 
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 /-- The current root of a `foldAppend` tree is in its history. -/
 lemma foldAppend_root_mem_history (cs : List F) :
     (foldAppend cs initTree).root ∈ Set.range (foldAppend cs initTree).history := by
@@ -1342,6 +1468,8 @@ lemma foldAppend_root_mem_history (cs : List F) :
     exact Function.update_self _ _ _
 
 -- HELPERS (used by G1b, G3a): a field element has one canonical encoding.
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma natOfLE_injective : ∀ (l l' : Bytes), l.length = l'.length → natOfLE l = natOfLE l' → l = l'
   | [], [], _, _ => rfl
   | b :: l, b' :: l', hlen, h => by
@@ -1352,12 +1480,16 @@ lemma natOfLE_injective : ∀ (l l' : Bytes), l.length = l'.length → natOfLE l
     have h2 : natOfLE l = natOfLE l' := by omega
     rw [BitVec.eq_of_toNat_eq h1, natOfLE_injective l l' (by simpa using hlen) h2]
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma natOfBE_eq_natOfLE_reverse (l : Bytes) : natOfBE l = natOfLE l.reverse := by
   unfold natOfBE natOfLE
   rw [List.foldr_reverse]
   congr 1
   funext acc b; ring
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma canonicalEncoding_unique {bs bs' : Bytes} {x : F} (h : canonicalEncoding bs x)
     (h' : canonicalEncoding bs' x) : bs = bs' := by
   obtain ⟨hl, hlt, hx⟩ := h
@@ -1368,6 +1500,8 @@ lemma canonicalEncoding_unique {bs bs' : Bytes} {x : F} (h : canonicalEncoding b
   have := natOfLE_injective _ _ (by simp [hl, hl']) hv
   simpa using congrArg List.reverse this
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 /-- The bytes of input nullifier `i` encode that nullifier, when the public inputs are sent
     canonically. -/
 lemma nullifierBytes_canonical (inputs : TxInputs) (h : publicInputsEncoded inputs) (i : Fin 2) :
@@ -1702,6 +1836,8 @@ theorem honest_note_spent_only_with_owner_key
 -- LEMMAS (used by G2a): the Borsh encoding of the external data is injective on in-range
 -- values, so equal bytes mean equal fields.
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma natToBytesLE_succ (w n : ℕ) :
     natToBytesLE (w+1) n = BitVec.ofNat 8 n :: natToBytesLE w (n >>> 8) := by
   unfold natToBytesLE
@@ -1713,9 +1849,13 @@ lemma natToBytesLE_succ (w n : ℕ) :
   rw [← Nat.shiftRight_add]
   congr 2; simp only [Nat.succ_eq_add_one]; ring
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma natToBytesLE_length (w n : ℕ) : (natToBytesLE w n).length = w := by
   simp [natToBytesLE]
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma natOfLE_natToBytesLE : ∀ (w n : ℕ), natOfLE (natToBytesLE w n) = n % 2^(8*w)
   | 0, n => by simp [natToBytesLE, natOfLE, Nat.mod_one]
   | w+1, n => by
@@ -1726,6 +1866,8 @@ lemma natOfLE_natToBytesLE : ∀ (w n : ℕ), natOfLE (natToBytesLE w n) = n % 2
     rw [show 8 * (w+1) = 8 + 8 * w by ring, pow_add, Nat.mod_mul]
     norm_num
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma natOfBE_reverse (l : Bytes) : natOfBE l.reverse = natOfLE l := by
   unfold natOfBE natOfLE
   rw [List.foldl_reverse]
@@ -1736,6 +1878,8 @@ lemma natOfBE_reverse (l : Bytes) : natOfBE l.reverse = natOfLE l := by
     field element. -/
 def encodeBE32 (x : F) : Bytes := (natToBytesLE 32 x.val).reverse
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma canonicalEncoding_encodeBE32 (x : F) : canonicalEncoding (encodeBE32 x) x := by
   have hx : x.val < p := ZMod.val_lt x
   have hp : p < 2^(8*32) := by norm_num [p]
@@ -1744,23 +1888,33 @@ lemma canonicalEncoding_encodeBE32 (x : F) : canonicalEncoding (encodeBE32 x) x 
   refine ⟨by simp [encodeBE32, natToBytesLE_length], by rw [hv]; exact hx, ?_⟩
   rw [hv]; exact ZMod.natCast_zmod_val x
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma natToBytesLE_inj (w n m : ℕ) (hn : n < 2^(8*w)) (hm : m < 2^(8*w))
     (h : natToBytesLE w n = natToBytesLE w m) : n = m := by
   have := congrArg natOfLE h
   rwa [natOfLE_natToBytesLE, natOfLE_natToBytesLE, Nat.mod_eq_of_lt hn, Nat.mod_eq_of_lt hm] at this
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma PubkeyToBytes_inj (a b : Pubkey) (h : PubkeyToBytes a = PubkeyToBytes b) : a = b := by
   unfold PubkeyToBytes at h
   have ha := a.isLt; have hb := b.isLt
   exact BitVec.eq_of_toNat_eq (natToBytesLE_inj 32 _ _ (by norm_num at ha ⊢; omega)
     (by norm_num at hb ⊢; omega) h)
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma u64LE_inj (n m : ℕ) (hn : n < 2^64) (hm : m < 2^64) (h : u64LE n = u64LE m) : n = m :=
   natToBytesLE_inj 8 n m (by norm_num at hn ⊢; omega) (by norm_num at hm ⊢; omega) h
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma u32LE_inj (n m : ℕ) (hn : n < 2^32) (hm : m < 2^32) (h : u32LE n = u32LE m) : n = m :=
   natToBytesLE_inj 4 n m (by norm_num at hn ⊢; omega) (by norm_num at hm ⊢; omega) h
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma i64LE_inj (x y : ℤ) (hx : -2^63 ≤ x ∧ x < 2^63) (hy : -2^63 ≤ y ∧ y < 2^63)
     (h : i64LE x = i64LE y) : x = y := by
   unfold i64LE at h
@@ -1771,6 +1925,8 @@ lemma i64LE_inj (x y : ℤ) (hx : -2^63 ≤ x ∧ x < 2^63) (hy : -2^63 ≤ y �
   have := natToBytesLE_inj 8 _ _ (by norm_num; omega) (by norm_num; omega) h
   omega
 
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma serealizeExternalData_inj (T T' : TxInputs)
     (hT : amountsInRange T.extAmt T.f) (hT' : amountsInRange T'.extAmt T'.f)
     (h0 : T.encOut0.length < 2^32) (h1 : T.encOut1.length < 2^32)
@@ -1816,6 +1972,7 @@ theorem same_public_inputs_same_external_data
     exact congrArg PubInputs.extDataHash hSame
 
 -- PROOF of G2b. Statement and explanation: `Spec/Statements.lean`.
+omit [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 theorem shared_nullifier_requires_owner_key
     (x x' : PubInputs) (w w' : Witness) (hRel : RelationS x w) (hRel' : RelationS x' w')
     (i i' : Fin 2) (hShared : x.nullifiers i = x'.nullifiers i') :
@@ -1860,6 +2017,8 @@ lemma Run.nullifierAccount_origin {params : InitParams}
     · exact ⟨j, hjn, 1, by rw [hx]; simp [State.newNullifierAccount, ha, initWorld]⟩
 
 -- LEMMA (used by G3a): leaf indices are below `p`, so equal as field elements means equal.
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma leafIndex_cast_inj (a b : Fin (2^26)) (h : ((a : ℕ) : F) = ((b : ℕ) : F)) : a = b := by
   have hmod := (ZMod.natCast_eq_natCast_iff' (a : ℕ) (b : ℕ) p).mp h
   have hp : 2^26 < p := by norm_num [p]
@@ -2017,6 +2176,7 @@ lemma pool_solvent
     linarith
 
 -- LEMMA (used by G3a): G3a with every hypothesis spelled out.
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 /-- `ownsNote` and `knowsNote` together: the note the spender claims is the note stored at the
     position it opens. -/
 lemma GenuineInput.inNote_eq {wit : ℕ → Witness} {w : Witness} {i : Fin 2} {bound : ℕ}
@@ -2027,6 +2187,7 @@ lemma GenuineInput.inNote_eq {wit : ℕ → Witness} {w : Witness} {i : Fin 2} {
   show (⟨w.inAmt i, H1 (w.inSk i), w.inR i, w.mint⟩ : Note) = _
   rw [← ha, ← hp, ← hb, ← hm]
 
+omit [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing] [Deployment] in
 /-- The equation form of `GenuineInput`, as `spends_are_genuine` proves it. -/
 lemma GenuineInput.of_eq {wit : ℕ → Witness} {w : Witness} {i : Fin 2} {bound : ℕ}
     (h : w.openedPos i < bound ∧ w.inNote i = leafNote wit (w.openedPos i)) :
@@ -2070,6 +2231,7 @@ theorem all_checks_accounted {w0 : World} (r : Run w0) (wit : ℕ → Witness)
   encOutLength := hHonest.wellFormed.encOutLength
   poolNotRecipient := hHonest.wellFormed.poolNotRecipient
   signerSignature := hHonest.wellFormed.signed
+  solMint := hHonest.wellFormed.solMint
 
 lemma spendable_core
     (params : InitParams)
@@ -2128,9 +2290,16 @@ lemma spendable_core
     · exact absurd h hAC
   have hFresh : nullifiersFresh r.final.state inputs := ⟨hfree 0, hfree 1⟩
   -- the new nullifier accounts can be created
+  have hProg : ∀ i, ¬ r.final.state.IsProgramAccount (r.final.state.newNullifierAccount inputs i) := by
+    rintro i (h | h | h | h)
+    · exact hAC (Or.inr (Or.inl ⟨i, Or.inl h⟩))
+    · fin_cases i
+      · exact hfree 0 (Or.inl h)
+      · exact hfree 1 (Or.inr h)
+    · exact hAC (Or.inr (Or.inl ⟨i, Or.inr (Or.inl h)⟩))
+    · exact hAC (Or.inr (Or.inl ⟨i, Or.inr (Or.inr h)⟩))
   have hNew : nullifierAccountsCreatable r.final.state inputs :=
-    ⟨fun h => hAC (Or.inl h), fun h => hAC (Or.inr (Or.inl ⟨0, h⟩)),
-      fun h => hAC (Or.inr (Or.inl ⟨1, h⟩))⟩
+    ⟨fun h => hAC (Or.inl h), hProg 0, hProg 1⟩
   -- the pool can pay: from G1c
   have hSolvent : poolSolvent r.final.poolBalance r.final.rentExemptMin inputs.extAmt inputs.f := by
     rcases pool_solvent params r wit hwit inputs witness
@@ -2140,7 +2309,7 @@ lemma spendable_core
         hRange with h | h
     · exact h
     · exact absurd h hB
-  refine ⟨?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+  refine ⟨?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
   exact all_checks_accounted r wit inputs witness k hHonest hLimits hR0 hFresh hNew hSolvent
 
 -- PROOF of G3a. Statement and explanation: `Spec/Statements.lean`.
@@ -2187,6 +2356,8 @@ lemma Run.adminChanges_reachable (params : InitParams) (r : Run (initWorld param
 
 -- LEMMA (used by G3b): a withdrawal's fee of at least its amount passes the fee check at any
 -- rate up to 100%, whatever the fee error margin.
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma feeSufficient_of_amount_le_fee {c : config} {extAmt : ℤ} {f : ℕ}
     (hw : c.withdrawalFeeRate ≤ 10000) (hneg : extAmt < 0) (hf : extAmt.natAbs ≤ f) :
     feeSufficient c extAmt f := by
@@ -2242,6 +2413,8 @@ theorem balance_changes_exact
     hpre.poolNotRecipient hpre.signerNotPoolNotNullifiers hpre.nullifierAccountsNew k
 
 -- HELPER: bounds on what `balanceDelta` charges an account as the depositor.
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma deposit_term_bounds (inputs : TxInputs) (k : Pubkey) :
     0 ≤ (if k = inputs.s ∧ inputs.extAmt > 0 then inputs.extAmt else 0) ∧
       (if k = inputs.s ∧ inputs.extAmt > 0 then inputs.extAmt else 0) ≤ max inputs.extAmt 0 := by
@@ -2250,6 +2423,8 @@ lemma deposit_term_bounds (inputs : TxInputs) (k : Pubkey) :
   · exact ⟨le_rfl, le_max_right _ _⟩
 
 -- HELPER: what `balanceDelta` pays an account as the recipient or fee recipient is never negative.
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma payee_terms_nonneg (inputs : TxInputs) (k : Pubkey) :
     0 ≤ (if k = inputs.A ∧ inputs.extAmt < 0 then (inputs.extAmt.natAbs : ℤ) else 0) ∧
       0 ≤ (if k = inputs.t then (inputs.f : ℤ) else 0) := by
@@ -2316,6 +2491,8 @@ theorem exact_payouts
 
 -- LEMMA (used by G5): every change in the list is signed by the shared authority, and the
 -- authorities stay.
+omit [PoseidonHashes] [Sha] [Groups] [AddCommGroup G1] [Module F G1] [CommGroup GT] [Pairing]
+  [Deployment] in
 lemma ReachableByAdminChanges.signed {chs : List AdminChange} {c c' : config} {i : Pubkey}
     (h : ReachableByAdminChanges chs c c') (ha : c.authority = i) (hl : c.limitAuthority = i) :
     c'.authority = i ∧ c'.limitAuthority = i ∧ ∀ ch ∈ chs, i ∈ ch.signers := by
@@ -2336,7 +2513,7 @@ lemma ReachableByAdminChanges.signed {chs : List AdminChange} {c c' : config} {i
       refine ⟨a2, l2, fun x hx => ?_⟩
       rcases List.mem_append.mp hx with hx | hx
       · exact hs x hx
-      · simp only [List.mem_singleton] at hx; subst hx; rw [← l2]; exact hc
+      · simp only [List.mem_singleton] at hx; subst hx; rw [← l2]; exact hc.1
 
 -- PROOF of G5a. Statement and explanation: `Spec/Statements.lean`.
 theorem only_authorities_change_config

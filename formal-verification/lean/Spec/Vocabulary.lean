@@ -76,7 +76,8 @@ def PathCollision (cs : List F) (O : Opening) (c : F) : Prop :=
       `updatedValues j` (so `ws 0 = w0`), and `ws txs.length` is the final world;
     - **the balances and config before each transaction** (`updatedValues j`): their values
       after what happened outside `transact` since the previous transaction: SOL sent to the
-      pool or to other accounts, other accounts spent from, admin changes to the config.
+      pool or to other accounts, accounts other than the program's spent from, admin changes to
+      the config.
       `allowed`: Solana and the program allow it (`UpdatedValuesBetweenTransacts.Allowed`).
       `updatedValues 0` includes the part of any SOL sent to the pool before `initialize`
       that exceeds the pool's rent (`initialize` only tops the account up to its rent);
@@ -334,6 +335,8 @@ structure TxWellFormed (inputs : TxInputs) (pool : Pubkey) : Prop where
   poolNotRecipient : poolNotRecipient inputs pool
   /-- The signer signed the transaction. -/
   signed : signerSigned inputs
+  /-- The external data names the SOL mint. -/
+  solMint : mintIsSol inputs
 
 /-- `InputUsedInRun r wit w i`: some input of the run has the same commitment at the same
     position as input `i` of `w`. -/
@@ -400,14 +403,16 @@ def CanBeAccepted (inputs : TxInputs) (w : World) : Prop :=
 
 /-- `NullifierAddressCollision r inputs`: an address of a new nullifier account of the spend
     `inputs`, after run `r`, is also the address of another account: of the spend's other new
-    nullifier account, of the pool, or of a nullifier account for a different input slot or
+    nullifier account, of the pool, the tree's or the config's account, or of a nullifier account for a different input slot or
     nullifier bytes, created by a transaction of `r`. Program-derived addresses are SHA-256
     hashes, so this needs a SHA-256 collision (T2). -/
 def NullifierAddressCollision {w0 : World} (r : Run w0) (inputs : TxInputs) : Prop :=
   -- The two new nullifier accounts have the same address,
   r.final.state.newNullifierAccount inputs 0 = r.final.state.newNullifierAccount inputs 1
-  -- or one of them is the pool's address,
-  ∨ (∃ i, r.final.state.newNullifierAccount inputs i = r.final.state.pool)
+  -- or one of them is the address of the pool, the tree's or the config's account,
+  ∨ (∃ i, r.final.state.newNullifierAccount inputs i = r.final.state.pool ∨
+      r.final.state.newNullifierAccount inputs i = r.final.state.treeAccount ∨
+      r.final.state.newNullifierAccount inputs i = r.final.state.configAccount)
   -- or one of the addresses the spend's nullifiers are checked at (both input slots)
   ∨ ∃ i slot, ∃ j, ∃ (hj : j < r.txs.length), ∃ i',
     -- is the address of a nullifier account transaction `j` created,
