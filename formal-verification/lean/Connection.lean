@@ -1,7 +1,9 @@
 import Connection.Mapping
 import Connection.CodeModelAssumptions
+import Connection.AddressCollision
 import Connection.Hypotheses
 import Connection.ConnectionTheorems
+import Connection.NonVacuityStatements
 import Connection.CodeModelStatements
 import Connection.Findings
 import Connection.Proofs.ToyDup

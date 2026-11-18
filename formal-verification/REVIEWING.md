@@ -9,8 +9,8 @@ what we think it says, and that nothing important is assumed away.
    assumptions T0–T3. Start here: everything after shows the code meets these goals.
 2. **Overview**: the section below and `CONNECTIONS.md`.
 3. **The connection** (`lean/Connection/`): read `ConnectionTheorems.lean` top to bottom. Look
-   up each mapping (`Mapping.lean`) and hypothesis (`Hypotheses.lean`) where a statement first
-   uses it; the theorems are only as meaningful as these. Then `CodeModelStatements.lean`: the
+   up each mapping (`Mapping.lean`), hypothesis (`Hypotheses.lean`, `CodeModelAssumptions.lean`)
+   and break (`AddressCollision.lean`) where a statement first uses it; the theorems are only as meaningful as these. Then `CodeModelStatements.lean`: the
    spec's goals stated of the code. Then `Findings.lean`: the differences found (L1, A0).
 4. **Core-model, which the theorems trust**: see "What to check".
 5. **Build** (below).
@@ -40,8 +40,8 @@ flowchart TB
 **What is proved: two connection theorems.**
 
 1. `transact_connection`, one transaction. `toWorld` maps a chain state to a spec world;
-   `toInputs` maps an instruction to the spec's transaction inputs. Whenever the code accepts a
-   `transact`, the spec's `transact` relates the two mapped worlds:
+   `toInputs` maps a `transact` as sent (`TransactTx`) to the spec's transaction inputs.
+   Whenever the code accepts a `transact`, the spec's `transact` relates the two mapped worlds:
 
 $$
 \begin{array}{cccl}
@@ -68,9 +68,11 @@ $$
    a spec `transact` or a change the spec allows between transactions.
 
 Soundness is shown for the whole `step`. Completeness (the code accepts what the spec allows)
-is shown for the program's own logic (the handler, `handler_complete_except_L1_A0`), except
-for the found differences L1 and A0, and for `step` in G3a and G3b. `ConnectionTheorems.lean`
-opens with a table of what each direction covers.
+is shown for the whole `step` of a `transact` (`transact_complete_except_L1_A0`, which also gives
+the spec's result), except for the found differences L1 and A0; Anchor's account checks are proved
+to pass. Over runs it is `run_complete_except_L1_A0`; for the other instructions alone it is not
+yet shown. `ConnectionTheorems.lean` opens with what each
+direction covers.
 
 **The spec's goals, stated of the code.** Each goal from step 1 is stated again of the code,
 using the spec's own property (`NoDoubleSpend` becomes `noDoubleSpend_code`).
@@ -79,7 +81,7 @@ using the spec's own property (`NoDoubleSpend` becomes `noDoubleSpend_code`).
 |---|---|---|
 | G1a, G1b, G1c, G1d, G5a, G5b | `spendsAreGenuine_code`, `noDoubleSpend_code`, `poolBacksNotes_code`, `onlyOwnerSpends_code`, `onlyAuthoritiesChangeConfig_code`, `adminPowersLimited_code` | `run_connection` |
 | G2a, G4a, G4b | `samePayout_code`, `onlySignersPay_code`, `exactPayouts_code` | `transact_connection` |
-| G3a, G3b | `honestSpendIsAccepted_code`, `adminsCannotLockWithdrawals_code` | handler completeness (`handler_complete_except_L1_A0`), assuming Anchor's account checks pass (`ReachesProgram`); L1 and A0 excluded |
+| G3a, G3b | `honestSpendIsAccepted_code`, `adminsCannotLockWithdrawals_code` | completeness (`transact_complete_except_L1_A0`), for the transaction as submitted (`ReachesProgram`); L1 and A0 excluded |
 
 Not carried over: G2b (about circuit witnesses only).
 
@@ -89,20 +91,28 @@ condition to make it provable.
 
 **What the theorems rely on** (`Hypotheses.lean`: what links the code to the spec; `CodeModelAssumptions.lean`: about the code alone):
 
-| Kind | What | Your job |
-|---|---|---|
-| Premise | the scenario: an execution from genesis, the code accepted | Check it describes the situation, not a restriction |
-| Assumed | linking: `HashesAgree`; about the code: `DeploymentFacts`, `SolanaFacts`, `CircuitFacts`, `CryptoFacts`, `PairingLaws` and the syscall contracts, `ExecutionAssumptions`, `CompletenessAssumptions`, Anchor's constraints in `ReachesProgram`; core-model's own assumptions | Check each is true of the real system |
-| By design | `OutsideSpecDetail`: Solana details the spec deliberately does not model | Check each is below the spec's level and harmless |
+Every hypothesis is labelled with why it is fair to assume, as in the spec
+(`Spec/Statements.lean`, "Where each hypothesis comes from"). Any condition without a label is
+suspect.
 
-G3 also has the owner's choices and the limits from the spec's G3. Each hypothesis is labelled
-with its kind in the statement. Any condition without one is suspect.
+| Label | Why it is fair | Examples | Your check |
+|---|---|---|---|
+| `[premise]` | the situation the theorem is about; it scopes the claim | an execution from genesis, the code accepted, the pool is initialized, `AccountsListed` | No case that matters falls outside it |
+| `[owner]` | the honest owner makes it true by following the protocol | `HonestSpend`, `ReachesProgram` (G3: the right accounts, a plain signer) | An honest owner can always make it true |
+| `[limit]` | a check that can legitimately block a transaction | `LimitsNotHit` (G3) | It is a real limit of the protocol or an admin setting |
+| `[assumption Tn]` | the spec's trusted assumption Tn | T1 (G3) | As in the spec |
+| `[assumption]` | we rely on this trusted assumption about Solana, the libraries or the deployment (Lean cannot prove it); if it fails, the theorem says nothing | `HashesAgree`, `SameRent` (`Hypotheses.lean`); `ProgramNotSystem`, `PdasDoNotSign`, `CircuitFacts`, `PairingLaws`, syscall contracts, `CryptoSucceeds`, `RuntimeFacts`, `PdasOnlyByProgram` (`CodeModelAssumptions.lean`); core-model's own | It is true of the real system |
+| `[design]` | it excludes cases Solana rejects, through a detail the spec does not model | `SignerIsPlain` (completeness): the spec has no account owners | Solana rejects every excluded case, or the code accepts it (see the definition) |
+| `[finding]` | the code differs from the spec there; the difference is reported | not L1, not A0 (completeness, G3) | `Findings.lean` proves the theorem fails without it |
+
+Not a hypothesis: a **break** is an outcome in the conclusion, as in the spec ("… or an address
+collision occurs", `AddressCollision`). Check it is the only way out.
 
 **Non-vacuity.** A theorem "if H then C" says nothing if H can never hold, and Lean does not
 warn about it. So every theorem is covered by a `…_nonvacuous` theorem: a small example in
-which all its hypotheses hold. The examples use a *toy* deployment, with deliberately fake hashes and
+which all its hypotheses hold. The examples use an example deployment, with deliberately fake hashes and
 pairing: they show the hypotheses are consistent, not that they are true of the real system
-(that is your job above). No security claim rests on a toy.
+(that is your job above). No security claim rests on these examples.
 
 ## What to check (steps 3–4)
 
@@ -114,9 +124,11 @@ says?
   `Genesis` from `core-model/`, not something redefined in `lean/Connection/`. Every hypothesis
   must be a premise (the execution, the accepted step) or a named bundle from
   `Hypotheses.lean`. Any other condition is suspect: it may hide a difference.
-- *Completeness* (`handler_complete_except_L1_A0`): does it exclude only L1 and A0, and as
-  narrowly as the counterexamples in `Findings.lean`?
-- *Non-vacuity.* The conjuncts must be exactly the hypotheses of the theorem they cover,
+- *Completeness* (`transact_complete_except_L1_A0`): does it exclude only L1 and A0, and as
+  narrowly as the counterexamples in `Findings.lean`? Is its conclusion the code model's own
+  `step`, its new state read through `toWorld`, compared with the spec's `transactEffects` from
+  the same world as soundness (`SpecAllows`, `toWorld`)?
+- *Non-vacuity* (`NonVacuityStatements.lean`). The conjuncts must be exactly the hypotheses of the theorem they cover,
   none dropped or weakened.
 
 **`CodeModelStatements.lean`**
@@ -134,15 +146,21 @@ says?
 - *Assumed* fields: true of the real system, for the reason the docstring gives? A false
   assumption voids every theorem that uses it.
 - Could any field exclude a case an attacker can reach? That would hide a bug.
-- *By design* (`OutsideSpecDetail`): is each detail really below the spec's level?
+- `SignerIsPlain`: it also excludes a non-plain signer that pays nothing (a withdrawal whose
+  nullifier addresses already hold the rent); the code accepts those, so nothing is hidden.
+
+**`AddressCollision.lean`**
+- Do `fixedSeeds` and `transactSeeds` list every program-derived address the code uses, with
+  the seeds the program uses?
 
 **`Mapping.lean`**
 - Do the maps match the program? Field elements big-endian and read mod p; addresses
-  little-endian; nullifier accounts count as 0 in balances (`lamportsOf`).
+  little-endian; nullifier accounts count as 0 in balances (`s.lamports`).
 - Is the spec's verifying key the program's (`programKey`)?
 - `IsRunOf`: is the spec run the execution's own? Check the start (pool address, rents, admin, what
-  `initialize` set up), each transaction's pool balance before and state after, and the admin
-  instructions with their signers (`ExecutionPath`, `toAdminChange`, `ExecutionView`).
+  `initialize` set up), and that each transaction's record (`TxRecord`: inputs, pool balance before,
+  state after, admin changes before) is the same on both sides (`executionTxRecords`,
+  `runTxRecords`; `ExecutionPath`, `stateAt`, `adminChangesBefore`, `toAdminChange`).
 
 **Core-model, which the theorems trust**
 - `EnvStep` (`core-model/PrivacyCash/Model/Execution.lean`): nothing outside the program
@@ -163,5 +181,5 @@ relies on, add `#print axioms Connection.run_connection` to a scratch file and r
 
 ## Reporting
 
-A problem in a statement, a hypothesis that seems false, or a missing finding: add it to
-`TODO.md` with the theorem or field name.
+A problem in a statement, a hypothesis that seems false, or a missing finding: report it with
+the theorem or field name.

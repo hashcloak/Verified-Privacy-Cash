@@ -60,7 +60,7 @@ theorem wf_envStep {d : Deployment} {s s' : State}
     by_cases hk : (s k).owner = d.programId
     · exact ⟨hk, ((h k).1 hk).2.1⟩
     · have := (h k).2 hk; rw [hx] at this; simp [hpx] at this
-  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · intro k t ⟨ho, hd⟩
     obtain ⟨ho', hd'⟩ := own k ho ⟨_, hd, rfl⟩
     exact wf.tree k t ⟨ho', hd' ▸ hd⟩
@@ -76,6 +76,9 @@ theorem wf_envStep {d : Deployment} {s s' : State}
   · intro k t ⟨ho, hd⟩
     obtain ⟨ho', hd'⟩ := own k ho ⟨_, hd, rfl⟩
     exact wf.storedSubtrees k t ⟨ho', hd' ▸ hd⟩
+  · intro k b ⟨ho, hd⟩
+    obtain ⟨ho', hd'⟩ := own k ho ⟨_, hd, rfl⟩
+    exact wf.nullifiers k b ⟨ho', hd' ▸ hd⟩
 
 omit [Spec.PoseidonHashes] [Spec.Sha] in
 /-- Changing one account's data to a value of a given kind, at an address that already held
@@ -102,16 +105,16 @@ theorem wf_updateDepositLimit {d : Deployment} {s s' : State} {tx : TxEnv}
     simp only [zkcash_core.admin.update_deposit_limit] at this
     exact (Result.ok_injective this).symm
   have hval := not_not.mp hv
-  obtain ⟨hka, hshape⟩ := wf.tree _ _ hval.treeAccount.1
+  obtain ⟨hka, hshape, hbump⟩ := wf.tree _ _ hval.treeAccount.1
   have hk : ∀ k, k ≠ a.treeAccount → (s.set a.treeAccount { s a.treeAccount with data := .treeAccount tree' }) k = s k :=
     fun k hk => set_data_other hk
   have hkey : (s.set a.treeAccount { s a.treeAccount with data := .treeAccount tree' }) a.treeAccount
       = { s a.treeAccount with data := .treeAccount tree' } := by simp
-  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · intro k t ⟨ho, hd⟩
     by_cases hka' : k = a.treeAccount
     · subst hka'; rw [hkey] at hd; cases hd
-      refine ⟨hka, ?_⟩; rw [ht']; exact hshape
+      rw [ht']; exact ⟨hka, hshape, hbump⟩
     · rw [hk k hka'] at ho hd; exact wf.tree k t ⟨ho, hd⟩
   · intro k p ⟨ho, hd⟩
     by_cases hka' : k = a.treeAccount
@@ -133,6 +136,10 @@ theorem wf_updateDepositLimit {d : Deployment} {s s' : State} {tx : TxEnv}
       have hr := wf.storedSubtrees _ _ hval.treeAccount.1
       rw [ht']; exact hr
     · rw [hk k hka'] at ho hd; exact wf.storedSubtrees k t ⟨ho, hd⟩
+  · intro k b ⟨ho, hd⟩
+    by_cases hka' : k = a.treeAccount
+    · subst hka'; rw [hkey] at hd; cases hd
+    · rw [hk k hka'] at ho hd; exact wf.nullifiers k b ⟨ho, hd⟩
 
 omit [Spec.PoseidonHashes] [Spec.Sha] in
 theorem wf_updateGlobalConfig {d : Deployment} {s s' : State} {tx : TxEnv}
@@ -152,13 +159,13 @@ theorem wf_updateGlobalConfig {d : Deployment} {s s' : State} {tx : TxEnv}
   | Ok u =>
   cases h
   have hval := not_not.mp hv
-  obtain ⟨hka, hd0, hw0, hm0⟩ := wf.config _ _ hval.globalConfig.1
-  obtain ⟨hd1, hw1, hm1, -, -⟩ := ugc_rates config config' dep wd m (ofResult_ok hres) hd0 hw0 hm0
+  obtain ⟨hka, hd0, hw0, hm0, hb0⟩ := wf.config _ _ hval.globalConfig.1
+  obtain ⟨hd1, hw1, hm1, hb1, -⟩ := ugc_rates config config' dep wd m (ofResult_ok hres) hd0 hw0 hm0
   have hk : ∀ k, k ≠ a.globalConfig → (s.set a.globalConfig { s a.globalConfig with data := .globalConfig config' }) k = s k :=
     fun k hk => set_data_other hk
   have hkey : (s.set a.globalConfig { s a.globalConfig with data := .globalConfig config' }) a.globalConfig
       = { s a.globalConfig with data := .globalConfig config' } := by simp
-  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · intro k t ⟨ho, hd⟩
     by_cases hka' : k = a.globalConfig
     · subst hka'; rw [hkey] at hd; cases hd
@@ -170,7 +177,7 @@ theorem wf_updateGlobalConfig {d : Deployment} {s s' : State} {tx : TxEnv}
   · intro k c ⟨ho, hd⟩
     by_cases hka' : k = a.globalConfig
     · subst hka'; rw [hkey] at hd; cases hd
-      exact ⟨hka, hd1, hw1, hm1⟩
+      exact ⟨hka, hd1, hw1, hm1, hb1.trans hb0⟩
     · rw [hk k hka'] at ho hd; exact wf.config k c ⟨ho, hd⟩
   · intro k t ⟨ho, hd⟩
     by_cases hka' : k = a.globalConfig
@@ -180,16 +187,22 @@ theorem wf_updateGlobalConfig {d : Deployment} {s s' : State} {tx : TxEnv}
     by_cases hka' : k = a.globalConfig
     · subst hka'; rw [hkey] at hd; cases hd
     · rw [hk k hka'] at ho hd; exact wf.storedSubtrees k t ⟨ho, hd⟩
+  · intro k b ⟨ho, hd⟩
+    by_cases hka' : k = a.globalConfig
+    · subst hka'; rw [hkey] at hd; cases hd
+    · rw [hk k hka'] at ho hd; exact wf.nullifiers k b ⟨ho, hd⟩
 
 
 omit [Spec.PoseidonHashes] [Spec.Sha] in
 /-- Every successful `transact` keeps `WellFormed`.
-    Needs that Poseidon's outputs are canonical (`HashesAgree.poseidonCanonical`): the two
-    appends store Poseidon outputs as roots. -/
+    Needs that Poseidon of canonical inputs is canonical (`HashesAgree.poseidon`): the two
+    appends hash only canonical values (the leaves are range-checked public inputs) and store
+    the results as roots and subtrees. -/
 theorem wf_transact {d : Deployment} {s s' : State} {tx : TxEnv}
     {a : TransactAccounts} {proof : zkcash_core.transact.Proof} {ext : I64} {fee : U64}
     {out1 out2 : Slice U8} {evs : List CommitmentData}
-    (hpc : ∀ a b h, d.crypto.hasher.hash_pair a b = ok h → Canonical h)
+    (hpc : ∀ a b h, Canonical a → Canonical b → d.crypto.hasher.hash_pair a b = ok h → Canonical h)
+    (hzc : ∃ z, d.crypto.hasher.zero_bytes = ok z ∧ ∀ i, i ≤ 26 → Canonical (z.val[i]!))
     (wf : WellFormed d s) (hx : execTransact d s tx a proof ext fee out1 out2 = .ok (s', evs)) :
     WellFormed d s' := by
   obtain ⟨tree, tt, config, mb, s₁, env', tree', ap, hvalid, hmb, hs₁, hhandler, hs', -⟩ := execTransact_ok hx
@@ -208,27 +221,33 @@ theorem wf_transact {d : Deployment} {s s' : State} {tx : TxEnv}
     intro k h0 h1
     obtain ⟨e1, e2⟩ := k1 k h1; obtain ⟨e3, e4⟩ := k0 k h0
     exact ⟨e1.trans e3, e2.trans e4⟩
-  have hok := handler_ok d.crypto _ tree config proof ext fee a.recipient a.feeRecipientAccount out1 out2
+  have hok := handler_ok d.crypto d.crypto.sha256 _ tree config proof ext fee a.recipient a.feeRecipientAccount out1 out2
     ap env' tree' hhandler
   have hcan := verifyProof_canonical _ proof _ hok.verify
   have hcan0 : Canonical proof.input_nullifiers.val[0]! := by simpa [publicInputs] using hcan 3 (by decide)
   have hcan1 : Canonical proof.input_nullifiers.val[1]! := by simpa [publicInputs] using hcan 4 (by decide)
-  obtain ⟨htreeAddr, hshape⟩ := wf.tree _ _ hvalid.treeAccount.1
+  obtain ⟨htreeAddr, hshape, hbump⟩ := wf.tree _ _ hvalid.treeAccount.1
   obtain ⟨p1, p2, t1, hap1, hap2⟩ := hok.appends
   have hsh1 := (append_shape _ _ tree t1 p1 hshape hap1).1
   have hsh2 := (append_shape _ _ t1 tree' p2 hsh1 hap2).1
-  have hroots' : ∀ j : Fin 100, Canonical tree'.root_history.val[j.val]! :=
-    append_history_canonical _ hpc _ _ _ _ hsh1
-      (append_history_canonical _ hpc _ _ _ _ hshape (wf.storedRoots _ _ hvalid.treeAccount.1) hap1)
-      hap2
+  have hbump' : tree'.bump = d.canonicalBump merkleTreeSeeds :=
+    ((append_shape _ _ t1 tree' p2 hsh1 hap2).2.2.2.2.2).trans
+      (((append_shape _ _ tree t1 p1 hshape hap1).2.2.2.2.2).trans hbump)
+  -- the leaves are public inputs 5 and 6 (range-checked), the subtrees are canonical
+  obtain ⟨z, hzb, hzc'⟩ := hzc
   have hcanC0 : Canonical proof.output_commitments.val[0]! := by
     simpa [publicInputs] using hcan 5 (by decide)
   have hcanC1 : Canonical proof.output_commitments.val[1]! := by
     simpa [publicInputs] using hcan 6 (by decide)
+  have hsub0 := wf.storedSubtrees _ _ hvalid.treeAccount.1
+  have hsub1 := append_subtrees_canonical _ hpc z hzb hzc' _ _ _ _ hshape hsub0 hcanC0 hap1
+  have hroots' : ∀ j : Fin 100, Canonical tree'.root_history.val[j.val]! :=
+    append_history_canonical _ hpc z hzb hzc' _ _ _ _ hsh1
+      (append_history_canonical _ hpc z hzb hzc' _ _ _ _ hshape
+        (wf.storedRoots _ _ hvalid.treeAccount.1) hsub0 hcanC0 hap1)
+      hsub1 hcanC1 hap2
   have hsubs' : ∀ j : Fin 26, Canonical tree'.subtrees.val[j.val]! :=
-    append_subtrees_canonical _ hpc _ _ _ _ hsh1
-      (append_subtrees_canonical _ hpc _ _ _ _ hshape (wf.storedSubtrees _ _ hvalid.treeAccount.1)
-        hcanC0 hap1) hcanC1 hap2
+    append_subtrees_canonical _ hpc z hzb hzc' _ _ _ _ hsh1 hsub1 hcanC1 hap2
   have hs'k : ∀ k, (s' k).owner = (s₁ k).owner ∧
       (s' k).data = (if k = a.treeAccount then .treeAccount tree' else (s₁ k).data) := by
     intro k; rw [hs']
@@ -247,7 +266,7 @@ theorem wf_transact {d : Deployment} {s s' : State} {tx : TxEnv}
   have back : ∀ k, k ≠ a.treeAccount → ¬ (k = a.nullifier0 ∨ k = a.nullifier1) →
       (s' k).owner = (s k).owner ∧ (s' k).data = (s k).data := by
     intro k ht hn
-    push_neg at hn
+    push Not at hn
     obtain ⟨e1, e2⟩ := hs'k k
     obtain ⟨e3, e4⟩ := hoth k hn.1 hn.2
     rw [e1, e2, if_neg ht]; exact ⟨e3, e4⟩
@@ -255,10 +274,10 @@ theorem wf_transact {d : Deployment} {s s' : State} {tx : TxEnv}
     intro k hk
     obtain ⟨-, b, hb⟩ := hnf k hk
     exact ⟨b, by rw [(hs'k k).2, if_neg (htree_nf k hk), hb]⟩
-  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · intro k t ⟨ho, hd⟩
     by_cases ht : k = a.treeAccount
-    · subst ht; rw [(hs'k _).2, if_pos rfl] at hd; cases hd; exact ⟨htreeAddr, hsh2⟩
+    · subst ht; rw [(hs'k _).2, if_pos rfl] at hd; cases hd; exact ⟨htreeAddr, hsh2, hbump'⟩
     by_cases hn : k = a.nullifier0 ∨ k = a.nullifier1
     · obtain ⟨b, hb⟩ := notNull k hn; rw [hb] at hd; cases hd
     obtain ⟨e1, e2⟩ := back k ht hn
@@ -291,6 +310,15 @@ theorem wf_transact {d : Deployment} {s s' : State} {tx : TxEnv}
     · obtain ⟨b, hb⟩ := notNull k hn; rw [hb] at hd; cases hd
     obtain ⟨e1, e2⟩ := back k ht hn
     exact wf.storedSubtrees k t ⟨e1 ▸ ho, e2 ▸ hd⟩
+  · intro k b ⟨ho, hd⟩
+    by_cases ht : k = a.treeAccount
+    · subst ht; rw [(hs'k _).2, if_pos rfl] at hd; cases hd
+    by_cases hn : k = a.nullifier0 ∨ k = a.nullifier1
+    · rcases hn with rfl | rfl
+      · exact ⟨_, hvalid.nullifier0.1⟩
+      · exact ⟨_, hvalid.nullifier1.1⟩
+    obtain ⟨e1, e2⟩ := back k ht hn
+    exact wf.nullifiers k b ⟨e1 ▸ ho, e2 ▸ hd⟩
 
 
 omit [Spec.PoseidonHashes] [Spec.Sha] in
@@ -397,7 +425,8 @@ theorem adminInitialize_ok {H : zkcash_core.merkle_tree.Hasher Unit}
     (h : zkcash_core.admin.initialize H t0 tk0 c0 auth b1 b2 b3 = ok (.Ok (), t, tk, c)) :
     TreeShape t ∧ c.deposit_fee_rate.val = 0 ∧ c.withdrawal_fee_rate.val = 25 ∧
       c.fee_error_margin.val = 500 ∧ (∀ j : Fin 100, Canonical t.root_history.val[j.val]!) ∧
-      ∀ j : Fin 26, Canonical t.subtrees.val[j.val]! := by
+      (∀ j : Fin 26, Canonical t.subtrees.val[j.val]!) ∧
+      t.bump = b1 ∧ tk.bump = b2 ∧ c.bump = b3 := by
   unfold zkcash_core.admin.initialize at h
   obtain ⟨⟨r, t1⟩, hit, h⟩ := bindOk h
   have hroots := initTree_history hzc ht0 hit
@@ -410,7 +439,7 @@ theorem adminInitialize_ok {H : zkcash_core.merkle_tree.Hasher Unit}
     subst this
     obtain ⟨r1, hr1, h⟩ := bindOk h
     simp [core.result.Result.Insts.CoreOpsTryTraitFromResidualResultInfallible.from_residual,
-      core.convert.FromSame, Result.ok.injEq] at hr1
+      Result.ok.injEq] at hr1
     subst hr1
     have := Result.ok_injective h; simp at this
   | Ok u =>
@@ -419,8 +448,9 @@ theorem adminInitialize_ok {H : zkcash_core.merkle_tree.Hasher Unit}
   subst this
   have e := Result.ok_injective h
   simp only [Prod.mk.injEq] at e
-  obtain ⟨-, rfl, -, rfl⟩ := e
-  refine ⟨?_, by simp, by simp, by simp, hroots, hsubs⟩
+  obtain ⟨-, rfl, rfl, rfl⟩ := e
+  suffices key : TreeShape t1 ∧ t1.bump = b1 from
+    ⟨key.1, by simp, by simp, by simp, hroots, hsubs, key.2, rfl, rfl⟩
   -- init_tree sets the shape fields, `merkle_tree::initialize` keeps them
   unfold zkcash_core.admin.init_tree zkcash_core.merkle_tree.initialize at hit
   obtain ⟨_, -, hit⟩ := bindOk hit
@@ -431,7 +461,7 @@ theorem adminInitialize_ok {H : zkcash_core.merkle_tree.Hasher Unit}
   have e := Result.ok_injective hit
   simp only [Prod.mk.injEq] at e
   obtain ⟨-, rfl⟩ := e
-  refine ⟨?_, ?_, ?_⟩ <;> simp [zkcash_core.admin.MERKLE_TREE_HEIGHT, zkcash_core.admin.ROOT_HISTORY_SIZE]
+  refine ⟨⟨?_, ?_, ?_⟩, ?_⟩ <;> simp [zkcash_core.admin.MERKLE_TREE_HEIGHT, zkcash_core.admin.ROOT_HISTORY_SIZE]
 
 
 omit [Spec.PoseidonHashes] [Spec.Sha] in
@@ -462,7 +492,7 @@ theorem wf_initialize {d : Deployment} {s s' : State} {tx : TxEnv}
   cases r with
   | Err e => cases h
   | Ok u =>
-  obtain ⟨hshape, hdr, hwr, hmr, hroots, hsubs⟩ :=
+  obtain ⟨hshape, hdr, hwr, hmr, hroots, hsubs, hbT, hbP, hbC⟩ :=
     adminInitialize_ok hzc zeroTree_history zeroTree_subtrees (ofResult_ok hres)
   have hs' := PrivacyCash.Model.checkBalanced_ok h
   -- the three inits: only the three new accounts change owner or data
@@ -483,15 +513,15 @@ theorem wf_initialize {d : Deployment} {s s' : State} {tx : TxEnv}
     intro k; rw [hs']
     simp only [State.set]
     split_ifs <;> simp_all
-  have htA : a.treeAccount = treeAddr d := hvalid.treeAccount.1
-  have hpA : a.treeTokenAccount = poolAddr d := hvalid.treeTokenAccount.1
-  have hcA : a.globalConfig = configAddr d := hvalid.globalConfig.1
+  have htA : a.treeAccount = d.treeAddress := hvalid.treeAccount.1
+  have hpA : a.treeTokenAccount = d.poolAddress := hvalid.treeTokenAccount.1
+  have hcA : a.globalConfig = d.configAddress := hvalid.globalConfig.1
   have back : ∀ k, k ≠ a.treeAccount → k ≠ a.treeTokenAccount → k ≠ a.globalConfig →
       (s' k).owner = (s k).owner ∧ (s' k).data = (s k).data := by
     intro k ht hp hc
     obtain ⟨e1, e2⟩ := hs'k k; obtain ⟨e3, e4⟩ := hoth k ht hp hc
     rw [e1, e2, if_neg hc, if_neg hp, if_neg ht]; exact ⟨e3, e4⟩
-  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · intro k t ⟨ho, hd⟩
     rw [(hs'k k).2] at hd
     by_cases hc : k = a.globalConfig
@@ -501,7 +531,7 @@ theorem wf_initialize {d : Deployment} {s s' : State} {tx : TxEnv}
     · rw [if_pos hp] at hd; cases hd
     rw [if_neg hp] at hd
     by_cases ht : k = a.treeAccount
-    · rw [if_pos ht] at hd; cases hd; exact ⟨ht.trans htA, hshape⟩
+    · rw [if_pos ht] at hd; cases hd; exact ⟨ht.trans htA, hshape, hbT⟩
     rw [if_neg ht] at hd
     obtain ⟨e1, e2⟩ := back k ht hp hc
     exact wf.tree k t ⟨e1 ▸ ho, by rw [← (hoth k ht hp hc).2]; exact hd⟩
@@ -511,7 +541,7 @@ theorem wf_initialize {d : Deployment} {s s' : State} {tx : TxEnv}
     · rw [if_pos hc] at hd; cases hd
     rw [if_neg hc] at hd
     by_cases hp : k = a.treeTokenAccount
-    · exact hp.trans hpA
+    · rw [if_pos hp] at hd; cases hd; exact ⟨hp.trans hpA, hbP⟩
     rw [if_neg hp] at hd
     by_cases ht : k = a.treeAccount
     · rw [if_pos ht] at hd; cases hd
@@ -522,7 +552,7 @@ theorem wf_initialize {d : Deployment} {s s' : State} {tx : TxEnv}
     rw [(hs'k k).2] at hd
     by_cases hc : k = a.globalConfig
     · rw [if_pos hc] at hd; cases hd
-      exact ⟨hc.trans hcA, by omega, by omega, by omega⟩
+      exact ⟨hc.trans hcA, by omega, by omega, by omega, hbC⟩
     rw [if_neg hc] at hd
     by_cases hp : k = a.treeTokenAccount
     · rw [if_pos hp] at hd; cases hd
@@ -558,12 +588,25 @@ theorem wf_initialize {d : Deployment} {s s' : State} {tx : TxEnv}
     rw [if_neg ht] at hd
     obtain ⟨e1, e2⟩ := back k ht hp hc
     exact wf.storedSubtrees k t ⟨e1 ▸ ho, by rw [← (hoth k ht hp hc).2]; exact hd⟩
+  · intro k b ⟨ho, hd⟩
+    rw [(hs'k k).2] at hd
+    by_cases hc : k = a.globalConfig
+    · rw [if_pos hc] at hd; cases hd
+    rw [if_neg hc] at hd
+    by_cases hp : k = a.treeTokenAccount
+    · rw [if_pos hp] at hd; cases hd
+    rw [if_neg hp] at hd
+    by_cases ht : k = a.treeAccount
+    · rw [if_pos ht] at hd; cases hd
+    rw [if_neg ht] at hd
+    obtain ⟨e1, e2⟩ := back k ht hp hc
+    exact wf.nullifiers k b ⟨e1 ▸ ho, by rw [← (hoth k ht hp hc).2]; exact hd⟩
 
 
 omit [Spec.PoseidonHashes] [Spec.Sha] in
 theorem wf_step {d : Deployment} {s s' : State} {tx : TxEnv}
     {ix : Instruction} {evs : List CommitmentData}
-    (hpc : ∀ a b h, d.crypto.hasher.hash_pair a b = ok h → Canonical h)
+    (hpc : ∀ a b h, Canonical a → Canonical b → d.crypto.hasher.hash_pair a b = ok h → Canonical h)
     (hzc : ∃ z, d.crypto.hasher.zero_bytes = ok z ∧ ∀ i, i ≤ 26 → Canonical (z.val[i]!))
     (wf : WellFormed d s) (h : step d s tx ix = .ok (s', evs)) :
     WellFormed d s' := by
@@ -578,11 +621,11 @@ theorem wf_step {d : Deployment} {s s' : State} {tx : TxEnv}
     obtain ⟨s₁, h1, h2⟩ := PrivacyCash.Model.Except.bind_ok h
     cases h2; exact wf_updateGlobalConfig wf h1
   | transact a proof ext fee out1 out2 =>
-    exact wf_transact hpc wf h
+    exact wf_transact hpc hzc wf h
 
 omit [Spec.PoseidonHashes] [Spec.Sha] in
 theorem wf_run {d : Deployment} {s s' : State} {evs : List Event}
-    (hpc : ∀ a b h, d.crypto.hasher.hash_pair a b = ok h → Canonical h)
+    (hpc : ∀ a b h, Canonical a → Canonical b → d.crypto.hasher.hash_pair a b = ok h → Canonical h)
     (hzc : ∃ z, d.crypto.hasher.zero_bytes = ok z ∧ ∀ i, i ≤ 26 → Canonical (z.val[i]!))
     (hrun : Run d s evs s') (wf : WellFormed d s) : WellFormed d s' := by
   induction hrun with
@@ -598,20 +641,21 @@ theorem wf_genesis {d : Deployment} {s : State} (hgen : Genesis d.programId s)
     (hpid : d.programId ≠ systemProgram) : WellFormed d s :=
   ⟨hpid, fun k _ h => absurd h.1 (hgen k), fun k _ h => absurd h.1 (hgen k),
    fun k _ h => absurd h.1 (hgen k),
-   fun k _ h => absurd h.1 (hgen k), fun k _ h => absurd h.1 (hgen k)⟩
+   fun k _ h => absurd h.1 (hgen k), fun k _ h => absurd h.1 (hgen k),
+   fun k _ h => absurd h.1 (hgen k)⟩
 
 /-- **Every state an execution reaches from genesis is `WellFormed`**.
-    Uses only the canonicity fields of `HashesAgree`. -/
+    Uses only the canonicity parts of `HashesAgree`. -/
 theorem wf_reachable {d : Deployment} {s₀ s : State} {evs : List Event}
     (hgen : Genesis d.programId s₀) (hrun : Run d s₀ evs s) (hpid : d.programId ≠ systemProgram)
-    (hashes : HashesAgree d.crypto) :
+    (hashes : HashesAgree d) :
     WellFormed d s := by
-  exact wf_run hashes.poseidonCanonical hashes.zeroBytesCanonical hrun (wf_genesis hgen hpid)
+  exact wf_run hashes.poseidon_canonical hashes.zeroBytes_canonical hrun (wf_genesis hgen hpid)
 
 /-- **The program's trees hold canonical roots in every reachable state.** -/
 theorem storedRoots_reachable {d : Deployment} {s₀ s : State} {evs : List Event}
     (hgen : Genesis d.programId s₀) (hrun : Run d s₀ evs s) (hpid : d.programId ≠ systemProgram)
-    (hashes : HashesAgree d.crypto) :
+    (hashes : HashesAgree d) :
     ∀ k t, HoldsTree d.programId s k t → ∀ j : Fin 100, Canonical t.root_history.val[j.val]! :=
   (wf_reachable hgen hrun hpid hashes).storedRoots
 

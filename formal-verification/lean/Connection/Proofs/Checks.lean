@@ -1,4 +1,4 @@
-import Connection.Mapping
+import Connection.Proofs.Basic
 open Aeneas Aeneas.Std Result PrivacyCash.Model
 
 /-! # Proofs of the connection theorems for the program's checks
@@ -42,7 +42,7 @@ private theorem checkPublicAmount_iff (extAmount : I64) (fee : U64) (pa : Std.Ar
         simp only [Bool.false_eq_true, false_iff]
         rintro ⟨hp, -, h0⟩; have := hp.1 (by omega); omega
       · refine ⟨_, by simp [hle]; rfl, ?_⟩
-        simp only [decide_eq_true_eq, Spec.pubAmtConsistent, toF]
+        simp only [decide_eq_true_eq, Spec.pubAmtConsistent, toF_def]
         have e : ((extAmount.val.toNat : ℕ) : Fr) = (extAmount.val : Fr) := by
           rw [← Int.cast_natCast, Int.toNat_of_nonneg hpos']
         constructor
@@ -62,7 +62,7 @@ private theorem checkPublicAmount_iff (extAmount : I64) (fee : U64) (pa : Std.Ar
         rw [IScalar.hcast_val_eq, hvv]; congr 1; exact Int.emod_eq_of_lt (by omega) (by simp; omega)
       simp only [hmin, hpos, if_false, core.num.I64.checked_neg, hvok, Option.ofResult, bind_tc_ok]
       refine ⟨_, rfl, ?_⟩
-      simp only [decide_eq_true_eq, Spec.pubAmtConsistent, toF]
+      simp only [decide_eq_true_eq, Spec.pubAmtConsistent, toF_def]
       have e : (((IScalar.hcast UScalarTy.U64 v).val : ℕ) : Fr) = -(extAmount.val : Fr) := by
         rw [hc, ← Int.cast_natCast, Int.toNat_of_nonneg (by omega), Int.cast_neg]
       constructor
@@ -78,7 +78,7 @@ theorem checkPublicAmount_eq (extAmount : I64) (fee : U64) (pa : Std.Array U8 32
       = ok (decide (Spec.pubAmtConsistent extAmount.val fee.val (toF pa) ∧ Spec.amountsInRange extAmount.val fee.val ∧
         extAmount.val ≠ 0)) := by
   obtain ⟨b, hb, hiff⟩ := checkPublicAmount_iff extAmount fee pa
-  rw [hb]; cases b <;> simp_all <;> exact hiff
+  rw [hb]; cases b <;> simp_all; exact hiff
 
 /-- Thirty-two zero bytes: the public amount 0. -/
 def zeroBytes : Std.Array U8 32#usize := Std.Array.repeat 32#usize 0#u8
@@ -88,7 +88,7 @@ theorem checkPublicAmount_L1 :
       Spec.pubAmtConsistent (0#i64).val (0#u64).val (toF zeroBytes) ∧
         Spec.amountsInRange (0#i64).val (0#u64).val := by
   have hb : beNat zeroBytes = 0 := by rfl
-  have hz : toF zeroBytes = 0 := by simp only [toF, hb, Nat.cast_zero]
+  have hz : toF zeroBytes = 0 := by simp only [toF_def, hb, Nat.cast_zero]
   refine ⟨?_, ?_⟩
   · rw [checkPublicAmount_eq]; simp
   · simp [Spec.pubAmtConsistent, Spec.amountsInRange, hz]
@@ -262,6 +262,7 @@ private theorem beListInj : ∀ {l1 l2 : List U8}, l1.length = l2.length →
 /-- `toF` is injective on canonical bytes. -/
 theorem toF_injOn {a b : Std.Array U8 32#usize} (ha : Canonical a) (hb : Canonical b)
     (h : toF a = toF b) : a = b := by
+  rw [canonical_def] at ha hb; rw [toF_def, toF_def] at h
   have hval : beNat a = beNat b := by
     have e1 := ZMod.val_natCast_of_lt (n := bn254ScalarModulus) ha
     have e2 := ZMod.val_natCast_of_lt (n := bn254ScalarModulus) hb
@@ -270,27 +271,12 @@ theorem toF_injOn {a b : Std.Array U8 32#usize} (ha : Canonical a) (hb : Canonic
   exact (Std.Array.eq_iff _ _).mpr
     (beListInj (by rw [Std.Array.property, Std.Array.property]) (by simpa [beNat] using hval))
 
-/-- The spec's big-endian reading of code bytes is the code's. -/
-theorem natOfBE_toBytes (l : List U8) :
-    Spec.natOfBE (toBytes l) = l.foldl (fun acc x => acc * 256 + x.val) 0 := by
-  unfold Spec.natOfBE toBytes
-  rw [List.foldl_map]
-  congr 1; funext acc x
-  show 256 * acc + x.val = acc * 256 + x.val
-  ring
-
-theorem toBytes_length (l : List U8) : (toBytes l).length = l.length := by simp [toBytes]
-
-/-- A 32-byte array, as the spec's bytes: the spec reads the same number (`beNat`). -/
-theorem natOfBE_toBytes_arr (b : Std.Array U8 32#usize) :
-    Spec.natOfBE (toBytes b.val) = beNat b := natOfBE_toBytes b.val
-
 /-- A 32-byte array is the spec's canonical encoding of `x` exactly when it is canonical and
     `toF` maps it to `x`. -/
 theorem canonicalEncoding_iff (b : Std.Array U8 32#usize) (x : Spec.F) :
     Spec.canonicalEncoding (toBytes b.val) x ↔ Canonical b ∧ toF b = x := by
   unfold Spec.canonicalEncoding
-  rw [natOfBE_toBytes_arr, toBytes_length, Std.Array.property]
+  rw [toBytes_length, Std.Array.property]
   exact ⟨fun ⟨_, h1, h2⟩ => ⟨h1, h2⟩, fun ⟨h1, h2⟩ => ⟨rfl, h1, h2⟩⟩
 
 /-- The root's bytes are known (byte level) exactly when they are canonical and their field
@@ -298,14 +284,14 @@ theorem canonicalEncoding_iff (b : Std.Array U8 32#usize) (x : Spec.F) :
 theorem rootBytesKnown_iff (T : Spec.Tree) (b : Std.Array U8 32#usize) :
     Spec.rootBytesKnown T (toBytes b.val) ↔ Canonical b ∧ Spec.rootKnown T (toF b) := by
   unfold Spec.rootBytesKnown
-  rw [natOfBE_toBytes_arr, toBytes_length, Std.Array.property]
+  rw [toBytes_length, Std.Array.property]
   exact ⟨fun ⟨_, h1, h2⟩ => ⟨h1, h2⟩, fun ⟨h1, h2⟩ => ⟨rfl, h1, h2⟩⟩
 
 theorem zero_canonical : Canonical (Std.Array.repeat 32#usize 0#u8) := by
-  simp [Canonical, beNat, bn254ScalarModulus]
+  simp [canonical_def, beNat, bn254ScalarModulus]
 
 private theorem toF_zero : toF (Std.Array.repeat 32#usize 0#u8) = 0 := by
-  simp [toF, beNat]
+  simp [toF_def, beNat]
 
 /-- What `is_known_root` returns, for a well-shaped tree: whether the root is non-zero and in
     the history, compared as bytes. -/
@@ -543,7 +529,7 @@ theorem validateFee_iff (extAmt : I64) (fee : U64) (c : zkcash_core.admin.Global
       · have hv : extAmt.val = -9223372036854775808 := by rw [hmin]; rfl
         have hnone : core.num.I64.checked_neg extAmt = ok none := by
           rw [hmin]; simp [core.num.I64.checked_neg, IScalar.neg, IScalar.tryMk, IScalar.tryMkOpt,
-            Option.ofResult, IScalar.cMin, IScalar.cMax, I64.rMin, I64.rMax]
+            Option.ofResult, I64.rMin]
         have hcode : zkcash_core.utils.validate_fee extAmt fee c.deposit_fee_rate c.withdrawal_fee_rate
             c.fee_error_margin = ok (core.result.Result.Err zkcash_core.error.ErrorCode.ArithmeticOverflow) := by
           unfold zkcash_core.utils.validate_fee

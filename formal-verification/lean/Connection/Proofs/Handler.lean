@@ -138,12 +138,12 @@ theorem moveN_eq_updates (W : Pubkey → ℕ) (p t : Pubkey) (hne : t ≠ p) (x 
   simp only [moveN, Function.update_of_ne hne]
 
 /-- What a successful run of the handler guarantees. -/
-structure HandlerOk (c : Crypto) (env : SolEnv) (tree : merkle_tree.MerkleTreeAccount)
+structure HandlerOk (c : Crypto) (sha : ext_data.Sha256 Unit) (env : SolEnv) (tree : merkle_tree.MerkleTreeAccount)
     (config : admin.GlobalConfig) (proof : transact.Proof) (ext : I64) (fee : U64)
     (recipient feeRecipient : Pubkey) (out1 out2 : Slice U8)
     (env' : SolEnv) (tree' : merkle_tree.MerkleTreeAccount) : Prop where
   root : merkle_tree.is_known_root tree proof.root = ok true
-  extHash : ∃ hsh, ext_data.calculate_complete_ext_data_hash c.sha256 recipient ext out1 out2 fee
+  extHash : ∃ hsh, ext_data.calculate_complete_ext_data_hash sha recipient ext out1 out2 fee
       feeRecipient transact.SOL_ADDRESS = ok (some hsh) ∧ (leNat hsh : Fr) = (beNat proof.ext_data_hash : Fr)
   pubAmt : utils.check_public_amount arkFr ext fee proof.public_amount = ok true
   feeOk : utils.validate_fee ext fee config.deposit_fee_rate config.withdrawal_fee_rate
@@ -172,13 +172,13 @@ structure HandlerOk (c : Crypto) (env : SolEnv) (tree : merkle_tree.MerkleTreeAc
 
 /-- **The handler, when it returns `Ok`.** The balance equations are exactly the code's
     read-before-write updates (`payN`), for any accounts, aliased or not. -/
-theorem handler_ok (c : Crypto) (env : SolEnv) (tree : merkle_tree.MerkleTreeAccount)
+theorem handler_ok (c : Crypto) (sha : ext_data.Sha256 Unit) (env : SolEnv) (tree : merkle_tree.MerkleTreeAccount)
     (config : admin.GlobalConfig) (proof : transact.Proof) (ext : I64) (fee : U64)
     (recipient feeRecipient : Pubkey) (out1 out2 : Slice U8) (appended : transact.Appended)
     (env' : SolEnv) (tree' : merkle_tree.MerkleTreeAccount)
-    (h : transact.transact c.hasher arkFr c.sha256 c.proofVerifier solRuntime env tree config proof
+    (h : transact.transact c.hasher arkFr sha c.proofVerifier solRuntime env tree config proof
       ext fee recipient feeRecipient out1 out2 = ok (.Ok appended, env', tree')) :
-    HandlerOk c env tree config proof ext fee recipient feeRecipient out1 out2 env' tree' := by
+    HandlerOk c sha env tree config proof ext fee recipient feeRecipient out1 out2 env' tree' := by
   unfold transact.transact at h
   obtain ⟨b, hb, h⟩ := bindOk h
   cases b
@@ -343,7 +343,7 @@ theorem handler_ok (c : Crypto) (env : SolEnv) (tree : merkle_tree.MerkleTreeAcc
     obtain ⟨o1, ho1, h⟩ := bindOk h
     have ho1' : o1 = some y := by
       have := Result.ok_injective ho1
-      simp only [core.num.I64.checked_neg, hy, Option.ofResult, Result.match.ok] at this
+      simp only [hy, Option.ofResult, Result.match.ok] at this
       exact this.symm
     subst ho1'
     have hy0 : ¬ y < 0#i64 := by intro hc; have := i64_neg hc; omega

@@ -11,8 +11,8 @@ records it. So G5a and G5b for the code are not vacuous on an admin change
 
 namespace Connection.Toy
 open zkcash_core
-attribute [local instance] toyPoseidon toySpecSha toySpecGroups toySpecG1Group toySpecG2Group
-  toySpecG1Module toySpecG2Module toySpecGTGroup toySpecPairing toySpecDeployment
+attribute [local instance] toyPoseidon toySpecSha toySpecGroups toySpecG1Group
+  toySpecG1Module toySpecGTGroup toySpecPairing toySpecDeployment
 
 /-- **The authority can change the deposit limit**: after the toy `initialize`,
     `update_deposit_limit` to 7 lamports, signed by the authority, is accepted, and only the tree's
@@ -40,13 +40,13 @@ theorem toy_init_authority {s₁ : State} {tree : merkle_tree.MerkleTreeAccount}
     (hT : s₁ treeA = ⟨1#u64, toyD.programId, .treeAccount tree⟩) :
     tree.authority = pk 1#u8 := by
   have hpid : toyD.programId ≠ systemProgram := by unfold toyD; decide +kernel
-  have hdist := singleton_pdas_distinct _ _ _ toy_fixed_addresses
-  obtain ⟨-, params, -, -, -, -, -, hI, -, hcfg, -⟩ :=
-    init_between (rent := toyRent) hdist hpid rfl (fun k h => toyGenesis k h.1) toyHashesAgree.zeroBytes hinit
+  have hdist := singleton_pdas_distinct_of _ _ _ toy_fixed_addresses
+  obtain ⟨-, params, -, hI, -, hcfg, -⟩ :=
+    init_between (rent := toyRent) hdist hpid rfl (toyTx_rentPositive _ rfl) (fun k h => toyGenesis k h.1) toyHashesAgree.zeroBytes_agree hinit
   have h1 := params.limitAuthority_init
   rw [hcfg, hI] at h1
   have h2 : toPubkey tree.authority = toPubkey (pk 1#u8) := by
-    have htree : treeAt s₁ (treeAddr toyD) = tree := by
+    have htree : s₁.treeAccount toyD.treeAddress = tree := by
       show (match (s₁ treeA).data with | .treeAccount t => t | _ => _) = tree
       rw [hT]
     rw [← htree]
@@ -59,9 +59,9 @@ theorem toy_init_authority {s₁ : State} {tree : merkle_tree.MerkleTreeAccount}
     (`IsRunOf`) records an admin change before its last transaction. -/
 theorem toy_admin_change_nonvacuous :
     ∃ (s₀ s : State) (evs : List Event) (states : List State),
-      Genesis toyD.programId s₀ ∧ ExecutionPath toyD s₀ evs states s ∧ DeploymentFacts toyD ∧
-      PairingLaws toyC.e ∧ HashesAgree toyD.crypto ∧ ExecutionAssumptions toyD s₀ evs ∧
-      (∀ tx ix em, .program tx ix em ∈ evs → SameRent toyRent tx) ∧ Initialized toyD s ∧
+      Genesis toyD.programId s₀ ∧ ExecutionPath toyD s₀ evs states s ∧ ProgramNotSystem toyD ∧
+      PairingLaws toyC.e ∧ HashesAgree toyD ∧ ExecutionAssumptions toyD evs ∧ ¬ AddressCollision toyD (proofsIn evs) ∧
+      (∀ tx ix em, .program tx ix em ∈ evs → SameRent toyRent tx.minimumBalance) ∧ Initialized toyD s ∧
       ∀ params r, IsRunOf toyD toyRent s₀ evs states s params r → r.adminChangesUpTo r.txs.length ≠ [] := by
   obtain ⟨s₁, tree, token, config, hinit, hT, hK, hC, hP, hO, hshape, hroots, hsubs, hT0, hTn, hTb, -,
     hkb, hcb, hdr, hwr, hmr⟩ := toy_init_ok
@@ -88,17 +88,22 @@ theorem toy_admin_change_nonvacuous :
   -- the pool stays initialized
   have wf₁ := wf_reachable toyGenesis (.program h1 toyTx_rentPositive (.nil _)) hpid toyHashesAgree
   have wf₂ := wf_reachable toyGenesis (.program h1 toyTx_rentPositive (.program h2 toyTx_rentPositive (.nil _))) hpid toyHashesAgree
-  obtain ⟨hi₁, -⟩ := init_between (rent := toyRent) (singleton_pdas_distinct _ _ _ toy_fixed_addresses)
-    hpid rfl (fun k h => toyGenesis k h.1) toyHashesAgree.zeroBytes hinit
+  obtain ⟨hi₁, -⟩ := init_between (rent := toyRent) (singleton_pdas_distinct_of _ _ _ toy_fixed_addresses)
+    hpid rfl (toyTx_rentPositive _ rfl) (fun k h => toyGenesis k h.1) toyHashesAgree.zeroBytes_agree hinit
   obtain ⟨s₂', h2', h2e⟩ := PrivacyCash.Model.Except.bind_ok h2
   cases h2e
   obtain ⟨hi₂, -, -⟩ := udl_between (rent := toyRent) wf₁ hi₁ h2'
   have hi₃ := transact_initialized wf₂ hi₂ h3
   refine ⟨toyS0, s₃, _, _, toyGenesis,
-    .program h1 toyTx_rentPositive (.program h2 toyTx_rentPositive (.program h3 toyTx_rentPositive (.nil _))), toyDeploymentFacts, toyLaws, toyHashesAgree,
-    ⟨toy_fixed_addresses, ?_⟩, ?_, hi₃, ?_⟩
-  · intro pre post s tx ix em hsplit _
-    rcases toy_split3 hsplit with hev | hev | hev <;> cases hev
+    .program h1 toyTx_rentPositive (.program h2 toyTx_rentPositive (.program h3 toyTx_rentPositive (.nil _))), toyProgramNotSystem, toyLaws, toyHashesAgree,
+    ExecutionFacts.toAssumptions ⟨toy_fixed_addresses, ?_⟩,
+    toy_noCollision _ (by
+      intro tx a proof ext fee out1 out2 em hm
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
+      rcases hm with h | h | h <;> cases h; simp), ?_, hi₃, ?_⟩
+  · intro tx ix em hm
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
+    rcases hm with hev | hev | hev <;> cases hev
     · trivial
     · trivial
     · exact ⟨solana, depCrypto⟩
@@ -106,16 +111,10 @@ theorem toy_admin_change_nonvacuous :
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
     rcases hm with h | h | h <;> cases h <;> rfl
   · intro params r hr
-    obtain ⟨-, -, -, -, -, -, -, -, -, -, -, hgl, hgaps, -⟩ := hr
-    have hv : (executionView toyD toyRent toyS0 [.program toyTx (.initialize toyInitA) [],
-        .program toyTx (.updateDepositLimit ⟨treeA, pk 1#u8⟩ 7#u64) [],
-        .program toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) e₃]
-        [s₁, s₂, s₃]).closedGaps = [[⟨toyTx.signers.map toPubkey, .depositLimit (7#u64 : U64).val⟩]] := rfl
-    rw [hv] at hgl hgaps
-    have hlen : r.txs.length = 1 := hgl.symm
-    have h0 := hgaps 0 (by rw [hlen]; exact Nat.one_pos)
-    simp only [List.getElem?_cons_zero, Option.some.injEq] at h0
-    rw [hlen]
-    simp [Spec.Run.adminChangesUpTo, ← h0]
+    have htxs := hr.txs
+    have hlen : r.txs.length = 1 := by rw [htxs]; rfl
+    -- the deposit is event 2, after the admin instruction (event 1)
+    rw [hlen, (hr.record (j := 0) (i := 2) rfl).2]
+    simp [adminChangesBefore, List.range_succ, toAdminChange]
 
 end Connection.Toy

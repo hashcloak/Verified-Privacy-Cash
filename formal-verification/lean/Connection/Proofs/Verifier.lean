@@ -13,7 +13,7 @@ private theorem okOf' {α : Type} {m : Result α} {P : α → Prop} (h : m ⦃ P
   (WP.spec_equiv_exists _ _).mp h
 
 private theorem canonical_of_lt (b : Std.Array U8 32#usize)
-    (h : PrivacyCash.Model.beNatOf b < bn254ScalarModulus) : Canonical b := h
+    (h : PrivacyCash.Model.beNatOf b < bn254ScalarModulus) : Canonical b := (canonical_def b).mpr h
 
 /-- If `prepare_inputs`' loop, started at 0, returns `Ok`, every input is canonical. -/
 private theorem prepareLoop_canonical {Cb : Type} (B : groth16.Bn254 Cb)

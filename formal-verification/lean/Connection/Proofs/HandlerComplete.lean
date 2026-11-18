@@ -4,14 +4,49 @@ open Aeneas Aeneas.Std Result PrivacyCash.Model
 
 /-! # Proofs: handler completeness
 
-NOT FOR REVIEW: the statements are restated in `Connection/ConnectionTheorems.lean`.
+NOT FOR REVIEW: the handler part of `transact_complete_except_L1_A0`
+(`Connection/ConnectionTheorems.lean`), which `Proofs/StepComplete.lean` composes with Anchor's
+`init`s and the runtime's lamport check.
 
-If the spec's preconditions hold, the extracted `transact` handler returns `Ok` with the spec's
-transfer and fee effects. The faithful statement fails (finding L1, and the all-zero `proof_a`,
-see `ConnectionTheorems.lean`); the exact version excludes those two cases. -/
+If the spec's preconditions hold in the world the handler sees, the extracted `transact` handler
+returns `Ok` with the spec's transfer and fee effects, except in the cases of findings L1 and A0. -/
 
 namespace Connection
 open zkcash_core PrivacyCash.Proofs.G1 PrivacyCash.Proofs.Groth16
+
+/-! ## The handler's view
+
+The extracted `transact` handler runs after Anchor's account checks and `init`s, on the runtime
+environment `execTransact` builds. -/
+
+/-- `handlerEnv a s₁ v`: the runtime environment the handler runs in, exactly as `execTransact`
+    builds it: the state `s₁` after Anchor's two `init`s, the instruction's accounts, the
+    rent-exempt minimum `v`. -/
+def handlerEnv (a : TransactAccounts) (s₁ : State) (v : U64) : SolEnv :=
+  { accounts := s₁, balances := s₁.balances, signer := a.signer,
+    treeToken := a.treeTokenAccount, recipient := a.recipient,
+    feeRecipient := a.feeRecipientAccount, rentExemptMinimum := some v }
+
+/-- `handlerWorld a s₁ v tree config accts addr`: the spec world the handler sees: every
+    account's lamports in `s₁`, the tree and config it is given, the pool's address, the
+    rent-exempt minimum `v`, and the nullifier accounts `accts` at addresses `addr` (the handler
+    reads neither). `nullifierRent := 0`: Anchor has already paid the two nullifier accounts'
+    rent, so the handler's effects are the spec's transfer and fee effects. -/
+def handlerWorld (a : TransactAccounts) (s₁ : State) (v : U64)
+    (tree : zkcash_core.merkle_tree.MerkleTreeAccount) (config : zkcash_core.admin.GlobalConfig)
+    (accts : Finset Spec.Pubkey) (addr : Fin 2 → Spec.Bytes → Spec.Pubkey) :
+    Spec.World where
+  state :=
+    { tree := toTree tree
+      nullifierAccounts := accts
+      pool := toPubkey a.treeTokenAccount
+      nullifierAddr := addr
+      config := toConfig config tree
+      treeAccount := toPubkey a.treeAccount
+      configAccount := toPubkey a.globalConfig }
+  balances x := (s₁ (fromPubkey x)).lamports.val
+  rentExemptMin := v.val
+  nullifierRent := 0
 
 /-! ## The program's key: its G1 points decode (checked by computation) -/
 
@@ -93,14 +128,14 @@ theorem prepare_inputs_complete (C : AltBn128Contracts s G1 G2 GT) (sys : Syscal
           rw [List.getElem!_eq_getElem?_getD, List.getElem?_eq_getElem (by simp; omega)]
           simp [a1_post, i1_post]
         obtain ⟨out, hout⟩ := sys.mul (concatArrays a1 input (by simp))
-          (by rw [bytesAt_concat_left, ha1]; exact hic _ (by omega))
+          (by unfold g1At; rw [bytesAt_concat_left, ha1]; exact hic _ (by omega))
         rw [hout] at hmul; cases hmul
       · -- addition answered `none`: impossible (both points decode)
         rename_i hmul hadd
         obtain ⟨P, hP, hp⟩ := C.mul _ _ hmul
         obtain ⟨out, hout⟩ := sys.add (concatArrays p prep (by simp))
-          (by rw [bytesAt_concat_left, hp]; simp)
-          (by rw [bytesAt_concat_right _ _ _ 64 (by simp)]; exact hprep)
+          (by unfold g1At; rw [bytesAt_concat_left, hp]; simp)
+          (by unfold g1At; rw [bytesAt_concat_right _ _ _ 64 (by simp)]; exact hprep)
         rw [hout] at hadd; cases hadd
       · -- one step: k_i · IC_{i+1} is added to the running sum
         rename_i hmul hadd
@@ -227,8 +262,8 @@ theorem verify_complete (C : AltBn128Contracts s G1 G2 GT) (sys : SyscallsSuccee
         have ht' : t < 128 := by simpa using ht
         simp (disch := omega) only [pairing_input8_post, pairing_input7_post, pairing_input6_post, pairing_input5_post, pairing_input4_post, pairing_input3_post, pairing_input2_post, pairing_input1_post, copied, if_pos, if_neg, Nat.add_sub_cancel_left]
     obtain ⟨out, hout, hiff⟩ := sys.pairing pairing_input8 A (vkx C vk pub 7) Cp α B γ δ β
-      (by rw [sA]; exact d1) (by rw [sB]; exact d2) (by rw [sP]; exact hp) (by rw [sG]; exact d6)
-      (by rw [sC]; exact d3) (by rw [sD]; exact d7) (by rw [sAl]; exact d4) (by rw [sBe]; exact d5))
+      (by unfold g1At; rw [sA]; exact d1) (by unfold g2At; rw [sB]; exact d2) (by unfold g1At; rw [sP]; exact hp) (by unfold g2At; rw [sG]; exact d6)
+      (by unfold g1At; rw [sC]; exact d3) (by unfold g2At; rw [sD]; exact d7) (by unfold g1At; rw [sAl]; exact d4) (by unfold g2At; rw [sBe]; exact d5))
   · rename_i hn; rw [hn] at hout; cases hout
   · rename_i hsome hne
     rw [hsome] at hout; cases hout
@@ -243,6 +278,7 @@ section
 variable {signers : List Pubkey}
 variable {G1 G2 GT : Type} [AddCommGroup G1] [Module Spec.F G1] [CommGroup GT] {s : AltBn128}
 
+omit [Module Spec.F G1] in
 theorem verifyProof_complete (C : AltBn128Contracts s G1 G2 GT) (sys : SyscallsSucceed C) (laws : ∀ (a : G1) (b : G2), C.e (-a) b = (C.e a b)⁻¹)
     (proof : transact.Proof) (vk : groth16.VerifyingKey)
     (hcan : ∀ j, j < 7 → beNatOf ((publicInputs proof)[j]!) < bn254ScalarModulus)
@@ -300,8 +336,8 @@ end
 section
 set_option linter.unusedSectionVars false
 variable {signers : List Pubkey}
-variable {G1 G2 GT : Type} [AddCommGroup G1] [Module Spec.F G1] [AddCommGroup G2]
-  [Module Spec.F G2] [CommGroup GT] {s : AltBn128}
+variable {G1 G2 GT : Type} [AddCommGroup G1] [Module Spec.F G1] [Inhabited G2]
+  [CommGroup GT] {s : AltBn128}
 
 theorem syscallGroups_decodeG1 (C : AltBn128Contracts s G1 G2 GT) (b : Std.Array U8 64#usize) :
     (syscallGroups C).decodeG1 (toBytes b.val) = C.decodeG1 b := by
@@ -317,7 +353,7 @@ theorem syscallGroups_decodeG2 (C : AltBn128Contracts s G1 G2 GT) (b : Std.Array
 theorem decode_toInputs_inv (C : AltBn128Contracts s G1 G2 GT) (proof : zkcash_core.transact.Proof)
     (a : TransactAccounts) (ext : I64) (fee : U64) (out1 out2 : Slice U8)
     : letI : Spec.Groups := syscallGroups C
-    ∀ π : Spec.Groth16.Proof, (toInputs signers a proof ext fee out1 out2).π.decode = some π →
+    ∀ π : Spec.Groth16.Proof, (toInputs ⟨⟨signers⟩, a, ⟨proof, ext, fee, out1, out2⟩⟩).π.decode = some π →
       C.decodeG1 proof.proof_a = some π.A ∧ C.decodeG2 proof.proof_b = some π.B ∧
       C.decodeG1 proof.proof_c = some π.C := by
   intro π h
@@ -358,26 +394,22 @@ theorem programVerifier_complete (c : Crypto) (C : AltBn128Contracts c.altBn128 
     (out1 out2 : Slice U8)
     (hcan : ∀ j, j < 7 → Canonical ((publicInputs proof)[j]!))
     (hz : proof.proof_a.val ≠ List.replicate 64 0#u8) :
-    letI : Spec.Groups := syscallGroups C
-    letI : Spec.Pairing := syscallPairing C
-    letI : Spec.Deployment := ⟨programKey C⟩
-    Spec.proofValid (toInputs signers a proof ext fee out1 out2) → c.proofVerifier.verify proof = ok true := by
+    withSyscallSpec C in
+    Spec.proofValid (toInputs ⟨⟨signers⟩, a, ⟨proof, ext, fee, out1, out2⟩⟩) → c.proofVerifier.verify proof = ok true := by
   intro hpv
-  letI : Spec.Groups := syscallGroups C
-  letI : Spec.Pairing := syscallPairing C
-  letI : Spec.Deployment := ⟨programKey C⟩
+  withSyscallSpec C
   obtain ⟨π, hdec, hver⟩ := hpv
   obtain ⟨dA, dB, dC⟩ := decode_toInputs_inv C proof a ext fee out1 out2 π hdec
   obtain ⟨⟨α, hα⟩, ⟨β, hβ⟩, ⟨γ, hγ⟩, ⟨δ, hδ⟩, hic⟩ := key_decodes C key
-  have hvec : ∀ i : Fin 7, Spec.Groth16.toVector (toInputs signers a proof ext fee out1 out2).pubInputs i
+  have hvec : ∀ i : Fin 7, Spec.Groth16.toVector (toInputs ⟨⟨signers⟩, a, ⟨proof, ext, fee, out1, out2⟩⟩).pubInputs i
       = toF ((publicInputs proof)[i.val]!) := by
     intro i; fin_cases i <;> rfl
   have hsmul : ∀ (b : Std.Array U8 32#usize) (P : G1), toF b • P = beNatOf b • P := by
     intro b P
-    show ((beNat b : ℕ) : Spec.F) • P = _
+    rw [toF_def]
     rw [Nat.cast_smul_eq_nsmul]; rfl
   have hvkx : ic C zkcash_core.verifying_key.VERIFYING_KEY 0 +
-      ∑ i : Fin 7, Spec.Groth16.toVector (toInputs signers a proof ext fee out1 out2).pubInputs i •
+      ∑ i : Fin 7, Spec.Groth16.toVector (toInputs ⟨⟨signers⟩, a, ⟨proof, ext, fee, out1, out2⟩⟩).pubInputs i •
         ic C zkcash_core.verifying_key.VERIFYING_KEY i.succ.val
       = vkxOf C zkcash_core.verifying_key.VERIFYING_KEY proof := by
     simp only [vkxOf, hvec, hsmul, Fin.val_succ]
@@ -385,15 +417,15 @@ theorem programVerifier_complete (c : Crypto) (C : AltBn128Contracts c.altBn128 
       ic C zkcash_core.verifying_key.VERIFYING_KEY (j + 1)) 7]
   have hver' : C.e π.A π.B
       = C.e ((C.decodeG1 zkcash_core.verifying_key.VERIFYING_KEY.vk_alpha_g1).getD 0)
-          ((C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_beta_g2).getD 0) *
+          ((C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_beta_g2).getD default) *
         C.e (ic C zkcash_core.verifying_key.VERIFYING_KEY 0 +
-          ∑ i : Fin 7, Spec.Groth16.toVector (toInputs signers a proof ext fee out1 out2).pubInputs i •
+          ∑ i : Fin 7, Spec.Groth16.toVector (toInputs ⟨⟨signers⟩, a, ⟨proof, ext, fee, out1, out2⟩⟩).pubInputs i •
             ic C zkcash_core.verifying_key.VERIFYING_KEY i.succ.val)
-          ((C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_gamme_g2).getD 0) *
-        C.e π.C ((C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_delta_g2).getD 0) := hver
+          ((C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_gamme_g2).getD default) *
+        C.e π.C ((C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_delta_g2).getD default) := hver
   rw [hα, hβ, hγ, hδ, hvkx] at hver'
   simp only [Option.getD_some] at hver'
-  exact verifyProof_complete C sys laws.neg_left proof _ (fun j hj => hcan j hj) hic hz
+  exact verifyProof_complete C sys laws.neg_left proof _ (fun j hj => (canonical_def _).mp (hcan j hj)) hic hz
     π.A π.C α π.B β γ δ dA dB dC hα hβ hγ hδ hver'
 
 end
@@ -403,7 +435,7 @@ end
 /-- `append`'s loop returns, with canonical subtrees and a canonical hash, when its inputs are
     canonical and Poseidon answers on canonical inputs. -/
 theorem appendLoop_complete (H : merkle_tree.Hasher Unit)
-    (hpc : ∀ a b h, H.hash_pair a b = ok h → Canonical h)
+    (hpc : ∀ a b h, Canonical a → Canonical b → H.hash_pair a b = ok h → Canonical h)
     (hs : ∀ a b, Canonical a → Canonical b → ∃ h, H.hash_pair a b = ok h)
     (z : Std.Array (Std.Array U8 32#usize) 41#usize) (hzb : H.zero_bytes = ok z)
     (hzc : ∀ i, i ≤ 26 → Canonical (z.val[i]!))
@@ -453,7 +485,7 @@ theorem appendLoop_complete (H : merkle_tree.Hasher Unit)
         (by rw [hhash]; exact (WP.spec_ok _).mpr rfl) ?_
       rintro y rfl
       step*
-      refine ⟨by omega, by rw [o_post1]; exact hend, by simp [hplen], ?_, hpc _ _ _ hhash, by omega⟩
+      refine ⟨by omega, by rw [o_post1]; exact hend, by simp [hplen], ?_, hpc _ _ _ (by assumption) (by assumption) hhash, by omega⟩
       intro j hj
       rw [index_mut_back_post]
       simp only [Std.Array.set_val_eq]
@@ -476,7 +508,7 @@ theorem appendLoop_complete (H : merkle_tree.Hasher Unit)
         (by rw [hhash]; exact (WP.spec_ok _).mpr rfl) ?_
       rintro y rfl
       step*
-      refine ⟨by omega, by rw [o_post1]; exact hend, by simp [hplen], ?_, hpc _ _ _ hhash, by omega⟩
+      refine ⟨by omega, by rw [o_post1]; exact hend, by simp [hplen], ?_, hpc _ _ _ (by assumption) (by assumption) hhash, by omega⟩
       intro j hj
       rw [index_mut_back_post]
       simp only [Std.Array.set_val_eq]
@@ -505,7 +537,7 @@ theorem okOr_some_spec {T β : Type} (v : T) (e : error.ErrorCode)
 /-- `append` returns `Ok` when there is room, its inputs are canonical and Poseidon answers on
     canonical inputs; the new subtrees are canonical. -/
 theorem append_complete (H : merkle_tree.Hasher Unit)
-    (hpc : ∀ a b h, H.hash_pair a b = ok h → Canonical h)
+    (hpc : ∀ a b h, Canonical a → Canonical b → H.hash_pair a b = ok h → Canonical h)
     (hs : ∀ a b, Canonical a → Canonical b → ∃ h, H.hash_pair a b = ok h)
     (z : Std.Array (Std.Array U8 32#usize) 41#usize) (hzb : H.zero_bytes = ok z)
     (hzc : ∀ i, i ≤ 26 → Canonical (z.val[i]!))
@@ -601,11 +633,11 @@ theorem systemTransfer_ok (e : SolEnv) (src dst : Pubkey) (amt : U64)
   rw [if_pos (by simp only [setBalance, if_neg (Ne.symm hne)]; exact hfit)]
   exact ⟨_, rfl⟩
 
-theorem handler_complete_code (c : Crypto) (env : SolEnv) (tree : merkle_tree.MerkleTreeAccount)
+theorem handler_complete_code (c : Crypto) (sha : ext_data.Sha256 Unit) (env : SolEnv) (tree : merkle_tree.MerkleTreeAccount)
     (config : admin.GlobalConfig) (proof : transact.Proof) (ext : I64) (fee : U64)
     (recipient feeRecipient : Pubkey) (out1 out2 : Slice U8) (hsh : Std.Array U8 32#usize) (v : U64)
     (hroot : merkle_tree.is_known_root tree proof.root = ok true)
-    (hext : ext_data.calculate_complete_ext_data_hash c.sha256 recipient ext out1 out2 fee
+    (hext : ext_data.calculate_complete_ext_data_hash sha recipient ext out1 out2 fee
       feeRecipient transact.SOL_ADDRESS = ok (some hsh))
     (hexteq : (leNat hsh : Fr) = (beNat proof.ext_data_hash : Fr))
     (hpub : utils.check_public_amount arkFr ext fee proof.public_amount = ok true)
@@ -633,7 +665,7 @@ theorem handler_complete_code (c : Crypto) (env : SolEnv) (tree : merkle_tree.Me
     (hap1 : merkle_tree.append c.hasher proof.output_commitments.val[0]! tree = ok (.Ok p1, t1))
     (hap2 : merkle_tree.append c.hasher proof.output_commitments.val[1]! t1 = ok (.Ok p2, t2))
     (hnext : tree.next_index.val + 1 ≤ U64.max) :
-    transact.transact c.hasher arkFr c.sha256 c.proofVerifier solRuntime env tree config proof
+    transact.transact c.hasher arkFr sha c.proofVerifier solRuntime env tree config proof
       ext fee recipient feeRecipient out1 out2 ⦃ r => ∃ ap, r.1 = .Ok ap ⦄ := by
   unfold transact.transact
   bstep hroot
@@ -797,8 +829,8 @@ theorem u64_max_eq : U64.max = 2 ^ 64 - 1 := by simp [U64.max, U64.numBits]
 section
 set_option linter.unusedSectionVars false
 variable {signers : List Pubkey}
-variable {G1 G2 GT : Type} [AddCommGroup G1] [Module Spec.F G1] [AddCommGroup G2]
-  [Module Spec.F G2] [CommGroup GT]
+variable {G1 G2 GT : Type} [AddCommGroup G1] [Module Spec.F G1] [Inhabited G2]
+  [CommGroup GT]
 
 /-- The spec's preconditions (`Spec.transactPreconditions`) except `distinctNullifiers`: what
     the handler needs to accept. It never checks that the two input nullifiers differ (finding
@@ -841,8 +873,9 @@ theorem PreExceptDistinct.of_pre [Spec.PoseidonHashes] [Spec.Sha] [Spec.Groups]
 
 /-- The handler accepts when the spec's preconditions hold, `distinctNullifiers` aside. -/
 theorem handler_ok_exists_nd [Spec.PoseidonHashes] [Spec.Sha]
-    (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
-    (hashes : HashesAgree c) (succ : HashesSucceed c) (sys : SyscallsSucceed C) (key : KeyG2Decodes C)
+    (d : Deployment) (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
+    (hashes : HashesAgree d) (succ : PoseidonSucceeds d.crypto)
+    (sha : ∀ x, ∃ h, d.crypto.sha256.hash x = ok h) (sys : SyscallsSucceed C) (key : KeyG2Decodes C)
     (a : TransactAccounts) (s₁ : State) (v : U64) (tree : merkle_tree.MerkleTreeAccount)
     (config : admin.GlobalConfig) (accts : Finset Spec.Pubkey)
     (addr : Fin 2 → Spec.Bytes → Spec.Pubkey) (proof : transact.Proof)
@@ -854,19 +887,15 @@ theorem handler_ok_exists_nd [Spec.PoseidonHashes] [Spec.Sha]
     (hsigner : (s₁ a.signer).owner = systemProgram ∧ (s₁ a.signer).data.isEmpty)
     (hfit : out1.length + out2.length + 120 ≤ Usize.max)
     (hL1 : ext.val ≠ 0) (hA0 : proof.proof_a.val ≠ List.replicate 64 0#u8) :
-    letI : Spec.Groups := syscallGroups C
-    letI : Spec.Pairing := syscallPairing C
-    letI : Spec.Deployment := ⟨programKey C⟩
-    PreExceptDistinct (toInputs signers a proof ext fee out1 out2)
+    withSyscallSpec C in
+    PreExceptDistinct (toInputs ⟨⟨signers⟩, a, ⟨proof, ext, fee, out1, out2⟩⟩)
       (handlerWorld a s₁ v tree config accts addr) →
-    ∃ ap env' tree', transact.transact c.hasher arkFr c.sha256 c.proofVerifier solRuntime
+    ∃ ap env' tree', transact.transact d.crypto.hasher arkFr d.crypto.sha256 d.crypto.proofVerifier solRuntime
       (handlerEnv a s₁ v) tree config proof ext fee a.recipient a.feeRecipientAccount out1 out2
       = ok (.Ok ap, env', tree') := by
   intro hpre
-  letI : Spec.Groups := syscallGroups C
-  letI : Spec.Pairing := syscallPairing C
-  letI : Spec.Deployment := ⟨programKey C⟩
-  set inputs := toInputs signers a proof ext fee out1 out2 with hinputs
+  withSyscallSpec C
+  set inputs := toInputs ⟨⟨signers⟩, a, ⟨proof, ext, fee, out1, out2⟩⟩ with hinputs
   set W := handlerWorld a s₁ v tree config accts addr with hW
   -- canonical public inputs
   have hcan : ∀ j, j < 7 → Canonical ((publicInputs proof)[j]!) := by
@@ -883,16 +912,17 @@ theorem handler_ok_exists_nd [Spec.PoseidonHashes] [Spec.Sha]
     have : inputs.encOut0.length + inputs.encOut1.length = out1.length + out2.length := by
       simp [inputs, toInputs, toBytes, Slice.length]
     omega
-  obtain ⟨hsh, hsha⟩ := succ.sha256 (toSlice (Spec.serealizeExternalData inputs))
-  have hext : ext_data.calculate_complete_ext_data_hash c.sha256 a.recipient ext out1 out2 fee
+  obtain ⟨hsh, hsha⟩ : ∃ h, d.crypto.sha256.hash (toSlice (Spec.serealizeExternalData inputs)) = ok h := sha _
+  have hext : ext_data.calculate_complete_ext_data_hash d.crypto.sha256 a.recipient ext out1 out2 fee
       a.feeRecipientAccount transact.SOL_ADDRESS = ok (some hsh) := by
-    rw [extDataHash_eq c.sha256 a.recipient a.feeRecipientAccount transact.SOL_ADDRESS ext out1 out2 fee
+    rw [extDataHash_eq d.crypto.sha256 a.recipient a.feeRecipientAccount transact.SOL_ADDRESS ext out1 out2 fee
       inputs rfl rfl rfl rfl rfl rfl rfl hfit, if_pos hpre.encOutLength, hsha, bind_tc_ok]
   have hexteq : (leNat hsh : Fr) = (beNat proof.ext_data_hash : Fr) := by
-    have hb := hashes.sha256 _ _ hsha
+    have hb := hashes.sha256_ok hsha
     rw [toBytes_toSlice _ hlen] at hb
     have h1 : Spec.externalDataHash inputs = inputs.extDataHash := hpre.externalDataBinding
     simp only [Spec.externalDataHash, ← hb, natOfLE_toBytes] at h1
+    rw [show inputs.extDataHash = toF proof.ext_data_hash from rfl, toF_def] at h1
     exact h1
   -- the public amount (L1 excluded)
   have hpub : utils.check_public_amount arkFr ext fee proof.public_amount = ok true := by
@@ -906,8 +936,8 @@ theorem handler_ok_exists_nd [Spec.PoseidonHashes] [Spec.Sha]
     refine (validateFee_iff ext fee config tree hd hw hm).mpr ⟨?_, hpre.minimumFee⟩
     have h3 : -2^63 < ext.val := hpre.amountRange.1; intro h; rw [h] at h3; norm_num at h3
   -- the proof
-  have hver : c.proofVerifier.verify proof = ok true :=
-    programVerifier_complete c C laws sys key proof a ext fee out1 out2 hcan hA0 hpre.validZKP
+  have hver : d.crypto.proofVerifier.verify proof = ok true :=
+    programVerifier_complete d.crypto C laws sys key proof a ext fee out1 out2 hcan hA0 hpre.validZKP
   -- balances, on code addresses
   have hWb : ∀ k, W.balances (toPubkey k) = (s₁ k).lamports.val := by
     intro k; simp [hW, handlerWorld, fromPubkey_toPubkey]
@@ -917,7 +947,7 @@ theorem handler_ok_exists_nd [Spec.PoseidonHashes] [Spec.Sha]
   have hmax := u64_max_eq
   obtain ⟨hAP, htP⟩ := hpre.poolNotRecipient
   have hsP := hpre.signerNotPoolNotNullifiers.1
-  have hsP' : a.signer ≠ a.treeTokenAccount := fun e => hsP (by show toPubkey a.signer = toPubkey a.treeTokenAccount; rw [e])
+  have hsP' : a.signer ≠ a.treeTokenAccount := fun e => hsP (Or.inl (by show toPubkey a.signer = toPubkey a.treeTokenAccount; rw [e]))
   have hAP' : ext.val < 0 → a.recipient ≠ a.treeTokenAccount := fun hn e => hAP hn (by show toPubkey a.recipient = toPubkey a.treeTokenAccount; rw [e])
   have htP' : fee.val > 0 → a.feeRecipientAccount ≠ a.treeTokenAccount := fun hf e => htP hf (by show toPubkey a.feeRecipientAccount = toPubkey a.treeTokenAccount; rw [e])
   have hfitB := hpre.balancesFit
@@ -1028,7 +1058,7 @@ theorem handler_ok_exists_nd [Spec.PoseidonHashes] [Spec.Sha]
       omega
   -- the two appends
   obtain ⟨z, hzb, -⟩ := hashes.zeroBytes
-  obtain ⟨z', hzb', hzc⟩ := hashes.zeroBytesCanonical
+  obtain ⟨z', hzb', hzc⟩ := hashes.zeroBytes_canonical
   rw [hzb] at hzb'; obtain rfl := Result.ok_injective hzb'
   have hroom : tree.next_index.val ≤ 2 ^ 26 - 2 := hpre.treeNotFull
   have hc0 : Canonical proof.output_commitments.val[0]! := by
@@ -1036,18 +1066,18 @@ theorem handler_ok_exists_nd [Spec.PoseidonHashes] [Spec.Sha]
   have hc1 : Canonical proof.output_commitments.val[1]! := by
     simpa [publicInputs] using hcan 6 (by decide)
   obtain ⟨⟨ra, t1⟩, hr1, p1, hp1, hsub1⟩ := (WP.spec_equiv_exists _ _).mp
-    (append_complete c.hasher hashes.poseidonCanonical succ.poseidon z hzb hzc _ tree hshape
+    (append_complete d.crypto.hasher hashes.poseidon_canonical succ.poseidon z hzb hzc _ tree hshape
       (by omega) (fun i hi => hsub ⟨i, hi⟩) hc0)
   simp only at hp1 hsub1; subst hp1
   obtain ⟨hsh1, -, hidx1, -⟩ := append_shape _ _ tree t1 p1 hshape hr1
   obtain ⟨⟨rb, t2⟩, hr2, p2, hp2, -⟩ := (WP.spec_equiv_exists _ _).mp
-    (append_complete c.hasher hashes.poseidonCanonical succ.poseidon z hzb hzc _ t1 hsh1
+    (append_complete d.crypto.hasher hashes.poseidon_canonical succ.poseidon z hzb hzc _ t1 hsh1
       (by omega) hsub1 hc1)
   simp only at hp2; subst hp2
   have hmin : ext.val ≠ -9223372036854775808 := by
     have h3 : -2^63 < ext.val := hpre.amountRange.1; omega
   obtain ⟨⟨r, e', t'⟩, hres, ap, hap⟩ := (WP.spec_equiv_exists _ _).mp
-    (handler_complete_code c (handlerEnv a s₁ v) tree config proof ext fee a.recipient a.feeRecipientAccount
+    (handler_complete_code d.crypto d.crypto.sha256 (handlerEnv a s₁ v) tree config proof ext fee a.recipient a.feeRecipientAccount
       out1 out2 hsh v hroot hext hexteq hpub hfee hver rfl hL1 hmin hD hWd hr1 hr2
       (by rw [hmax]; omega))
   simp only at hap; subst hap
@@ -1055,8 +1085,9 @@ theorem handler_ok_exists_nd [Spec.PoseidonHashes] [Spec.Sha]
 
 /-- The handler accepts when the spec's preconditions hold (`handler_ok_exists_nd`). -/
 theorem handler_ok_exists [Spec.PoseidonHashes] [Spec.Sha]
-    (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
-    (hashes : HashesAgree c) (succ : HashesSucceed c) (sys : SyscallsSucceed C) (key : KeyG2Decodes C)
+    (d : Deployment) (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
+    (hashes : HashesAgree d) (succ : PoseidonSucceeds d.crypto)
+    (sha : ∀ x, ∃ h, d.crypto.sha256.hash x = ok h) (sys : SyscallsSucceed C) (key : KeyG2Decodes C)
     (a : TransactAccounts) (s₁ : State) (v : U64) (tree : merkle_tree.MerkleTreeAccount)
     (config : admin.GlobalConfig) (accts : Finset Spec.Pubkey)
     (addr : Fin 2 → Spec.Bytes → Spec.Pubkey) (proof : transact.Proof)
@@ -1068,26 +1099,23 @@ theorem handler_ok_exists [Spec.PoseidonHashes] [Spec.Sha]
     (hsigner : (s₁ a.signer).owner = systemProgram ∧ (s₁ a.signer).data.isEmpty)
     (hfit : out1.length + out2.length + 120 ≤ Usize.max)
     (hL1 : ext.val ≠ 0) (hA0 : proof.proof_a.val ≠ List.replicate 64 0#u8) :
-    letI : Spec.Groups := syscallGroups C
-    letI : Spec.Pairing := syscallPairing C
-    letI : Spec.Deployment := ⟨programKey C⟩
-    Spec.transactPreconditions (toInputs signers a proof ext fee out1 out2)
+    withSyscallSpec C in
+    Spec.transactPreconditions (toInputs ⟨⟨signers⟩, a, ⟨proof, ext, fee, out1, out2⟩⟩)
       (handlerWorld a s₁ v tree config accts addr) →
-    ∃ ap env' tree', transact.transact c.hasher arkFr c.sha256 c.proofVerifier solRuntime
+    ∃ ap env' tree', transact.transact d.crypto.hasher arkFr d.crypto.sha256 d.crypto.proofVerifier solRuntime
       (handlerEnv a s₁ v) tree config proof ext fee a.recipient a.feeRecipientAccount out1 out2
       = ok (.Ok ap, env', tree') := by
   intro hpre
-  letI : Spec.Groups := syscallGroups C
-  letI : Spec.Pairing := syscallPairing C
-  letI : Spec.Deployment := ⟨programKey C⟩
-  exact handler_ok_exists_nd c C laws hashes succ sys key a s₁ v tree config accts addr proof ext fee
+  withSyscallSpec C
+  exact handler_ok_exists_nd d C laws hashes succ sha sys key a s₁ v tree config accts addr proof ext fee
     out1 out2 hshape hhist hsub hd hw hm hsigner hfit hL1 hA0 (PreExceptDistinct.of_pre hpre)
 
 
 /-- **Handler completeness, exact version.** -/
 theorem handler_complete_exact' [Spec.PoseidonHashes] [Spec.Sha]
-    (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
-    (hashes : HashesAgree c) (succ : HashesSucceed c) (sys : SyscallsSucceed C) (key : KeyG2Decodes C)
+    (d : Deployment) (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
+    (hashes : HashesAgree d) (succ : PoseidonSucceeds d.crypto)
+    (sha : ∀ x, ∃ h, d.crypto.sha256.hash x = ok h) (sys : SyscallsSucceed C) (key : KeyG2Decodes C)
     (a : TransactAccounts) (s₁ : State) (v : U64) (tree : merkle_tree.MerkleTreeAccount)
     (config : admin.GlobalConfig) (accts : Finset Spec.Pubkey)
     (addr : Fin 2 → Spec.Bytes → Spec.Pubkey) (proof : transact.Proof)
@@ -1099,25 +1127,21 @@ theorem handler_complete_exact' [Spec.PoseidonHashes] [Spec.Sha]
     (hsigner : (s₁ a.signer).owner = systemProgram ∧ (s₁ a.signer).data.isEmpty)
     (h64 : Usize.max = 2 ^ 64 - 1)
     (hL1 : ext.val ≠ 0) (hA0 : proof.proof_a.val ≠ List.replicate 64 0#u8) :
-    letI : Spec.Groups := syscallGroups C
-    letI : Spec.Pairing := syscallPairing C
-    letI : Spec.Deployment := ⟨programKey C⟩
-    let inputs := toInputs signers a proof ext fee out1 out2
+    withSyscallSpec C in
+    let inputs := toInputs ⟨⟨signers⟩, a, ⟨proof, ext, fee, out1, out2⟩⟩
     let W := handlerWorld a s₁ v tree config accts addr
     Spec.transactPreconditions inputs W →
-    ∃ ap env' tree', transact.transact c.hasher arkFr c.sha256 c.proofVerifier solRuntime
+    ∃ ap env' tree', transact.transact d.crypto.hasher arkFr d.crypto.sha256 d.crypto.proofVerifier solRuntime
       (handlerEnv a s₁ v) tree config proof ext fee a.recipient a.feeRecipientAccount out1 out2
       = ok (.Ok ap, env', tree') ∧
       (∀ k, (env'.balances k).val = (Spec.transactEffects inputs W).balances (toPubkey k)) ∧
       toTree tree' = (Spec.transactEffects inputs W).state.tree := by
   intro inputs W hpre
-  letI : Spec.Groups := syscallGroups C
-  letI : Spec.Pairing := syscallPairing C
-  letI : Spec.Deployment := ⟨programKey C⟩
-  obtain ⟨ap, e', t', hres⟩ := handler_ok_exists c C laws hashes succ sys key a s₁ v tree config accts addr
+  withSyscallSpec C
+  obtain ⟨ap, e', t', hres⟩ := handler_ok_exists d C laws hashes succ sha sys key a s₁ v tree config accts addr
     proof ext fee out1 out2 hshape hhist hsub hd hw hm hsigner
     (fits_of_encOutsFit h64 rfl rfl hpre.encOutLength) hL1 hA0 hpre
-  have hok := handler_ok c (handlerEnv a s₁ v) tree config proof ext fee a.recipient a.feeRecipientAccount
+  have hok := handler_ok d.crypto d.crypto.sha256 (handlerEnv a s₁ v) tree config proof ext fee a.recipient a.feeRecipientAccount
     out1 out2 ap e' t' hres
   refine ⟨ap, e', t', hres, ?_, ?_⟩
   · -- balances
@@ -1166,8 +1190,12 @@ theorem handler_complete_exact' [Spec.PoseidonHashes] [Spec.Sha]
         payN_eq_moveN _ _ _ _ (Or.inl (hAP' hn)), if_neg hp]
   · -- the tree
     obtain ⟨p1, p2, t1, hap1, hap2⟩ := hok.appends
-    obtain ⟨hT1, hsh1, -⟩ := append_ok' c hashes _ tree t1 p1 hshape hap1
-    obtain ⟨hT2, -⟩ := append_ok' c hashes _ t1 t' p2 hsh1 hap2
+    have hcan := verifyProof_canonical _ proof _ hok.verify
+    have hl0 : Canonical proof.output_commitments.val[0]! := by simpa [publicInputs] using hcan 5 (by decide)
+    have hl1 : Canonical proof.output_commitments.val[1]! := by simpa [publicInputs] using hcan 6 (by decide)
+    obtain ⟨hT1, hsh1, -⟩ := append_ok' d hashes _ tree t1 p1 hshape hsub hl0 hap1
+    have hsub1 := append_subtrees_canonical' d hashes _ tree t1 p1 hshape hsub hl0 hap1
+    obtain ⟨hT2, -⟩ := append_ok' d hashes _ t1 t' p2 hsh1 hsub1 hl1 hap2
     have hext' : inputs.extAmt ≠ 0 := hL1
     simp only [Spec.transactEffects, Spec.transferEffects, Spec.nullifierRentEffects,
       if_neg hext']

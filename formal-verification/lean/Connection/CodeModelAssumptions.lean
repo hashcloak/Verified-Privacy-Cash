@@ -1,208 +1,194 @@
 import Connection.Mapping
-open Aeneas Aeneas.Std Result PrivacyCash.Model
+open Aeneas Aeneas.Std Result
 
 /-! # Assumptions about the code model
 
-REVIEW SURFACE. Assumptions the connection theorems need about the code side alone: the
-deployment, the Solana runtime and Anchor, and the cryptographic primitives as the code uses
-them. They say nothing about the spec. Core-model does not state them; its own assumptions are
-listed in `core-model/README.md`.
+REVIEW SURFACE. What the connection theorems assume about the code side alone: the deployment,
+Solana and Anchor, and the cryptographic primitives. Nothing here mentions the spec. The links
+between code and spec are in `Hypotheses.lean`; core-model's own assumptions are in
+`core-model/README.md`.
 
-What links the code to the spec, and what the spec deliberately leaves out, is in
-`Hypotheses.lean`.
-
-1. `DeploymentFacts`: the program is not the System Program.
-2. `SolanaFacts` (per transaction): no program-derived address signs. Positive rent is part of
-   core-model's `Run` (`TxEnv.RentPositive`).
-3. `CircuitFacts` (per proof): an accepted proof's two input nullifiers differ (core-model's
-   `Groth16Sound`; the spec's circuit is `RelationS`, cited, not copied). Finding I1.
-4. `CryptoFacts` (per transaction): SHA-256 makes the two new nullifier accounts' addresses differ.
-5. `PairingLaws`, with core-model's syscall contracts `AltBn128Contracts`: the verifier bridge.
-6. `ExecutionAssumptions` (`run_connection`): the fixed addresses differ, and every `transact`
-   satisfies `SolanaFacts`, `CryptoFacts` and `CircuitFacts`.
-7. For completeness only: `CompletenessAssumptions` (`HashesSucceed`, `SyscallsSucceed`,
-   `KeyG2Decodes`, `usize` is 64 bits): the primitives answer at all.
-8. For G3a and G3b for the code only: `ProgramAccountsInPlace`, `NullifierAddressesFree`:
-   Anchor's account constraints hold (not machine-checked).
+First the assumptions soundness needs, then those only completeness needs. Address collisions
+are not assumed away (`AddressCollision.lean`).
 -/
 
 namespace Connection
 
-/-- `DeploymentFacts d` (assumed): facts about where the program is deployed. -/
-structure DeploymentFacts (d : Deployment) : Prop where
-  /-- The program is not the System Program. The code model needs this because it checks
-      whether an account is still free by asking whether the System Program owns it: for the
-      nullifier accounts (so no nullifier is spent twice) and for the tree, pool and config (so
-      `initialize` runs once). True of every deployment: no program can be deployed at the
-      System Program's address. -/
-  programNotSystem : d.programId ≠ systemProgram
+/-! ## For soundness -/
 
-/-- `SolanaFacts d tx` (assumed, about the Solana runtime, for this transaction): no
-    program-derived address signs. (That the rent is positive is part of core-model's `Run`.) -/
-structure SolanaFacts (d : Deployment) (tx : TxEnv) : Prop where
-  /-- No program-derived address signs the transaction: a PDA is off the ed25519 curve, so it
-      has no private key. So the signer is neither the pool nor a new nullifier account. -/
-  pdasDoNotSign : ∀ seeds, d.pda seeds ∉ tx.signers
+/-- `ProgramNotSystem d` (assumption, about the deployment): the program is not the System Program.
+    True of every deployment: nothing can be deployed at the System Program's address.
+    Needed because the code treats an account owned by the System Program as free: a nullifier
+    account (so no nullifier is spent twice) and the tree, pool and config (so `initialize`
+    runs once). -/
+def ProgramNotSystem (d : CodeModel.Deployment) : Prop := d.programId ≠ CodeModel.systemProgram
 
-/-- `NullifiersDiffer xs`: a proof's public inputs 3 and 4 (its two input nullifiers) differ. -/
+/-- `PdasDoNotSign d ctx` (assumption, about Solana, for this transaction): no program-derived
+    address is among the transaction's signers (`ctx.signers`). True on Solana: a PDA is off the ed25519
+    curve, so it has no private key.
+    Needed so that the signer is neither the pool nor a new nullifier account. -/
+def PdasDoNotSign (d : CodeModel.Deployment) (ctx : CodeModel.TxContext) : Prop :=
+  ∀ seeds, d.pda seeds ∉ ctx.signers
+
+/-- `NullifiersDiffer xs`: public inputs 3 and 4 of a proof (its two input nullifiers) differ. -/
 def NullifiersDiffer (xs : List (Std.Array U8 32#usize)) : Prop := xs[3]! ≠ xs[4]!
 
-/-- `CircuitFacts d proofs` (assumed, about the circuit, for these proofs): what the connection
-    needs from `circuits/transaction2.circom`, stated with core-model's own circuit assumption
-    `Groth16Sound`, whose statement core-model leaves open. -/
-structure CircuitFacts (d : Deployment) (proofs : Set zkcash_core.transact.Proof) : Prop where
-  /-- A proof the program's verifier accepts has two different input nullifiers. Only the circuit
-      enforces this; neither the program nor Anchor checks it (finding I1). Spec counterpart:
-      `RelationS.noDuplicateNullifiers`, which the circuit enforces by T0. -/
-  distinctNullifiers : Groth16Sound d.crypto NullifiersDiffer proofs
-
-/-- `CryptoFacts d proof` (assumed, about SHA-256, for this transaction): the addresses of the
-    two new nullifier accounts differ. -/
-structure CryptoFacts (d : Deployment) (proof : zkcash_core.transact.Proof) : Prop where
-  /-- The two new nullifier accounts (slot 0 of nullifier 0, slot 1 of nullifier 1) have
-      different addresses (SHA-256 collision resistance of the PDA derivation). -/
-  nullifierAddressesDiffer : PdaCollisionFree d.toAddresses
-    {d.pdaInput (nullifier0Seeds proof.input_nullifiers.val[0]!),
-     d.pdaInput (nullifier1Seeds proof.input_nullifiers.val[1]!)}
+/-- `CircuitFacts d proofs` (assumption, about `circuits/transaction2.circom`, for these proofs):
+    what the connection needs from the circuit. Stated with core-model's `Groth16Sound`, which
+    leaves the circuit's statement open. -/
+structure CircuitFacts (d : CodeModel.Deployment) (proofs : Set CodeModel.Proof) :
+    Prop where
+  /-- An accepted proof has two different input nullifiers. Only the circuit enforces this, not
+      the program or Anchor (finding I1). Spec: `RelationS.noDuplicateNullifiers` (by T0). -/
+  distinctNullifiers : CodeModel.Groth16Sound d.crypto NullifiersDiffer proofs
 
 section
-variable {G1 G2 GT : Type} [AddCommGroup G1] [Module Spec.F G1] [AddCommGroup G2]
-  [Module Spec.F G2] [CommGroup GT]
+variable {G1 G2 GT : Type} [AddCommGroup G1] [Module Spec.F G1] [Inhabited G2]
+  [CommGroup GT]
 
-/-- `PairingLaws e` (assumed, about the `alt_bn128` pairing, for the verifier bridge): pairing
-    with `-a` gives the inverse. True of the BN254 optimal ate pairing. Needed because the code
-    checks the Groth16 equation as a product with `-A` (`e(-A, B) · e(α, β) · e(vkX, γ) · e(C, δ) = 1`),
-    while the spec states it as `e(A, B) = e(α, β) · e(vkX, γ) · e(C, δ)`. -/
+/-- `PairingLaws e` (assumption, about the `alt_bn128` pairing): `e(-a, b) = e(a, b)⁻¹`. True of
+    the BN254 optimal ate pairing. Needed for the verifier bridge: the code checks
+    `e(-A, B) · e(α, β) · e(vkX, γ) · e(C, δ) = 1`, the spec `e(A, B) = e(α, β) · e(vkX, γ) · e(C, δ)`. -/
 structure PairingLaws (e : G1 → G2 → GT) : Prop where
   neg_left : ∀ (a : G1) (b : G2), e (-a) b = (e a b)⁻¹
 
 end
 
-/-- `StepAssumptions d tx ix`: the assumptions one step of an execution needs: a
-    `transact` satisfies the per-transaction assumptions (`SolanaFacts`, `CryptoFacts`,
-    `CircuitFacts`). -/
-def StepAssumptions (d : Deployment) (tx : TxEnv) : Instruction → Prop
-  | .transact _ proof _ _ _ _ => SolanaFacts d tx ∧ CryptoFacts d proof ∧ CircuitFacts d {proof}
-  | _ => True
+/-- `TransactIn evs txEnv proof`: the execution `evs` accepted a `transact` with proof `proof`, in
+    transaction environment `txEnv`. -/
+def TransactIn (evs : List CodeModel.Event) (txEnv : CodeModel.TxEnv)
+    (proof : CodeModel.Proof) : Prop :=
+  ∃ a ext fee out1 out2 em,
+    CodeModel.Event.program txEnv (.transact a proof ext fee out1 out2) em ∈ evs
 
-/-- `ExecutionAssumptions d sGenesis evs` (assumed, used by `run_connection`): for the
-    execution from `sGenesis` with events `evs`, the program's three fixed accounts are different,
-    and every `transact` satisfies `SolanaFacts`, `CryptoFacts` and `CircuitFacts`
-    (`StepAssumptions`). -/
-structure ExecutionAssumptions (d : Deployment) (sGenesis : State) (evs : List Event) :
-    Prop where
-  /-- The program's three fixed accounts (the tree, the pool, the config) have different
-      addresses (SHA-256 collision resistance of the PDA derivation, as in
-      `CryptoFacts.nullifierAddressesDiffer`). Without it, `initialize` could write two of
-      them to the same account. -/
-  fixedAddressesDiffer : PdaCollisionFree d.toAddresses
-    {d.pdaInput merkleTreeSeeds, d.pdaInput treeTokenSeeds, d.pdaInput globalConfigSeeds}
-  /-- Every program step of the execution, from the state the execution reached before it,
-      satisfies `StepAssumptions`. -/
-  eachStep : ∀ pre post s tx ix em, evs = pre ++ .program tx ix em :: post → Run d sGenesis pre s →
-    StepAssumptions d tx ix
+/-- `proofsIn evs`: the proofs of the `transact`s the execution `evs` accepted. -/
+def proofsIn (evs : List CodeModel.Event) : Set CodeModel.Proof :=
+  {proof | ∃ txEnv, TransactIn evs txEnv proof}
+
+/-- `ExecutionAssumptions d evs` (assumption, for `run_connection`): `PdasDoNotSign` and
+    `CircuitFacts` for every `transact` of the execution `evs`. -/
+structure ExecutionAssumptions (d : CodeModel.Deployment) (evs : List CodeModel.Event) : Prop where
+  /-- No derived address signs a `transact`'s transaction. -/
+  pdasDoNotSign : ∀ txEnv proof, TransactIn evs txEnv proof → PdasDoNotSign d txEnv.toTxContext
+  /-- The circuit facts, for the proofs of all `transact`s. -/
+  circuit : CircuitFacts d (proofsIn evs)
 
 /-! ## For completeness only
 
-Safety ("code accepts ⟹ spec allows") needs only what a returned answer means. Completeness
-("spec allows ⟹ code accepts") also needs the primitives to answer at all. -/
+Completeness must show that the code reaches `ok`: the cryptography returns a value, the runtime
+is Solana's, and Anchor's checks on derived addresses pass. -/
 
-/-- `HashesSucceed c` (assumed, completeness only): the hash functions return a
-    value where the program needs one. True of the real libraries: `light-poseidon` fails only on inputs ≥ p,
-    and the program's Poseidon inputs are canonical (stored subtrees, zero hashes, the
-    commitments the verifier range-checked, and Poseidon's own outputs); SHA-256 always
-    returns. Separate from `HashesAgree`, which says only what a returned value is. -/
-structure HashesSucceed (c : Crypto) : Prop where
+/-- `PoseidonSucceeds c` (assumption): Poseidon returns a value on canonical inputs.
+    True of `light-poseidon`, which fails only on inputs ≥ p. Enough for the program: where it
+    calls Poseidon (the Merkle append), the inputs are proved canonical, from the spec's
+    `canonicalInputs` (commitments), the invariant `WellFormed` (stored subtrees), and
+    `HashesAgree` (zero hashes, Poseidon outputs). SHA-256 always returns in the model. What a
+    returned value is: `HashesAgree`. -/
+structure PoseidonSucceeds (c : CodeModel.Crypto) : Prop where
   /-- Poseidon returns a value on canonical inputs. -/
   poseidon : ∀ a b, Canonical a → Canonical b → ∃ h, c.hasher.hash_pair a b = ok h
-  /-- SHA-256 always returns a value. -/
-  sha256 : ∀ x, ∃ h, c.sha256.hash x = ok h
 
 section
-variable {G1 G2 GT : Type} [AddCommGroup G1] [CommMonoid GT] {s : AltBn128}
+variable {G1 G2 GT : Type} [AddCommGroup G1] [CommMonoid GT] {s : CodeModel.AltBn128}
 
-/-- `SyscallsSucceed C` (assumed, completeness only): the `alt_bn128` syscalls return
-    a value on valid points, and the pairing answers 1 exactly when the product of the pairings is 1. The
-    converse of core-model's `AltBn128Contracts`, which only say what a returned answer means.
-    True of Solana's syscalls, which fail only on invalid input. If core-model's contracts
-    include it, this bundle can go. -/
-structure SyscallsSucceed (C : AltBn128Contracts s G1 G2 GT) : Prop where
-  /-- Multiplication returns a value when its point (bytes 0..63) decodes. -/
-  mul : ∀ input, C.decodeG1 (bytesAt input 0 64#usize (by simp)) ≠ none →
-    ∃ out, s.multiplication input = some out
+/-- `g1At C input offset`: the G1 point in bytes `offset .. offset+63` of a syscall input, as the
+    syscalls read it (the reading of core-model's `AltBn128Contracts`). -/
+-- Given the syscalls' contracts `C`, a syscall input of `n` bytes, and a starting byte `offset`:
+def g1At (C : CodeModel.AltBn128Contracts s G1 G2 GT) {n : Usize} (input : Std.Array U8 n)
+    (offset : Nat)
+    -- a proof that the 64 bytes from `offset` lie inside the input (Lean proves it with `simp`
+    -- at each use, where `offset` and `n` are numbers); the result is a G1 point, or `none`:
+    (h : offset + 64 ≤ n.val := by simp) : Option G1 :=
+  -- cut out bytes `offset .. offset+63`, and decode them as the syscalls do.
+  C.decodeG1 (CodeModel.bytesAt input offset 64#usize h)
+
+/-- `g2At C input offset`: the G2 point in bytes `offset .. offset+127`, as the pairing syscall reads it. -/
+-- Given the syscalls' contracts `C`, a syscall input of `n` bytes, and a starting byte `offset`:
+def g2At (C : CodeModel.AltBn128Contracts s G1 G2 GT) {n : Usize} (input : Std.Array U8 n)
+    (offset : Nat)
+    -- a proof that the 128 bytes from `offset` lie inside the input (proved by `simp` at each
+    -- use); the result is a G2 point, or `none`:
+    (h : offset + 128 ≤ n.val := by simp) : Option G2 :=
+  -- cut out bytes `offset .. offset+127`, and decode them as the pairing syscall does.
+  C.decodeG2 (CodeModel.bytesAt input offset 128#usize h)
+
+/-- `SyscallsSucceed C` (assumption): what core-model's `AltBn128Contracts` (the meaning of a
+    returned value) leaves out:
+    - the `alt_bn128` syscalls mul & add return a value on valid points;
+    - the pairing answers 1 when the product of the pairings is 1 (the contracts give only the
+      other direction).
+    True of Solana's syscalls, which fail only on invalid input. -/
+structure SyscallsSucceed (C : CodeModel.AltBn128Contracts s G1 G2 GT) : Prop where
+  /-- Multiplication returns a value when its point (bytes 0..63) decodes; any scalar
+      (bytes 64..95) is accepted. -/
+  mul : ∀ input, g1At C input 0 ≠ none → ∃ out, s.multiplication input = some out
   /-- Addition returns a value when both points decode. -/
-  add : ∀ input, C.decodeG1 (bytesAt input 0 64#usize (by simp)) ≠ none →
-    C.decodeG1 (bytesAt input 64 64#usize (by simp)) ≠ none → ∃ out, s.addition input = some out
+  add : ∀ input, g1At C input 0 ≠ none → g1At C input 64 ≠ none →
+    ∃ out, s.addition input = some out
   /-- The pairing returns a value when its eight points decode, and that value ends in 1
       exactly when the product of the four pairings is 1. -/
   pairing : ∀ input (P₁ P₂ P₃ P₄ : G1) (Q₁ Q₂ Q₃ Q₄ : G2),
-    C.decodeG1 (bytesAt input 0 64#usize (by simp)) = some P₁ →
-    C.decodeG2 (bytesAt input 64 128#usize (by simp)) = some Q₁ →
-    C.decodeG1 (bytesAt input 192 64#usize (by simp)) = some P₂ →
-    C.decodeG2 (bytesAt input 256 128#usize (by simp)) = some Q₂ →
-    C.decodeG1 (bytesAt input 384 64#usize (by simp)) = some P₃ →
-    C.decodeG2 (bytesAt input 448 128#usize (by simp)) = some Q₃ →
-    C.decodeG1 (bytesAt input 576 64#usize (by simp)) = some P₄ →
-    C.decodeG2 (bytesAt input 640 128#usize (by simp)) = some Q₄ →
+    g1At C input 0 = some P₁ → g2At C input 64 = some Q₁ →
+    g1At C input 192 = some P₂ → g2At C input 256 = some Q₂ →
+    g1At C input 384 = some P₃ → g2At C input 448 = some Q₃ →
+    g1At C input 576 = some P₄ → g2At C input 640 = some Q₄ →
     ∃ out, s.pairing input = some out ∧
       (out.val[31]! = 1#u8 ↔ C.e P₁ Q₁ * C.e P₂ Q₂ * C.e P₃ Q₃ * C.e P₄ Q₄ = 1)
 
-/-- `KeyG2Decodes C` (assumed, completeness only): the syscalls decode the three G2
-    points of the program's verifying key. True: the trusted setup produced valid points, and the real
-    program verifies real proofs on chain. Needed because `programKey` reads an undecodable
-    key point as `0`, so without it the spec could accept a proof the code rejects. The
-    key's G1 points are checked by computation (`key_alpha_decodes`, `key_ic_decodes`); the
-    G2 decoding is a parameter of core-model's contracts, so it cannot be checked in Lean. -/
-structure KeyG2Decodes (C : AltBn128Contracts s G1 G2 GT) : Prop where
-  beta : C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_beta_g2 ≠ none
-  gamma : C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_gamme_g2 ≠ none
-  delta : C.decodeG2 zkcash_core.verifying_key.VERIFYING_KEY.vk_delta_g2 ≠ none
+/-- `KeyG2Decodes C` (assumption): the syscalls decode the three G2 points of
+    the program's verifying key.
+    Why the assumption holds: the trusted setup produced valid points, and the program verifies
+    proofs on chain. Needed because `programKey` reads an undecodable point as `0`, so
+    the spec could accept a proof the code rejects. Not checkable in Lean: G2 decoding is a
+    parameter of core-model's contracts (the G1 points are checked: `key_alpha_decodes`,
+    `key_ic_decodes`). -/
+structure KeyG2Decodes (C : CodeModel.AltBn128Contracts s G1 G2 GT) : Prop where
+  beta : C.decodeG2 CodeModel.VERIFYING_KEY.vk_beta_g2 ≠ none
+  gamma : C.decodeG2 CodeModel.VERIFYING_KEY.vk_gamme_g2 ≠ none
+  delta : C.decodeG2 CodeModel.VERIFYING_KEY.vk_delta_g2 ≠ none
 
-/-- `CompletenessAssumptions c C` (assumed, handler completeness and G3 for the code): the
-    deployment's hash and syscall calls return a value on valid input (`HashesSucceed`,
-    `SyscallsSucceed`), the key's G2 points decode (`KeyG2Decodes`), and `usize` is 64 bits. -/
-structure CompletenessAssumptions (c : Crypto) (C : AltBn128Contracts c.altBn128 G1 G2 GT) : Prop where
-  hashesSucceed : HashesSucceed c
+/-- `CryptoSucceeds c C` (assumption): the code's cryptography returns a value on valid input:
+    Poseidon and SHA-256 (core-model's `Crypto`) and the `alt_bn128` syscalls
+    (`AltBn128Contracts`). -/
+structure CryptoSucceeds (c : CodeModel.Crypto)
+    (C : CodeModel.AltBn128Contracts c.altBn128 G1 G2 GT) : Prop where
+  /-- Poseidon returns a value on canonical inputs. -/
+  poseidonSucceeds : PoseidonSucceeds c
+  /-- SHA-256 always returns a value. -/
+  sha256Succeeds : ∀ x, ∃ h, c.sha256.hash x = ok h
+  /-- The `alt_bn128` syscalls return a value on points that decode, and the pairing's output
+      matches the product of the pairings. -/
   syscallsSucceed : SyscallsSucceed C
+  /-- The verifying key's three G2 points decode. -/
   keyDecodes : KeyG2Decodes C
-  /-- `usize` is 64 bits. SOLANA FACT: the program runs on 64-bit SBF. In Aeneas, `Usize.max`
-      depends on the platform running Lean, so this cannot be proved; it ties the model to the
-      target. -/
-  usize64 : Usize.max = 2^64 - 1
 
 end
 
-/-! ## For G3a and G3b for the code: Anchor's account constraints hold -/
+/-- `RuntimeFacts rent` (assumption, about Solana's runtime): `usize` is 64 bits, and every rent
+    amount is positive. Both are fixed by the runtime, not by a transaction or a state. -/
+structure RuntimeFacts (rent : Nat → U64) : Prop where
+  /-- `usize` is 64 bits. SOLANA FACT: the program runs on 64-bit SBF. Not provable: Aeneas's
+      `Usize.max` depends on the platform running Lean. -/
+  usize64 : Usize.max = 2^64 - 1
+  /-- Every rent amount is positive. `rent n` is the minimum balance an account with `n` bytes of
+      data must hold (Solana's rent-exempt minimum, `Rent::minimum_balance`).
+      SOLANA FACT: even an account with no data must hold a positive balance (Solana counts 128
+      bytes of account metadata, at a positive price). With `SameRent`, this gives core-model's
+      `TxEnv.RentPositive`. -/
+  rentPositive : ∀ n, 0 < (rent n).val
 
-/-- `ProgramAccountsInPlace d s tree tt config` (assumed; could be proved as an invariant): the
-    program's three accounts hold `tree`, `tt` and `config` at their canonical addresses, which
-    their stored bumps derive. `initialize` sets those bumps and no instruction changes them. -/
-structure ProgramAccountsInPlace (d : Deployment) (s : State)
-    (tree : zkcash_core.merkle_tree.MerkleTreeAccount) (tt : zkcash_core.admin.TreeTokenAccount)
-    (config : zkcash_core.admin.GlobalConfig) : Prop where
-  tree : HoldsTree d.programId s (treeAddr d) tree ∧
-    treeAddr d = d.toAddresses.createProgramAddress (merkleTreeSeeds ++ [tree.bump])
-  pool : HoldsTreeToken d.programId s (poolAddr d) tt ∧
-    poolAddr d = d.toAddresses.createProgramAddress (treeTokenSeeds ++ [tt.bump])
-  config : HoldsGlobalConfig d.programId s (configAddr d) config ∧
-    configAddr d = d.toAddresses.createProgramAddress (globalConfigSeeds ++ [config.bump])
+/-- `PdasOnlyByProgram d s` (assumption, about Solana, for this state): only the program creates
+    accounts at its derived addresses. In state `s`, each derived address holds either
+    - an account the program created (owned by the program, with program data), or
+    - no account yet (owned by the System Program, no data; it may hold lamports sent to it).
 
-/-- `NullifierAddressesFree d s proof` (assumed, not machine-checked): Anchor's constraints on the
-    four nullifier addresses hold: `init` for the two new accounts, `SystemAccount` for the other
-    two.
-
-    Why it holds for an unspent nullifier:
-    - SOLANA FACT: only this program can create an account at its derived addresses, since it alone
-      can sign for them; anyone else can only send lamports there, which `init` handles;
-    - the program creates nullifier accounts only in `transact`, for the two nullifiers it spends.
-
-    `Spec`'s `newNullifiers` says the nullifiers are unspent; proving this from it is future
-    work. Until then, G3 for the code doesn't check this logic in the program. -/
-structure NullifierAddressesFree (d : Deployment) (s : State)
-    (proof : zkcash_core.transact.Proof) : Prop where
-  new0 : Initializable s (d.pda (nullifier0Seeds proof.input_nullifiers.val[0]!))
-  new1 : Initializable s (d.pda (nullifier1Seeds proof.input_nullifiers.val[1]!))
-  other0 : IsSystemAccount s (d.pda (nullifier0Seeds proof.input_nullifiers.val[1]!))
-  other1 : IsSystemAccount s (d.pda (nullifier1Seeds proof.input_nullifiers.val[0]!))
+    True on Solana: creating an account (`create_account`, `allocate`, `assign`) needs the new
+    address to sign. A derived address has no private key; it signs only when the program that
+    derives it calls `invoke_signed` with its seeds. So only the program creates accounts there,
+    and it assigns each to itself (Anchor's `init`). Anyone else can only send lamports there
+    (`transfer` needs no signature from the recipient). -/
+def PdasOnlyByProgram (d : CodeModel.Deployment) (s : CodeModel.State) : Prop :=
+  ∀ seeds, ((s (d.pda seeds)).owner = d.programId ∧ (s (d.pda seeds)).data.isProgramData = true) ∨
+    CodeModel.Initializable s (d.pda seeds)
 
 end Connection

@@ -57,16 +57,6 @@ theorem toy_admin_initialize (tk0 : admin.TreeTokenAccount) (c0 : admin.GlobalCo
 
 /-! ## The toy deployment and genesis -/
 
-/-- Toy PDA derivation: distinguishes the inputs the toy run uses (length, the slot byte of the
-    nullifier seeds, the last nullifier byte); marked 170 in byte 0 so it never is a `pk n`. -/
-def toyCPA (l : List U8) : Pubkey :=
-  Std.Array.make 32#usize ([170#u8, ⟨BitVec.ofNat 8 l.length⟩, l.getD 9 0#u8, l.getD 41 0#u8] ++
-    List.replicate 28 0#u8) (by simp)
-
-def toyD : Deployment :=
-  { programId := pk 100#u8, createProgramAddress := toyCPA, canonicalBump := fun _ => 255#u8,
-    crypto := toyCrypto, adminPubkey := none }
-
 def toyS0 : State := fun k =>
   if k = pk 1#u8 then { lamports := 1000#u64, owner := systemProgram, data := .empty } else Account.default
 
@@ -86,7 +76,7 @@ theorem toyGenesis : Genesis toyD.programId toyS0 := by
   intro k; unfold toyS0; split <;> decide
 
 /-- The toy program is not the System Program. -/
-theorem toyDeploymentFacts : DeploymentFacts toyD := ⟨by unfold toyD; decide +kernel⟩
+theorem toyProgramNotSystem : ProgramNotSystem toyD := by unfold ProgramNotSystem toyD; decide +kernel
 
 /-- Anchor's `init` succeeds on an empty address, paid by a system account that can pay. -/
 theorem initAccount_some {pid : Pubkey} {s : State} {mb : Nat → U64} {payer key : Pubkey}
@@ -258,8 +248,8 @@ theorem toy_init_ok : ∃ (s₁ : State) (tree : merkle_tree.MerkleTreeAccount)
       (toyD.canonicalBump merkleTreeSeeds) (toyD.canonicalBump treeTokenSeeds)
       (toyD.canonicalBump globalConfigSeeds))
   simp only at hr; subst hr
-  obtain ⟨hshape, hdr, hwr, hmr, hroots, hsubs⟩ :=
-    adminInitialize_ok toyHashesAgree.zeroBytesCanonical zeroTree_history zeroTree_subtrees hres
+  obtain ⟨hshape, hdr, hwr, hmr, hroots, hsubs, -, -, -⟩ :=
+    adminInitialize_ok toyHashesAgree.zeroBytes_canonical zeroTree_history zeroTree_subtrees hres
   set K := [toyInitA.treeAccount, toyInitA.treeTokenAccount, toyInitA.globalConfig,
       toyInitA.authority, toyInitA.systemProgram] with hK
   have t3 : TL K (fun k => (sC k).lamports.val) = TL K (fun k => (sB k).lamports.val) := by
@@ -396,8 +386,8 @@ def depA : TransactAccounts :=
 
 def two32 : Std.Array U8 32#usize := Std.Array.make 32#usize (List.replicate 31 0#u8 ++ [2#u8]) (by simp)
 theorem beNat_two32 : beNat two32 = 2 := by rfl
-theorem toF_two32 : toF two32 = 2 := by simp only [toF, beNat_two32]; rfl
-theorem canonical_two32 : Canonical two32 := by simp only [Canonical, beNat_two32]; decide
+theorem toF_two32 : toF two32 = 2 := by simp only [toF_def, beNat_two32]; rfl
+theorem canonical_two32 : Canonical two32 := by simp only [canonical_def, beNat_two32]; decide
 
 def depProof : transact.Proof := toyProof verifying_key.VERIFYING_KEY.vk_alpha_g1 two32
 
@@ -433,28 +423,30 @@ theorem dep_pre (s₂ : State) (tree : merkle_tree.MerkleTreeAccount) (config : 
       emptySlice emptySlice := by
   unfold HandlerPre
   have hn' : n + 2 < 18446744073709551616 := hn
-  obtain ⟨-, a02, -, a04, -, a12, -, a14, a0n1, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, hTP, -⟩ := dep_addr
+  obtain ⟨a01, a02, a03, a04, a11, a12, a13, a14, a0n1, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, hTP, -⟩ := dep_addr
+  obtain ⟨t1, -, c1, -⟩ := addr_facts
   have hfacts := handlerAddr_facts toyTx.signers depA depProof 2#i64 0#u64 emptySlice emptySlice s₂ 1#u64
-    tree config ∅ a0n1 a02 a12 (Ne.symm a04) (Ne.symm a14) (Ne.symm hTP)
+    tree config ∅ a0n1 a02 a12 (Ne.symm a04) (Ne.symm a14) (Ne.symm hTP) a01 a03 a11 a13 (Ne.symm t1)
+    (Ne.symm c1) rfl
   have hdec := decode_toInputs (signers := toyTx.signers) toyC depProof depA 2#i64 0#u64 emptySlice emptySlice
     toy_alpha_decodes rfl toy_zeros_decodes
   have hk0 : depProof.input_nullifiers.val[0]! = zeros32 := rfl
   have hk1 : depProof.input_nullifiers.val[1]! = one32 := rfl
   have h10 : (1 : Spec.F) ≠ 0 := by decide
-  have he : (toInputs toyTx.signers depA depProof 2#i64 0#u64 emptySlice emptySlice).extAmt = 2 := by simp [toInputs]
-  have hf : (toInputs toyTx.signers depA depProof 2#i64 0#u64 emptySlice emptySlice).f = 0 := by simp [toInputs]
+  have he : (toInputs ⟨⟨toyTx.signers⟩, depA, ⟨depProof, 2#i64, 0#u64, emptySlice, emptySlice⟩⟩).extAmt = 2 := by simp [toInputs]
+  have hf : (toInputs ⟨⟨toyTx.signers⟩, depA, ⟨depProof, 2#i64, 0#u64, emptySlice, emptySlice⟩⟩).f = 0 := by simp [toInputs]
   refine @Spec.transactPreconditions.mk _ (syscallGroups toyC) (inferInstanceAs (AddCommGroup Unit))
     (inferInstanceAs (Module Spec.F Unit))
     (inferInstanceAs (CommGroup Unit))
-    (syscallPairing toyC) (@Spec.Deployment.mk (syscallGroups toyC) (programKey toyC)) _ _
-    ?_ ?_ ?_ ?_ ⟨_, hdec, rfl⟩ ?_ ?_ hfacts.1 ?_ ?_ ?_ ?_ hfacts.2 ?_ ?_ ?_ ?_ ?_ ?_
+    (syscallPairing toyC) (programDeployment toyC) _ _
+    ?_ ?_ ?_ ?_ ⟨_, hdec, rfl⟩ ?_ ?_ hfacts.1 ?_ ?_ ?_ ?_ hfacts.2 ?_ ?_ ?_ ?_ ?_ ?_ (by unfold Spec.mintIsSol; rfl)
   · show Spec.rootBytesKnown (toTree tree) (toBytes one32.val)
     rw [rootBytesKnown_iff]
     refine ⟨canonical_one32, ⟨⟨0, ?_⟩, by rw [toF_one32]; exact h10⟩⟩
     show toF (tree.root_history.val[0]!) = toF one32
     rw [hT0]
-  · show (Spec.natOfLE (List.replicate 32 0) : Spec.F) = toF zeros32
-    rw [toF_zeros32]; rfl
+  · unfold Spec.externalDataBound Spec.externalDataHash
+    rw [toy_extDataHash]; rfl
   · unfold Spec.feeSufficient; rw [he, hf]; simp [handlerWorld, toConfig, hdr]
   · unfold Spec.pubAmtConsistent; rw [he, hf]
     refine ⟨fun _ => by omega, ?_⟩
@@ -558,14 +550,15 @@ theorem toy_deposit_ok_pool (s₁ : State) (tree : merkle_tree.MerkleTreeAccount
   have hpoolB : (sB tokenA).lamports.val = pl.val := by
     rw [show sB tokenA = s₁ tokenA from (kB tokenA hTP (Ne.symm a12)).trans (kA tokenA hTP (Ne.symm a02)), hK]
   -- the handler
-  obtain ⟨ap, env', tree', hh⟩ := handler_ok_exists toyCrypto toyC toyLaws toyHashesAgree toyHashesSucceed
-    toySyscalls toyKey depA sB 1#u64 tree config ∅ (handlerAddr depA) depProof 2#i64 0#u64 emptySlice emptySlice
+  obtain ⟨ap, env', tree', hh⟩ := handler_ok_exists toyD toyC toyLaws toyHashesAgree toyPoseidonSucceeds
+    toySha256Succeeds toySyscalls toyKey
+    depA sB 1#u64 tree config ∅ (handlerAddr depA) depProof 2#i64 0#u64 emptySlice emptySlice
     hshape hroots
     hsubs (by omega) (by omega) (by omega)
     ⟨by rw [oB, oA, hPs], by rw [dB, dA, hPs]; rfl⟩ toyFit (by simp) alpha_ne_zeros
     (dep_pre sB tree config hT0 hTn hTm hdr hpl lB' hpoolB)
   -- lamports are conserved
-  have hok := handler_ok toyCrypto _ _ _ _ _ _ _ _ _ _ _ _ _ hh
+  have hok := handler_ok toyCrypto toyCrypto.sha256 _ _ _ _ _ _ _ _ _ _ _ _ _ hh
   obtain ⟨v', -, hdep, -, -⟩ := hok.rent
   have hpos : (2#i64 : I64).val > 0 := by simp
   have he : (fun k => (env'.balances k).val) = payN (moveN (fun k => (sB k).lamports.val) depA.signer
@@ -675,6 +668,11 @@ theorem toy_deposit_ok (s₁ : State) (tree : merkle_tree.MerkleTreeAccount)
 
 def toyRent : Nat → U64 := fun _ => 1#u64
 
+/-- The runtime facts for the toy rent, on a 64-bit `usize` (not provable in Lean: `Usize.max`
+    depends on the platform running Lean). -/
+theorem toyRuntime (h64 : Usize.max = 2 ^ 64 - 1) : RuntimeFacts toyRent :=
+  ⟨h64, fun _ => by show 0 < (1#u64 : U64).val; decide⟩
+
 /-- `CircuitFacts` for one proof whose two input nullifiers differ (whether or not it verifies). -/
 theorem CircuitFacts.of_distinct {d : Deployment} {proof : zkcash_core.transact.Proof}
     (h : proof.input_nullifiers.val[0]! ≠ proof.input_nullifiers.val[1]!) : CircuitFacts d {proof} :=
@@ -685,8 +683,8 @@ theorem toy_execution :
       step toyD toyS0 toyTx (.initialize toyInitA) = .ok (s, []) ∧
       Genesis toyD.programId toyS0 ∧ toyD.programId ≠ systemProgram ∧
       step toyD s toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) = .ok (s', events) ∧
-      HashesAgree toyD.crypto ∧ SolanaFacts toyD toyTx ∧ (CryptoFacts toyD depProof ∧ CircuitFacts toyD {depProof}) ∧
-      SameRent toyRent toyTx := by
+      HashesAgree toyD ∧ PdasDoNotSign toyD toyTx.toTxContext ∧ (NewNullifierAddressesDiffer toyD depProof ∧ CircuitFacts toyD {depProof}) ∧
+      SameRent toyRent toyTx.minimumBalance := by
   obtain ⟨s₁, tree, token, config, hinit, hT, hK, hC, hP, hO, hshape, hroots, hsubs, hT0, hTn, hTb, hTm,
     hkb, hcb, hdr, hwr, hmr⟩ := toy_init_ok
   obtain ⟨s', events, -, hstep, -⟩ := toy_deposit_ok s₁ tree token config hT hK hC hP hO hshape hroots hsubs hT0
@@ -697,10 +695,11 @@ theorem toy_execution :
     show (do let s' ← execInitialize toyD toyS0 toyTx toyInitA; pure (s', [])) = _
     rw [hinit]; rfl
   refine ⟨s₁, s', events, hinitStep, toyGenesis, by unfold toyD; decide +kernel, hstep, toyHashesAgree,
-    ⟨?_⟩, ⟨⟨?_⟩, CircuitFacts.of_distinct ?_⟩, rfl⟩
+    ?_, ⟨?_, CircuitFacts.of_distinct ?_⟩, rfl⟩
   · intro seeds h
-    have e : toyCPA (toyD.pdaInput seeds) = pk 1#u8 := List.mem_singleton.mp h
+    have e : toyD.pda seeds = pk 1#u8 := List.mem_singleton.mp h
     have := congrArg (fun p : Pubkey => p.val[0]!) e
+    simp only [Addresses.pda, toyD] at this
     simp [toyCPA, pk] at this
   · intro x hx y hy hxy
     simp only [Set.mem_insert_iff, Set.mem_singleton_iff] at hx hy
@@ -713,11 +712,34 @@ theorem toy_execution :
 
 /-- The toy's three fixed addresses differ (the toy derivation tells their seeds apart by
     length). -/
-theorem toy_fixed_addresses : PdaCollisionFree toyD.toAddresses
+theorem toy_fixed_addresses : DistinctAddresses toyD.toAddresses
     {toyD.pdaInput merkleTreeSeeds, toyD.pdaInput treeTokenSeeds, toyD.pdaInput globalConfigSeeds} := by
   intro x hx y hy hxy
   simp only [Set.mem_insert_iff, Set.mem_singleton_iff] at hx hy
   rcases hx with rfl | rfl | rfl <;> rcases hy with rfl | rfl | rfl <;>
     first | rfl | (exfalso; revert hxy; unfold toyD; decide +kernel)
+
+/-- The example's addresses for the nullifiers `zeros32`, `one32` don't collide. -/
+theorem toy_addresses_01 : DistinctAddresses toyD.toAddresses
+    {toyD.pdaInput (nullifier0Seeds zeros32), toyD.pdaInput (nullifier1Seeds one32),
+     toyD.pdaInput (nullifier0Seeds one32), toyD.pdaInput (nullifier1Seeds zeros32),
+     toyD.pdaInput merkleTreeSeeds, toyD.pdaInput treeTokenSeeds, toyD.pdaInput globalConfigSeeds} := by
+  have hnd : ([toyD.pdaInput (nullifier0Seeds zeros32), toyD.pdaInput (nullifier1Seeds one32),
+      toyD.pdaInput (nullifier0Seeds one32), toyD.pdaInput (nullifier1Seeds zeros32),
+      toyD.pdaInput merkleTreeSeeds, toyD.pdaInput treeTokenSeeds,
+      toyD.pdaInput globalConfigSeeds].map toyD.createProgramAddress).Nodup := by
+    unfold toyD; decide +kernel
+  intro x hx y hy hxy
+  simp only [Set.mem_insert_iff, Set.mem_singleton_iff] at hx hy
+  exact List.inj_on_of_nodup_map hnd (by simpa using hx) (by simpa using hy) hxy
+
+theorem toy_collisionFree (pa : Std.Array U8 64#usize) (pubAmt : Std.Array U8 32#usize) :
+    TransactAddressesDistinct toyD (toyProof pa pubAmt) :=
+  toy_addresses_01.mono fun x hx => by
+    have e0 : (toyProof pa pubAmt).input_nullifiers.val[0]! = zeros32 := rfl
+    have e1 : (toyProof pa pubAmt).input_nullifiers.val[1]! = one32 := rfl
+    simp only [transactSeeds, fixedSeeds, e0, e1, Set.mem_union, Set.mem_insert_iff,
+      Set.mem_singleton_iff] at hx
+    rcases hx with (rfl | rfl | rfl) | (rfl | rfl | rfl | rfl) <;> simp
 
 end Connection.Toy

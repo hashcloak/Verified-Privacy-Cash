@@ -11,8 +11,8 @@ lamport as donated: `r.donated = 1` (`toy_donation_nonvacuous`). So the `.env` c
 
 namespace Connection.Toy
 open zkcash_core
-attribute [local instance] toyPoseidon toySpecSha toySpecGroups toySpecG1Group toySpecG2Group
-  toySpecG1Module toySpecG2Module toySpecGTGroup toySpecPairing toySpecDeployment
+attribute [local instance] toyPoseidon toySpecSha toySpecGroups toySpecG1Group
+  toySpecG1Module toySpecGTGroup toySpecPairing toySpecDeployment
 
 /-- **A donation is an outside action**: from a state where the pool holds 1 lamport and no
     account outside the program holds program data, raising the pool to 2 lamports is an
@@ -34,9 +34,9 @@ theorem toy_donation_env {s₁ : State} {token : admin.TreeTokenAccount}
     `run_connection`, and every spec run of it counts 1 lamport as donated. -/
 theorem toy_donation_nonvacuous :
     ∃ (s₀ s : State) (evs : List Event) (states : List State),
-      Genesis toyD.programId s₀ ∧ ExecutionPath toyD s₀ evs states s ∧ DeploymentFacts toyD ∧
-      PairingLaws toyC.e ∧ HashesAgree toyD.crypto ∧ ExecutionAssumptions toyD s₀ evs ∧
-      (∀ tx ix em, .program tx ix em ∈ evs → SameRent toyRent tx) ∧ Event.env ∈ evs ∧
+      Genesis toyD.programId s₀ ∧ ExecutionPath toyD s₀ evs states s ∧ ProgramNotSystem toyD ∧
+      PairingLaws toyC.e ∧ HashesAgree toyD ∧ ExecutionAssumptions toyD evs ∧ ¬ AddressCollision toyD (proofsIn evs) ∧
+      (∀ tx ix em, .program tx ix em ∈ evs → SameRent toyRent tx.minimumBalance) ∧ Event.env ∈ evs ∧
       ∀ params r, IsRunOf toyD toyRent s₀ evs states s params r → r.donated = 1 := by
   obtain ⟨s₁, tree, token, config, hinit, hT, hK, hC, hP, hO, hshape, hroots, hsubs, hT0, hTn, hTb, hTm,
     hkb, hcb, hdr, hwr, hmr⟩ := toy_init_ok
@@ -70,33 +70,39 @@ theorem toy_donation_nonvacuous :
     hshape hroots hsubs hT0 hTn hTb (hTm ▸ default_limit_ge2) hkb hcb hdr hwr hmr
   -- the facts the deposit needs, from the toy deposit after `initialize`
   obtain ⟨-, -, -, -, -, -, -, -, solana, depCrypto, -⟩ := toy_execution
-  refine ⟨toyS0, s₂, _, _, toyGenesis, .program h1 toyTx_rentPositive (.env henv (.program h2 toyTx_rentPositive (.nil _))), toyDeploymentFacts, toyLaws,
-    toyHashesAgree, ⟨toy_fixed_addresses, ?_⟩, ?_, by simp, ?_⟩
-  · intro pre post s tx ix em hsplit _
-    rcases toy_split3 hsplit with hev | hev | hev <;> cases hev
+  refine ⟨toyS0, s₂, _, _, toyGenesis, .program h1 toyTx_rentPositive (.env henv (.program h2 toyTx_rentPositive (.nil _))), toyProgramNotSystem, toyLaws,
+    toyHashesAgree, ExecutionFacts.toAssumptions ⟨toy_fixed_addresses, ?_⟩,
+    toy_noCollision _ (by
+      intro tx a proof ext fee out1 out2 em hm
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
+      rcases hm with h | h | h <;> cases h; simp), ?_, by simp, ?_⟩
+  · intro tx ix em hm
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
+    rcases hm with hev | hev | hev <;> cases hev
     · trivial
     · exact ⟨solana, depCrypto⟩
   · intro tx ix em hm
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
     rcases hm with h | h | h <;> cases h <;> rfl
   · intro params r hr
-    obtain ⟨hpool, -, hrent, -, -, -, -, hpl, hpb, -⟩ := hr
+    have hdep := hr.deployment
+    have htxs := hr.txs
+    have hpool := hdep.pool
+    have hrent := hdep.rentExemptMin
     -- the spec sees the pool's balance before the deposit: 2 lamports
-    have hv : (executionView toyD toyRent toyS0 [.program toyTx (.initialize toyInitA) [], .env,
-        .program toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) e₂]
-        [s₁, s₁d, s₂]).poolBeforeTx = [lamportsOf s₁d (poolAddr toyD)] := rfl
-    have hb : lamportsOf s₁d (poolAddr toyD) = 2 := by
-      unfold lamportsOf
-      rw [show poolAddr toyD = tokenA from rfl, hs₁d, State.set_same]; rfl
-    rw [hv, hb] at hpl hpb
-    have hlen : r.txs.length = 1 := hpl.symm
-    have h0 := hpb 0 (by rw [hlen]; exact Nat.one_pos)
-    simp only [List.getElem?_cons_zero, Option.some.injEq] at h0
+    -- the deposit is event 2, after the donation
+    have h0 := (hr.record (j := 0) (i := 2) rfl).1
+    have hs : stateAt toyS0 [s₁, s₁d, s₂] 2 = s₁d := rfl
+    have hb : s₁d.lamports toyD.poolAddress = 2 := by
+      unfold PrivacyCash.Model.State.lamports
+      rw [show toyD.poolAddress = tokenA from rfl, hs₁d, State.set_same]; rfl
+    rw [hs, hb] at h0
+    have hlen : r.txs.length = 1 := by rw [htxs]; rfl
     -- the spec's start world has the pool at its rent, 1 lamport
     unfold Spec.Run.donated Spec.Run.donations
     rw [hlen, Finset.sum_range_one, r.start]
     simp only [Spec.World.poolBalance, Spec.initWorld, Function.update_self]
     rw [← hpool] at h0
-    rw [← h0, hrent]; rfl
+    rw [h0, hrent]; rfl
 
 end Connection.Toy

@@ -1,97 +1,162 @@
 import PrivacyCash
 import Spec.Statements
-open Aeneas Aeneas.Std PrivacyCash.Model
+import Mathlib.Data.FinEnum
+open Aeneas Aeneas.Std
 
 /-! # Mapping: code-model values to spec values
 
-REVIEW SURFACE. The connection theorems (`Connection/ConnectionTheorems.lean`) say: when the
-code model accepts a `transact`, the spec's `transact` holds between the mapped worlds. Their
-meaning depends on these definitions, so each is short and should be checked by reading.
+REVIEW SURFACE. How code values, states and executions map to the spec's. The connection
+theorems (`ConnectionTheorems.lean`) mean what these definitions say, so each is short.
 
-A mapping that throws information away could make the theorem easier to prove but weaker.
-Every map below is injective on the values that matter, except where its comment says
-otherwise (field elements are read mod p).
+A map that loses information makes a theorem weaker. Every map below is injective on the
+values that matter, except where its docstring says otherwise (field elements are read mod p).
+
+Names say where they come from:
+- `Spec.…`: the spec.
+- `CodeModel.…`: core-model (aliases, below).
+- dot notation on a deployment `d` or a state `s` (`d.treeAddress`, `s.lamports k`): reads a
+  value out of the code model; defined here (see "Readers"), the result is still a code value.
+- no prefix: defined here, mostly maps between code and spec values (`toWorld`, `fromPubkey`, …).
 -/
+
+/-! ## `CodeModel`: short names for the code model
+
+Aliases for everything the review files use from core-model: its Solana and Anchor model
+(`PrivacyCash.Model`) and the extracted program (`zkcash_core`). So code types read
+`CodeModel.State` or `CodeModel.MerkleTreeAccount` next to the spec's `Spec.World`. They are
+names only, not new definitions. -/
+namespace CodeModel
+export PrivacyCash.Model (AltBn128 AltBn128Contracts CommitmentData Crypto Deployment EnvStep Event
+  Event.env Event.program Genesis Groth16Sound HoldsGlobalConfig HoldsTree HoldsTreeToken
+  Initializable InitializeAccounts Instruction PdaCollision Pubkey Reachable Run State
+  TransactAccounts TxContext TxEnv arkFr bn254ScalarModulus bytesAt globalConfigSeeds
+  globalConfigSpace leBytes32 merkleTreeSeeds nullifier0Seeds nullifier1Seeds nullifierAccountSpace
+  publicInputs step systemProgram treeAccountSpace treeTokenAccountSpace treeTokenSeeds zeroTree)
+export zkcash_core.merkle_tree (MerkleTreeAccount)
+export zkcash_core.admin (GlobalConfig)
+export zkcash_core.transact (Proof SOL_ADDRESS)
+export zkcash_core.utils (check_public_amount)
+export zkcash_core.verifying_key (VERIFYING_KEY)
+end CodeModel
+
+/-! ## Readers: values read out of the code model
+
+Defined here, not in core-model, but in core-model's namespaces so they read as dot notation
+on a deployment `d` or a state `s`. -/
+namespace PrivacyCash.Model
+
+/-- `d.treeAddress`: the SOL tree's address, the program's PDA with seeds `[b"merkle_tree"]`. -/
+def Deployment.treeAddress (d : CodeModel.Deployment) : CodeModel.Pubkey :=
+  d.pda CodeModel.merkleTreeSeeds
+/-- `d.poolAddress`: the pool's address, the program's PDA with seeds `[b"tree_token"]`. -/
+def Deployment.poolAddress (d : CodeModel.Deployment) : CodeModel.Pubkey :=
+  d.pda CodeModel.treeTokenSeeds
+/-- `d.configAddress`: the config's address, the program's PDA with seeds
+    `[b"global_config"]`. -/
+def Deployment.configAddress (d : CodeModel.Deployment) : CodeModel.Pubkey :=
+  d.pda CodeModel.globalConfigSeeds
+/-- `d.nullifierAddress i n`: the address of the nullifier account for nullifier `n` spent as
+    input `i`, the program's PDA with seeds `[b"nullifier0", n]` for input 0 and
+    `[b"nullifier1", n]` for input 1. -/
+def Deployment.nullifierAddress (d : CodeModel.Deployment) (i : Fin 2)
+    (n : Std.Array U8 32#usize) : CodeModel.Pubkey :=
+  d.pda (if i = 0 then CodeModel.nullifier0Seeds n else CodeModel.nullifier1Seeds n)
+
+/-- `s.treeAccount k`: the tree account data stored at `k`; the all-zero tree if `k` holds no
+    tree, which `WellFormed` rules out at the tree's address. -/
+def State.treeAccount (s : CodeModel.State) (k : CodeModel.Pubkey) :
+    CodeModel.MerkleTreeAccount :=
+  match (s k).data with
+  | .treeAccount t => t
+  | _ => CodeModel.zeroTree
+
+/-- `s.configAccount k`: the config account data stored at `k`; the all-zero config if `k`
+    holds no config. -/
+def State.configAccount (s : CodeModel.State) (k : CodeModel.Pubkey) :
+    CodeModel.GlobalConfig :=
+  match (s k).data with
+  | .globalConfig c => c
+  | _ => ⟨Std.Array.repeat 32#usize 0#u8, 0#u16, 0#u16, 0#u16, 0#u8⟩
+
+/-- `s.lamports k`: the lamport balance of the account at `k`, as a number. -/
+def State.lamports (s : CodeModel.State) (k : CodeModel.Pubkey) : ℕ := (s k).lamports.val
+
+/-- `d.IsNullifierAccount s k`: the account at `k` is owned by the program and holds
+    nullifier data. -/
+def Deployment.IsNullifierAccount (d : CodeModel.Deployment) (s : CodeModel.State)
+    (k : CodeModel.Pubkey) : Prop :=
+  (s k).owner = d.programId ∧ ∃ b, (s k).data = .nullifier b
+
+/-- Decides `d.IsNullifierAccount s k` by comparing the owner and casing on the account data. -/
+instance (d : CodeModel.Deployment) (s : CodeModel.State) (k : CodeModel.Pubkey) :
+    Decidable (d.IsNullifierAccount s k) := by
+  unfold Deployment.IsNullifierAccount
+  cases (s k).data <;> simp <;> infer_instance
+
+end PrivacyCash.Model
 
 namespace Connection
 
 /-! ## Values -/
 
-/-- `toF b`: a 32-byte public input or hash as a field element: read big-endian, reduced
-    mod p (as the verifier reads public inputs; it rejects values `≥ p`). -/
-def toF (b : Std.Array U8 32#usize) : Spec.F := (beNat b : Spec.F)
-
-/-- `Canonical b`: the big-endian value of `b` is below the field modulus, so `toF` loses
-    nothing. -/
-def Canonical (b : Std.Array U8 32#usize) : Prop := beNat b < bn254ScalarModulus
-
-/-- `toBytes l`: code bytes as the spec's bytes. -/
+/-- `toBytes l`: turns each code byte (`U8`) into its 8-bit vector, the spec's byte. -/
 def toBytes (l : List U8) : Spec.Bytes := l.map (·.bv)
 
-/-- `toSlice bs`: the spec's bytes as a code byte slice (empty if too long for a slice,
-    which no real transaction is). Used to say which bytes the code hashes. -/
-def toSlice (bs : Spec.Bytes) : Slice U8 :=
-  let l : List U8 := bs.map (fun b => ⟨b⟩)
-  if h : l.length ≤ Usize.max then Slice.from l h else Slice.from [] (by simp)
+/-- `toF b`: reads 32 bytes as a big-endian number and reduces it mod p, the spec's field
+    element. The reduction never applies
+    where `toF` is used: public inputs of an accepted `transact` are below p (the verifier
+    rejects the rest, `verifyProof_canonical`), and so are the tree's stored roots and subtrees
+    (invariant `WellFormed`). -/
+def toF (b : Std.Array U8 32#usize) : Spec.F :=
+  (Spec.natOfBE (toBytes b.val) : Spec.F)
 
-/-- `toPubkey k`: a Solana address as the spec's `Pubkey`, read little-endian, so that the
-    spec's serialization `PubkeyToBytes` gives back the address's own 32 bytes. -/
-def toPubkey (k : Pubkey) : Spec.Pubkey := BitVec.ofNat 256 (leNatOfList k.val)
+/-- `Canonical b`: the 32 bytes, read as a big-endian number, are below p, so `toF b`
+    does not reduce. With `toF b = x`, this is the spec's
+    `canonicalEncoding (toBytes b.val) x`. -/
+def Canonical (b : Std.Array U8 32#usize) : Prop :=
+  Spec.natOfBE (toBytes b.val) < Spec.p
 
-/-- `fromPubkey x`: the inverse of `toPubkey`. -/
-def fromPubkey (x : Spec.Pubkey) : Pubkey :=
-  Std.Array.from (leBytes32 x.toNat) (by simp [leBytes32])
-
-/-- `toArray n bs`: the spec's bytes as an `n`-byte code array, if there are exactly `n`. -/
+/-- `toArray n bs`: turns each spec byte into a code byte and packs them into an
+    `n`-byte code array; `none` if `bs` does not have exactly `n` bytes. -/
 def toArray (n : Usize) (bs : Spec.Bytes) : Option (Std.Array U8 n) :=
   if h : bs.length = n.val then
     some (Std.Array.from (bs.map (fun b => (⟨b⟩ : U8))) (by simp [h]))
   else none
 
-/-- Every address, as a finite set. -/
-def allPubkeys : Finset Spec.Pubkey := (Finset.univ : Finset (Fin (2^256))).image BitVec.ofFin
+/-- `bytesToArray n bs`: `toArray n bs`, or the all-zero array if `bs` does
+    not have exactly `n` bytes. -/
+def bytesToArray (n : Usize) (bs : Spec.Bytes) : Std.Array U8 n :=
+  (toArray n bs).getD (Std.Array.repeat n 0#u8)
+
+/-- `toPubkey k`: reads the 32 bytes of a Solana address as a little-endian 256-bit number,
+    the spec's address. `BitVec.ofNat` reduces mod 2^256, which never applies: a number read
+    from 32 bytes is at most 256^32 − 1 = 2^256 − 1 (all bytes 0xFF). -/
+def toPubkey (k : CodeModel.Pubkey) : Spec.Pubkey :=
+    BitVec.ofNat 256 (Spec.natOfLE (toBytes k.val))
+
+/-- `fromPubkey x`: writes the spec's address (a 256-bit number) as 32 little-endian
+    bytes, a Solana address. -/
+def fromPubkey (x : Spec.Pubkey) : CodeModel.Pubkey :=
+  Std.Array.from (CodeModel.leBytes32 x.toNat) (by simp [CodeModel.leBytes32])
 
 /-! ## The program's accounts -/
 
-/-- `treeAddr d`: the canonical address of the SOL tree. -/
-def treeAddr (d : Deployment) : Pubkey := d.pda merkleTreeSeeds
-/-- `poolAddr d`: the canonical address of the pool. -/
-def poolAddr (d : Deployment) : Pubkey := d.pda treeTokenSeeds
-/-- `configAddr d`: the canonical address of the config. -/
-def configAddr (d : Deployment) : Pubkey := d.pda globalConfigSeeds
-
-/-- `treeAt s k`: the tree stored at `k` (all zeros if there is none; `WellFormed` rules
-    that out). -/
-def treeAt (s : State) (k : Pubkey) : zkcash_core.merkle_tree.MerkleTreeAccount :=
-  match (s k).data with
-  | .treeAccount t => t
-  | _ => zeroTree
-
-/-- `configAt s k`: the config stored at `k` (all zeros if there is none). -/
-def configAt (s : State) (k : Pubkey) : zkcash_core.admin.GlobalConfig :=
-  match (s k).data with
-  | .globalConfig c => c
-  | _ => ⟨Std.Array.repeat 32#usize 0#u8, 0#u16, 0#u16, 0#u16, 0#u8⟩
-
-/-- `TreeShape t`: the tree account fields `initialize` sets and no instruction changes:
-    height 26, a history of 100 roots, and a current root index inside it. -/
-def TreeShape (t : zkcash_core.merkle_tree.MerkleTreeAccount) : Prop :=
-  t.height.val = 26 ∧ t.root_history_size.val = 100 ∧ t.root_index.val < 100
-
-/-- `toTree t`: the tree account as the spec's tree, field by field. `rootIndex` is reduced
-    mod 100; `WellFormed` says it is already below 100. -/
-def toTree (t : zkcash_core.merkle_tree.MerkleTreeAccount) : Spec.Tree where
+/-- `toTree t`: from the tree account `t`, creates a spec tree. The root index is reduced
+    mod 100, which never applies: `WellFormed` keeps it below 100. -/
+def toTree (t : CodeModel.MerkleTreeAccount) : Spec.Tree where
   nextIndex := t.next_index.val
   subtrees i := toF (t.subtrees.val[i.val]!)
   root := toF t.root
   history i := toF (t.root_history.val[i.val]!)
-  rootIndex := ⟨t.root_index.val % 100, Nat.mod_lt _ (by decide)⟩
+  rootIndex := Fin.ofNat 100 t.root_index.val
 
-/-- `toConfig c t`: the config as the spec's config, field by field. The deposit limit and
-    its authority live on the tree account `t` in the code. -/
-def toConfig (c : zkcash_core.admin.GlobalConfig)
-    (t : zkcash_core.merkle_tree.MerkleTreeAccount) : Spec.config where
+/-- `toConfig c t`: from the config account `c` and the tree account `t`, creates a spec
+    config. -/
+def toConfig (c : CodeModel.GlobalConfig)
+    (t : CodeModel.MerkleTreeAccount) : Spec.config where
+  -- In the code, only the config account's authority may change the fee settings
   authority := toPubkey c.authority
+  -- In the code, only the tree account's authority may change the deposit limit
   limitAuthority := toPubkey t.authority
   depositFeeRate := c.deposit_fee_rate.val
   withdrawalFeeRate := c.withdrawal_fee_rate.val
@@ -100,341 +165,408 @@ def toConfig (c : zkcash_core.admin.GlobalConfig)
 
 /-! ## Worlds -/
 
-/-- `lamportsOf s k`: the balance of account `k`: its lamports. -/
-def lamportsOf (s : State) (k : Pubkey) : ℕ := (s k).lamports.val
+/-- `nullifierAccountsOf d s`: collects every address `x` whose account (at
+    `fromPubkey x`) is a nullifier account of the program in `s`. -/
+def nullifierAccountsOf (d : CodeModel.Deployment) (s : CodeModel.State) :
+    Finset Spec.Pubkey :=
+  -- From every possible spec address we want the ones that are a nullifier account
+  Finset.univ.filter fun x => d.IsNullifierAccount s (fromPubkey x)
 
-/-- `IsNullifierAccount d s k`: the account at `k` is one of the program's nullifier accounts:
-    the program owns it and it holds nullifier data. -/
-def IsNullifierAccount (d : Deployment) (s : State) (k : Pubkey) : Prop :=
-  (s k).owner = d.programId ∧ ∃ b, (s k).data = .nullifier b
-
-instance (d : Deployment) (s : State) (k : Pubkey) : Decidable (IsNullifierAccount d s k) := by
-  unfold IsNullifierAccount
-  cases (s k).data <;> simp <;> infer_instance
-
-/-- `nullifierAccountsOf d s`: the addresses of the program's nullifier accounts in `s`. -/
-def nullifierAccountsOf (d : Deployment) (s : State) : Finset Spec.Pubkey :=
-  allPubkeys.filter fun x => IsNullifierAccount d s (fromPubkey x)
-
-/-- `nullifierAddrOf d i b`: the address of the nullifier account for the nullifier with bytes
-    `b`, spent as input `i`: the program's PDA with seeds `[b"nullifier0", b]` or
-    `[b"nullifier1", b]`. Bytes that are not 32 long are no nullifier; they get address `0`. -/
-def nullifierAddrOf (d : Deployment) (i : Fin 2) (b : Spec.Bytes) : Spec.Pubkey :=
-  match toArray 32#usize b with
-  | some n => toPubkey (d.pda (if i = 0 then nullifier0Seeds n else nullifier1Seeds n))
-  | none => 0
-
-/-- `toWorld d rent s`: the spec world the chain state `s` stands for.
-    - **`rent`:** Solana's rent-exempt minimum for an account of a given size. The spec fixes
-      the two amounts it uses; `SameRent` assumes each transaction sees this.
-    - **nullifier accounts:** the program's nullifier accounts in `s`, at the program's PDAs. -/
-def toWorld (d : Deployment) (rent : Nat → U64) (s : State) : Spec.World where
+/-- `toWorld d rent s`: from the chain state `s`, creates a spec world. `rent` is Solana's
+    rent-exempt minimum per account size (`SameRent` ties it to each transaction). -/
+def toWorld (d : CodeModel.Deployment) (rent : Nat → U64) (s : CodeModel.State) :
+    Spec.World where
   state :=
-    { tree := toTree (treeAt s (treeAddr d))
+    { tree := toTree (s.treeAccount d.treeAddress) -- ok
       nullifierAccounts := nullifierAccountsOf d s
-      pool := toPubkey (poolAddr d)
-      nullifierAddr := nullifierAddrOf d
-      config := toConfig (configAt s (configAddr d)) (treeAt s (treeAddr d)) }
-  balances x := lamportsOf s (fromPubkey x)
-  rentExemptMin := (rent treeTokenAccountSpace).val
-  nullifierRent := (rent nullifierAccountSpace).val
+      pool := toPubkey d.poolAddress
+      nullifierAddr i b :=
+        match toArray 32#usize b with
+        -- `b` is a nullifier (32 bytes): the address of its PDA
+        | some n => toPubkey (d.nullifierAddress i n)
+        -- `b` is not 32 bytes long: does not occur, since `transact` requires 32-byte public
+        -- inputs (precondition `canonicalInputs`) and the code's nullifiers are `[u8; 32]`
+        | none => 0
+      config := toConfig (s.configAccount d.configAddress)
+                  (s.treeAccount d.treeAddress)
+      treeAccount := toPubkey d.treeAddress
+      configAccount := toPubkey d.configAddress }
+  balances x := s.lamports (fromPubkey x)
+  -- The lamports the pool must keep to stay on chain (Solana's minimum for the pool's size)
+  rentExemptMin := (rent CodeModel.treeTokenAccountSpace).val
+  -- The lamports a new nullifier account must hold (Solana's minimum for its size)
+  nullifierRent := (rent CodeModel.nullifierAccountSpace).val
 
 /-! ## Transactions -/
 
-/-- `toInputs signers a proof extAmount fee out1 out2`: the spec inputs of a `transact`
-    instruction in a transaction signed by `signers`.
-    The seven public inputs are given twice, as the spec's field elements (`toF`) and as the
-    sender's 32 bytes (`pubInputBytes`, in circuit order); the proof is the sender's bytes of
-    its three points. -/
-def toInputs (signers : List Pubkey) (a : TransactAccounts) (proof : zkcash_core.transact.Proof) (extAmount : I64)
-    (fee : U64) (out1 out2 : Slice U8) : Spec.TxInputs where
-  R := toF proof.root
-  pubAmt := toF proof.public_amount
-  extDataHash := toF proof.ext_data_hash
-  k0 := toF proof.input_nullifiers.val[0]!
-  k1 := toF proof.input_nullifiers.val[1]!
-  outC0 := toF proof.output_commitments.val[0]!
-  outC1 := toF proof.output_commitments.val[1]!
-  extAmt := extAmount.val
-  f := fee.val
-  s := toPubkey a.signer
-  signers := signers.map toPubkey
-  A := toPubkey a.recipient
-  t := toPubkey a.feeRecipientAccount
-  encOut0 := toBytes out1.val
-  encOut1 := toBytes out2.val
-  π := ⟨toBytes proof.proof_a.val, toBytes proof.proof_b.val, toBytes proof.proof_c.val⟩
-  mintAddr := toPubkey zkcash_core.transact.SOL_ADDRESS
-  pubInputBytes i := toBytes ((publicInputs proof)[i.val]!).val
+/-- `TransactArgs`: the instruction data of a `transact`, the arguments of the program's
+    `transact` after `ctx` (lib.rs): the proof, the external amount and fee
+    (`ext_data_minified`), and the two encrypted outputs. -/
+structure TransactArgs where
+  /-- The Groth16 proof and its seven public inputs, as bytes. -/
+  proof : CodeModel.Proof
+  /-- The external amount: positive deposits, negative withdraws. -/
+  extAmount : I64
+  /-- The relayer's fee. -/
+  fee : U64
+  /-- The first encrypted output. -/
+  encryptedOutput1 : Slice U8
+  /-- The second encrypted output. -/
+  encryptedOutput2 : Slice U8
 
-/-! ## Executions -/
+/-- `TransactTx`: a `transact` as the sender sends it: everything the sender chooses. -/
+structure TransactTx where
+  /-- Who signs. -/
+  ctx : CodeModel.TxContext
+  /-- The accounts listed (the program's `Context<Transact>`). -/
+  accounts : CodeModel.TransactAccounts
+  /-- The instruction data. -/
+  args : TransactArgs
 
-/-- `stepTxs tx ix`: the spec transactions of one instruction in transaction `tx`: a `transact`'s
-    mapped inputs; nothing for the other instructions (they are changes between transactions in
-    the spec). -/
-def stepTxs (tx : TxEnv) : Instruction → List Spec.TxInputs
-  | .transact a proof ext fee out1 out2 => [toInputs tx.signers a proof ext fee out1 out2]
-  | _ => []
+/-- `tx.instruction`: packs `tx`'s accounts and instruction data into the code model's
+    `transact` instruction. -/
+abbrev TransactTx.instruction (tx : TransactTx) : CodeModel.Instruction :=
+  .transact tx.accounts tx.args.proof tx.args.extAmount tx.args.fee tx.args.encryptedOutput1
+    tx.args.encryptedOutput2
 
-/-- `runTxs evs`: the spec transactions of an execution, in order. -/
-def runTxs : List Event → List Spec.TxInputs
-  | [] => []
-  | .program tx ix _ :: es => stepTxs tx ix ++ runTxs es
-  | .env :: es => runTxs es
+/-- `tx.env sysvarRent`: builds the environment the runtime gives `tx`: its signers, and the
+    `Rent` sysvar as the runtime reads it (`sysvarRent`), which the sender does not choose. -/
+abbrev TransactTx.env (tx : TransactTx) (sysvarRent : Option (Nat → U64)) : CodeModel.TxEnv :=
+  { tx.ctx with minimumBalance := sysvarRent }
 
-/-- `ExecutionPath d s evs states s'`: the execution `evs` from `s` to `s'`, with the state after
-    each event (`states`). Core-model's `Run` with the states recorded: `Run` is a `Prop` and so
-    can't tell a theorem which states it went through. The steps and their premises are `Run`'s
-    (`execution_path_iff_run`, `ConnectionTheorems.lean`). -/
-inductive ExecutionPath (d : Deployment) : State → List Event → List State → State → Prop where
-  | nil (s : State) : ExecutionPath d s [] [] s
-  | program {s s' s'' : State} {tx : TxEnv} {ix : Instruction} {emitted : List CommitmentData}
-      {events : List Event} {states : List State} :
-      step d s tx ix = .ok (s', emitted) → tx.RentPositive → ExecutionPath d s' events states s'' →
-        ExecutionPath d s (.program tx ix emitted :: events) (s' :: states) s''
-  | env {s s' s'' : State} {events : List Event} {states : List State} :
-      EnvStep d.programId s s' → ExecutionPath d s' events states s'' →
+/-- `toInputs tx`: from a `transact` as sent, creates spec transaction inputs. `toF` reduces
+    mod p, which never applies on an accepted `transact`: the verifier rejects public inputs
+    `≥ p` (`verifyProof_canonical`). -/
+def toInputs (tx : TransactTx) : Spec.TxInputs where
+  R := toF tx.args.proof.root
+  pubAmt := toF tx.args.proof.public_amount
+  extDataHash := toF tx.args.proof.ext_data_hash
+  k0 := toF tx.args.proof.input_nullifiers.val[0]!
+  k1 := toF tx.args.proof.input_nullifiers.val[1]!
+  outC0 := toF tx.args.proof.output_commitments.val[0]!
+  outC1 := toF tx.args.proof.output_commitments.val[1]!
+  extAmt := tx.args.extAmount.val
+  f := tx.args.fee.val
+  -- the account listed as `signer`, which pays deposits
+  s := toPubkey tx.accounts.signer
+  -- the keys that signed the transaction, as the runtime reports them
+  signers := tx.ctx.signers.map toPubkey
+  A := toPubkey tx.accounts.recipient
+  t := toPubkey tx.accounts.feeRecipientAccount
+  encOut0 := toBytes tx.args.encryptedOutput1.val
+  encOut1 := toBytes tx.args.encryptedOutput2.val
+  π := ⟨toBytes tx.args.proof.proof_a.val, toBytes tx.args.proof.proof_b.val,
+    toBytes tx.args.proof.proof_c.val⟩
+  mintAddr := toPubkey CodeModel.SOL_ADDRESS
+  pubInputBytes i := toBytes ((CodeModel.publicInputs tx.args.proof)[i.val]!).val
+
+/-- `Accepts d s txEnv ix`: `step` runs instruction `ix` in the transaction environment `txEnv`
+    on the chain state `s` without error. -/
+def Accepts (d : CodeModel.Deployment) (s : CodeModel.State) (txEnv : CodeModel.TxEnv)
+    (ix : CodeModel.Instruction) : Prop :=
+  ∃ s' emitted, CodeModel.step d s txEnv ix = .ok (s', emitted)
+
+/-! ## Spec proofs as code proofs (completeness over runs)
+
+The other direction: a spec run's transaction becomes the code's proof argument. `toInputs`
+undoes this (proved under the spec's preconditions); `run_complete_except_L1_A0` names the
+address collisions of the code proofs obtained this way. -/
+
+/-- `fromSpecProof inputs`: from spec transaction inputs, creates the code's proof argument. -/
+def fromSpecProof (inputs : Spec.TxInputs) : CodeModel.Proof where
+  proof_a := bytesToArray 64#usize inputs.π.A
+  proof_b := bytesToArray 128#usize inputs.π.B
+  proof_c := bytesToArray 64#usize inputs.π.C
+  root := bytesToArray 32#usize (inputs.pubInputBytes 0)
+  public_amount := bytesToArray 32#usize (inputs.pubInputBytes 1)
+  ext_data_hash := bytesToArray 32#usize (inputs.pubInputBytes 2)
+  input_nullifiers := Std.Array.make 2#usize
+    [bytesToArray 32#usize (inputs.pubInputBytes 3), bytesToArray 32#usize (inputs.pubInputBytes 4)]
+  output_commitments := Std.Array.make 2#usize
+    [bytesToArray 32#usize (inputs.pubInputBytes 5), bytesToArray 32#usize (inputs.pubInputBytes 6)]
+
+/-! ## Executions
+
+An execution from `s₀` is its events `evs` (core-model's `Event`: a program instruction in a
+transaction, or an outside action) and the chain state after each (`states`, recorded by
+`ExecutionPath`). Positions count from 0: event `i` takes the chain from `stateAt s₀ states i`
+to `stateAt s₀ states (i+1)`. -/
+
+/-- `ExecutionPath d s evs states s'`: core-model's `Run` from `s` to `s'` over the events
+    `evs`, also recording the chain state after each event in `states` (a `Prop` such as `Run`
+    cannot hand the states back). Same steps and premises as `Run` (`execution_path_iff_run`). -/
+inductive ExecutionPath (d : CodeModel.Deployment) :
+    CodeModel.State → List CodeModel.Event → List CodeModel.State → CodeModel.State → Prop where
+  | nil (s : CodeModel.State) : ExecutionPath d s [] [] s
+  | program {s s' s'' : CodeModel.State} {txEnv : CodeModel.TxEnv} {ix : CodeModel.Instruction}
+      {emitted : List CodeModel.CommitmentData} {events : List CodeModel.Event}
+      {states : List CodeModel.State} :
+      CodeModel.step d s txEnv ix = .ok (s', emitted) → txEnv.RentPositive →
+      ExecutionPath d s' events states s'' →
+        ExecutionPath d s (.program txEnv ix emitted :: events) (s' :: states) s''
+  | env {s s' s'' : CodeModel.State} {events : List CodeModel.Event}
+      {states : List CodeModel.State} :
+      CodeModel.EnvStep d.programId s s' → ExecutionPath d s' events states s'' →
         ExecutionPath d s (.env :: events) (s' :: states) s''
 
-/-- `toAdminChange d before tx ix`: the spec's admin change for instruction `ix`, in a transaction
-    `tx` run on state `before`, with the signers of `tx`. A setting `update_global_config` isn't
-    given keeps its value in `before`. `none` for the other instructions. -/
-def toAdminChange (d : Deployment) (before : State) (tx : TxEnv) :
-    Instruction → Option Spec.AdminChange
+/-- `stateAt s₀ states i`: looks up the chain state after the first `i` events: `s₀` for
+    `i = 0`, else entry `i - 1` of `states`. -/
+def stateAt (s₀ : CodeModel.State) (states : List CodeModel.State) (i : ℕ) : CodeModel.State :=
+  (s₀ :: states).getD i s₀
+
+/-- `stepTxs txEnv ix`: lists the spec transactions of instruction `ix`: for a `transact`, its
+    inputs (`toInputs`); for any other instruction none, since the spec treats them as changes
+    between transactions. -/
+def stepTxs (txEnv : CodeModel.TxEnv) : CodeModel.Instruction → List Spec.TxInputs
+  | .transact a proof ext fee out1 out2 => [toInputs ⟨txEnv.toTxContext, a, ⟨proof, ext, fee, out1, out2⟩⟩]
+  | _ => []
+
+/-- `runTxs evs`: collects the spec transactions of the program instructions in `evs`, in order
+    (`stepTxs`); outside actions contribute none. -/
+def runTxs : List CodeModel.Event → List Spec.TxInputs
+  | [] => []
+  | .program txEnv ix _ :: es => stepTxs txEnv ix ++ runTxs es
+  | .env :: es => runTxs es
+
+/-- `IsInitializeAt evs k txEnv a`: event `k` is the program instruction `initialize` with
+    accounts `a`, run in the transaction environment `txEnv`. -/
+def IsInitializeAt (evs : List CodeModel.Event) (k : ℕ) (txEnv : CodeModel.TxEnv)
+    (a : CodeModel.InitializeAccounts) : Prop :=
+  ∃ em, evs[k]? = some (.program txEnv (.initialize a) em)
+
+/-- `toAdminChange d before txEnv ix`: from the admin instruction `ix`, creates a spec admin
+    change; `none` for other instructions. A fee setting `update_global_config` omits keeps its
+    value in the chain state `before` the instruction. -/
+def toAdminChange (d : CodeModel.Deployment) (before : CodeModel.State) (txEnv : CodeModel.TxEnv) :
+    CodeModel.Instruction → Option Spec.AdminChange
   | .updateDepositLimit _ newLimit =>
-    some ⟨tx.signers.map toPubkey, .depositLimit newLimit.val⟩
+    some ⟨txEnv.signers.map toPubkey, .depositLimit newLimit.val⟩
   | .updateGlobalConfig _ dep wd margin =>
-    let c := configAt before (configAddr d)
-    some ⟨tx.signers.map toPubkey, .feeSettings (dep.getD c.deposit_fee_rate).val
+    let c := before.configAccount d.configAddress
+    some ⟨txEnv.signers.map toPubkey, .feeSettings (dep.getD c.deposit_fee_rate).val
       (wd.getD c.withdrawal_fee_rate).val (margin.getD c.fee_error_margin).val⟩
   | _ => none
 
-/-- What `initialize` set up: its signing authority, the signers of its transaction, and the
-    spec world of the state it left. -/
-structure InitRecord where
-  initializer : Spec.Pubkey
-  signers : List Spec.Pubkey
-  world : Spec.World
+/-- `adminChangesBefore d s₀ evs states i`: collects the admin changes (`toAdminChange`) of the
+    admin instructions among the first `i` events, in order, each read on the chain state just
+    before it. -/
+def adminChangesBefore (d : CodeModel.Deployment) (s₀ : CodeModel.State) (evs : List CodeModel.Event)
+    (states : List CodeModel.State) (i : ℕ) : List Spec.AdminChange :=
+  (List.range i).flatMap fun k =>
+    match evs.getD k .env with
+    | .program txEnv ix _ => (toAdminChange d (stateAt s₀ states k) txEnv ix).toList
+    | .env => []
 
-/-- What the spec sees of an execution so far.
+/-- `Initialized d s`: `initialize` has run: the program holds its tree, pool and config at
+    their canonical addresses. -/
+def Initialized (d : CodeModel.Deployment) (s : CodeModel.State) : Prop :=
+  (∃ t, CodeModel.HoldsTree d.programId s d.treeAddress t) ∧
+    (∃ p, CodeModel.HoldsTreeToken d.programId s d.poolAddress p) ∧
+    (∃ c, CodeModel.HoldsGlobalConfig d.programId s d.configAddress c)
 
-    - `init`: what `initialize` set up, once it has run;
-    - `closedGaps`: for each transaction so far, the admin changes since the one before it;
-    - `openGap`: the admin changes since the last transaction;
-    - `poolBeforeTx`: just before each transaction so far, the chain's pool balance;
-    - `afterTx`: after each transaction so far, the chain's spec state and pool balance. -/
-structure ExecutionView where
-  init : Option InitRecord := none
-  closedGaps : List (List Spec.AdminChange) := []
-  openGap : List Spec.AdminChange := []
-  poolBeforeTx : List ℕ := []
-  afterTx : List (Spec.State × ℕ) := []
+/-- `NoProgramAccounts d s`: at no address does the program hold a tree, pool, config or
+    nullifier account in `s`. -/
+def NoProgramAccounts (d : CodeModel.Deployment) (s : CodeModel.State) : Prop :=
+  (∀ k t, ¬ CodeModel.HoldsTree d.programId s k t) ∧
+    (∀ k p, ¬ CodeModel.HoldsTreeToken d.programId s k p) ∧
+    (∀ k c, ¬ CodeModel.HoldsGlobalConfig d.programId s k c) ∧
+    ∀ k, ¬ d.IsNullifierAccount s k
 
-/-- `v.afterEvent d rent before e after`: the view `v` after event `e` took the chain from
-    `before` to `after`. Outside actions change nothing the view records. -/
-def ExecutionView.afterEvent (v : ExecutionView) (d : Deployment) (rent : Nat → U64)
-    (before : State) (e : Event) (after : State) : ExecutionView :=
-  match e with
-  | .env => v
-  | .program tx ix _ =>
-    match ix with
-    | .initialize a =>
-      { v with init := some ⟨toPubkey a.authority, tx.signers.map toPubkey,
-          toWorld d rent after⟩ }
-    | .transact .. =>
-      { v with
-        closedGaps := v.closedGaps ++ [v.openGap]
-        openGap := []
-        poolBeforeTx := v.poolBeforeTx ++ [lamportsOf before (poolAddr d)]
-        afterTx := v.afterTx ++ [((toWorld d rent after).state,
-          lamportsOf after (poolAddr d))] }
-    | _ => { v with openGap := v.openGap ++ (toAdminChange d before tx ix).toList }
+/-! ## Executions as spec runs -/
 
-/-- `v.afterEvents d rent before evs states`: the view `v` after the events `evs`, from `before`
-    through `states`. -/
-def ExecutionView.afterEvents (d : Deployment) (rent : Nat → U64) :
-    ExecutionView → State → List Event → List State → ExecutionView
-  | v, before, e :: es, after :: states =>
-    ExecutionView.afterEvents d rent (v.afterEvent d rent before e after) after es states
-  | v, _, _, _ => v
+/-- `RunOfDeployment d rent params`: the spec run's start parameters `params` use this
+    deployment's addresses, its rents (`rent` at each account's size) and its admin key. The
+    rest (config, balances, initializer, signers) is free. -/
+structure RunOfDeployment (d : CodeModel.Deployment) (rent : Nat → U64)
+    (params : Spec.InitParams) : Prop where
+  /-- The pool is the deployment's pool. -/
+  pool : params.pool = toPubkey d.poolAddress
+  /-- The nullifier accounts are at the program's derived addresses, as `toWorld` reads them
+      (the same in every state `s`). -/
+  nullifierAddr : ∀ s, params.nullifierAddr = (toWorld d rent s).state.nullifierAddr
+  /-- The tree's account is the deployment's. -/
+  treeAccount : params.treeAccount = toPubkey d.treeAddress
+  /-- The config's account is the deployment's. -/
+  configAccount : params.configAccount = toPubkey d.configAddress
+  /-- The pool's rent is Solana's for its size. -/
+  rentExemptMin : params.rentExemptMin = (rent CodeModel.treeTokenAccountSpace).val
+  /-- A nullifier account's rent is Solana's for its size. -/
+  nullifierRent : params.nullifierRent = (rent CodeModel.nullifierAccountSpace).val
+  /-- The tree account's rent is Solana's for its size. -/
+  treeRent : params.treeRent = (rent CodeModel.treeAccountSpace).val
+  /-- The config account's rent is Solana's for its size. -/
+  configRent : params.configRent = (rent CodeModel.globalConfigSpace).val
+  /-- The admin key is the deployment's (`ADMIN_PUBKEY`). -/
+  admin : params.admin = d.adminPubkey.map toPubkey
 
-/-- `executionView d rent s₀ evs states`: what the spec sees of the whole execution. -/
-def executionView (d : Deployment) (rent : Nat → U64) (s₀ : State) (evs : List Event)
-    (states : List State) : ExecutionView :=
-  ExecutionView.afterEvents d rent {} s₀ evs states
+/-- `StartsFromInit params txEnv a w`: the spec run's start parameters `params` are what
+    `initialize` (accounts `a`, transaction environment `txEnv`) set up, with `w` the spec world
+    right after it. -/
+structure StartsFromInit (params : Spec.InitParams) (txEnv : CodeModel.TxEnv)
+    (a : CodeModel.InitializeAccounts) (w : Spec.World) : Prop where
+  /-- The initializer is the authority `initialize` named. -/
+  initializer : params.initializer = toPubkey a.authority
+  /-- The signers are those of `initialize`'s transaction. -/
+  signers : params.signers = txEnv.signers.map toPubkey
+  /-- The config is the one `initialize` wrote. -/
+  config : params.cfg = w.state.config
+  /-- Every account starts with its balance right after `initialize`, except the three it
+      creates, whose balances (their rents) `initWorld` sets itself. -/
+  balances : ∀ x ∉ ({params.pool, params.treeAccount, params.configAccount} : Set Spec.Pubkey),
+    params.balances x = w.balances x
 
-/-- `Initialized d s`: the program holds its tree, pool and config at their canonical
-    addresses. -/
-def Initialized (d : Deployment) (s : State) : Prop :=
-  (∃ t, HoldsTree d.programId s (treeAddr d) t) ∧ (∃ p, HoldsTreeToken d.programId s (poolAddr d) p) ∧
-    (∃ c, HoldsGlobalConfig d.programId s (configAddr d) c)
+/-- `TxRecord`: what the spec sees of one transaction: its inputs, the pool balance just before
+    it, the state and the pool balance right after it, and all admin changes before it. Other
+    balances are not recorded: the spec's `transact` sets them, and the next change between
+    transactions starts from the chain's. -/
+structure TxRecord where
+  /-- The transaction's inputs. -/
+  inputs : Spec.TxInputs
+  /-- The pool's balance just before the transaction. -/
+  poolBefore : ℕ
+  /-- The spec state just after the transaction. -/
+  stateAfter : Spec.State
+  /-- The pool's balance just after the transaction. -/
+  poolAfter : ℕ
+  /-- All admin changes before the transaction, in order. -/
+  adminChangesBefore : List Spec.AdminChange
 
-/-- `NoProgramAccounts d s`: no account is the program's tree, pool, config or nullifier
-    account. -/
-def NoProgramAccounts (d : Deployment) (s : State) : Prop :=
-  (∀ k t, ¬ HoldsTree d.programId s k t) ∧ (∀ k p, ¬ HoldsTreeToken d.programId s k p) ∧
-    (∀ k c, ¬ HoldsGlobalConfig d.programId s k c) ∧ ∀ k, ¬ IsNullifierAccount d s k
+/-- `executionTxRecords d rent s₀ evs states`: collects the record of each accepted `transact`
+    of the execution, in order. For the `transact` at position `i`: its inputs (`toInputs`), the
+    pool balance before it, the spec state and pool balance after it (read from `stateAt`), and
+    the admin changes of the events before it (`adminChangesBefore`). -/
+def executionTxRecords (d : CodeModel.Deployment) (rent : Nat → U64) (s₀ : CodeModel.State)
+    (evs : List CodeModel.Event) (states : List CodeModel.State) : List TxRecord :=
+  (List.range evs.length).flatMap fun i =>
+    match evs[i]? with
+    | some (CodeModel.Event.program txEnv (.transact a proof ext fee out1 out2) _) =>
+      [{ inputs := toInputs ⟨txEnv.toTxContext, a, ⟨proof, ext, fee, out1, out2⟩⟩
+         poolBefore := (stateAt s₀ states i).lamports d.poolAddress
+         stateAfter := (toWorld d rent (stateAt s₀ states (i+1))).state
+         poolAfter := (stateAt s₀ states (i+1)).lamports d.poolAddress
+         adminChangesBefore := adminChangesBefore d s₀ evs states i }]
+    | _ => []
 
 section
 variable [Spec.PoseidonHashes] [Spec.Sha] [Spec.Groups] [AddCommGroup Spec.G1]
-  [Module Spec.F Spec.G1] [AddCommGroup Spec.G2] [Module Spec.F Spec.G2]
+  [Module Spec.F Spec.G1]
   [CommGroup Spec.GT] [Spec.Pairing] [Spec.Deployment]
 
-/-- `RunMatchesView d rent v txs s params r`: the spec run `r` is what the view `v` records,
-    and it ends at the code state `s`. The conditions are explained at `IsRunOf`, which applies this
-    to a whole execution. -/
-def RunMatchesView (d : Deployment) (rent : Nat → U64) (v : ExecutionView)
-    (txs : List Spec.TxInputs) (s : State) (params : Spec.InitParams)
-    (r : Spec.Run (Spec.initWorld params)) : Prop :=
-  -- the start
-  params.pool = toPubkey (poolAddr d) ∧ params.nullifierAddr = nullifierAddrOf d ∧
-    params.rentExemptMin = (rent treeTokenAccountSpace).val ∧
-    params.nullifierRent = (rent nullifierAccountSpace).val ∧
-    params.admin = d.adminPubkey.map toPubkey ∧
-    (∃ i : InitRecord, v.init = some i ∧ params.initializer = i.initializer ∧
-      params.signers = i.signers ∧ params.cfg = i.world.state.config ∧
-      params.balances = i.world.balances) ∧
-    -- the transactions
-    r.txs = txs ∧
-    -- the pool's balance before each transaction, so the donations are the chain's
-    v.poolBeforeTx.length = r.txs.length ∧
-    (∀ j (_ : j < r.txs.length),
-      v.poolBeforeTx[j]? = some ((r.updatedValues j).balances (toPubkey (poolAddr d)))) ∧
-    -- each transaction's result
-    v.afterTx.length = r.txs.length ∧
-    (∀ j (_ : j < r.txs.length), v.afterTx[j]? = some ((r.ws (j+1)).state, (r.ws (j+1)).poolBalance)) ∧
-    -- the admin changes
-    v.closedGaps.length = r.txs.length ∧
-    (∀ j (_ : j < r.txs.length), v.closedGaps[j]? = some (r.updatedValues j).adminChanges) ∧
-    -- the end
-    ∃ b : Spec.UpdatedValuesBetweenTransacts, b.Allowed r.final ∧
-      b.adminChanges = v.openGap ∧ toWorld d rent s = r.final.withUpdatedValues b
+/-- `runTxRecords r pool`: collects the record of each transaction of the spec run `r`, in
+    order. For transaction `j`: its inputs, the balance of `pool` after the change between
+    transactions before it, the state and pool balance of world `j+1`, and the admin changes up
+    to it. -/
+def runTxRecords {w₀ : Spec.World} (r : Spec.Run w₀) (pool : Spec.Pubkey) :
+    List TxRecord :=
+  r.txs.mapIdx fun j tx =>
+    { inputs := tx
+      poolBefore := (r.updatedValues j).balances pool
+      stateAfter := (r.ws (j+1)).state
+      poolAfter := (r.ws (j+1)).poolBalance
+      adminChangesBefore := r.adminChangesUpTo (j+1) }
 
-/-- `IsRunOf d rent s₀ evs states s params r`: `r` is the spec run of this execution: the one
-    `evs` went through, from `s₀` to `s`, by the `states` of its `ExecutionPath`.
+/-- `IsRunOf d rent s₀ evs states s params r`: the spec run `r` from `initWorld params`
+    describes the execution `evs` from `s₀` through `states` to `s`: same deployment, same start,
+    same transactions, same end. -/
+structure IsRunOf (d : CodeModel.Deployment) (rent : Nat → U64) (s₀ : CodeModel.State)
+    (evs : List CodeModel.Event) (states : List CodeModel.State) (s : CodeModel.State)
+    (params : Spec.InitParams)
+    (r : Spec.Run (Spec.initWorld params)) : Prop where
+  /-- The deployment: `params` names this deployment's addresses, rents and admin key. -/
+  deployment : RunOfDeployment d rent params
+  /-- The start: `r` starts from what the last `initialize` (event `k`) set up. -/
+  start : ∃ k txEnv a, IsInitializeAt evs k txEnv a ∧
+    (∀ k' txEnv' a', IsInitializeAt evs k' txEnv' a' → k' ≤ k) ∧
+    StartsFromInit params txEnv a (toWorld d rent (stateAt s₀ states (k+1)))
+  /-- The transactions: one by one, `r`'s transactions are the execution's accepted `transact`s,
+      with the chain's pool balance before, state and pool balance after, and admin changes
+      before. So `r.donated` is what the pool received from outside. -/
+  transactions :
+    runTxRecords r (toPubkey d.poolAddress) = executionTxRecords d rent s₀ evs states
+  /-- The end: `s` is `r`'s final world after an allowed change, which records the admin
+      instructions since the last transaction. -/
+  final : ∃ b : Spec.UpdatedValuesBetweenTransacts, b.Allowed r.final ∧
+    r.adminChangesUpTo r.txs.length ++ b.adminChanges = adminChangesBefore d s₀ evs states evs.length ∧
+    toWorld d rent s = r.final.withUpdatedValues b
 
-    - **the start:** `r` starts at the world `initialize` set up (`view.init`): its config and
-      balances, its signing authority and the signers of its transaction; and `params` holds the
-      deployment's pool address, nullifier account addresses, rents and admin key;
-    - **the transactions:** its transactions are the execution's (`runTxs evs`);
-    - **the pool before each transaction:** `r` has the chain's pool balance, so the SOL `r` counts
-      as sent to the pool (`r.donated`) is what the chain received;
-    - **each transaction's result:** after each transaction, `r` has the chain's tree, nullifier
-      accounts, pool address, config and pool balance. Other balances may differ: `r` takes them
-      from the spec's `transact`, and the chain's are what the next allowed change starts from;
-    - **the admin changes:** before each transaction, `r` records exactly the admin instructions
-      executed since the last one, with the signers of their transactions;
-    - **the end:** the code state `s` is its final world after an allowed change that records the
-      admin instructions executed since the last transaction. -/
-def IsRunOf (d : Deployment) (rent : Nat → U64) (s₀ : State) (evs : List Event)
-    (states : List State) (s : State) (params : Spec.InitParams)
-    (r : Spec.Run (Spec.initWorld params)) : Prop :=
-  RunMatchesView d rent (executionView d rent s₀ evs states) (runTxs evs) s params r
-
-/-- `IsSpecRun d rent s₀ evs states s`: the execution is a spec run (some `r` with `IsRunOf`). -/
-def IsSpecRun (d : Deployment) (rent : Nat → U64) (s₀ : State) (evs : List Event)
-    (states : List State) (s : State) : Prop :=
+/-- `IsSpecRun d rent s₀ evs states s`: some spec run describes the execution (`IsRunOf`). -/
+def IsSpecRun (d : CodeModel.Deployment) (rent : Nat → U64) (s₀ : CodeModel.State)
+    (evs : List CodeModel.Event) (states : List CodeModel.State) (s : CodeModel.State) : Prop :=
   ∃ (params : Spec.InitParams) (r : Spec.Run (Spec.initWorld params)),
     IsRunOf d rent s₀ evs states s params r
 
 end
 
-/-! ## The handler's view (for handler completeness)
-
-The extracted `transact` handler runs after Anchor's account checks and `init`s, on the
-runtime environment `execTransact` builds. Handler completeness compares it with the spec
-`transact` from the world the handler sees. -/
-
-/-- `handlerEnv a s₁ v`: the runtime environment the handler runs in, exactly as
-    `execTransact` builds it: the state `s₁` after Anchor's two `init`s, the instruction's
-    accounts, the rent-exempt minimum `v`. -/
-def handlerEnv (a : TransactAccounts) (s₁ : State) (v : U64) : SolEnv :=
-  { accounts := s₁, balances := s₁.balances, signer := a.signer,
-    treeToken := a.treeTokenAccount, recipient := a.recipient,
-    feeRecipient := a.feeRecipientAccount, rentExemptMinimum := some v }
-
-/-- `handlerWorld a s₁ v tree config accts addr`: the spec world the handler sees (used only
-    by handler completeness): every account's lamports in `s₁`, the tree and config it is
-    given, the pool's address, the rent-exempt minimum `v`, and the nullifier accounts `accts`
-    at addresses `addr` (the handler reads neither).
-
-    MAPPING DECISION: `nullifierRent := 0`, because Anchor has already paid the two
-    nullifier accounts' rent before the handler runs; the handler's effects are the spec's
-    transfer and fee effects.
-
-    How it differs from `toWorld` (the connection theorems' world):
-    - **when:** after Anchor's two `init`s, not before;
-    - **nullifier accounts:** given, not read from `s₁`;
-    - **rent:** the handler's own `v`. -/
-def handlerWorld (a : TransactAccounts) (s₁ : State) (v : U64)
-    (tree : zkcash_core.merkle_tree.MerkleTreeAccount) (config : zkcash_core.admin.GlobalConfig)
-    (accts : Finset Spec.Pubkey) (addr : Fin 2 → Spec.Bytes → Spec.Pubkey) :
-    Spec.World where
-  state :=
-    { tree := toTree tree
-      nullifierAccounts := accts
-      pool := toPubkey a.treeTokenAccount
-      nullifierAddr := addr
-      config := toConfig config tree }
-  balances x := (s₁ (fromPubkey x)).lamports.val
-  rentExemptMin := v.val
-  nullifierRent := 0
-
 /-! ## The verifier: the spec instantiated by the syscalls and the program's key
 
-The spec's groups, point decoding, pairing and deployed key, for the verifier bridge. The
-groups `G1 G2 GT` and the point decoding come from the syscall contracts `C` (core-model's
-`AltBn128Contracts`); the key is the program's extracted `VERIFYING_KEY`. -/
+For the verifier bridge: the spec's groups, decoding and pairing come from the syscall
+contracts `C` (core-model's `AltBn128Contracts`), its key from the program's `VERIFYING_KEY`. -/
 
 section
-variable {G1 G2 GT : Type} [AddCommGroup G1] [Module Spec.F G1] [AddCommGroup G2]
-  [Module Spec.F G2] [CommGroup GT] {s : AltBn128}
+variable {G1 G2 GT : Type} [AddCommGroup G1] [Module Spec.F G1] [Inhabited G2]
+  [CommGroup GT] {s : CodeModel.AltBn128}
 open PrivacyCash.Proofs.Groth16 (ic)
 
-/-- `syscallGroups C`: the spec's groups and point decoding are the syscalls'. A G1 point is
-    64 bytes and a G2 point 128 bytes, decoded as the syscalls decode them (`C.decodeG1`,
-    `C.decodeG2`); bytes of any other length are not a point. -/
-@[reducible] def syscallGroups (C : AltBn128Contracts s G1 G2 GT) : Spec.Groups :=
+/-- `syscallGroups C`: instantiates the spec's groups with the syscalls' `G1`, `G2`, `GT`,
+    decoding a G1 point from 64 bytes with `C.decodeG1` and a G2 point from 128 bytes with
+    `C.decodeG2`; bytes of another length decode to no point. -/
+@[reducible] def syscallGroups (C : CodeModel.AltBn128Contracts s G1 G2 GT) : Spec.Groups :=
   ⟨G1, G2, GT, fun bs => (toArray 64#usize bs).bind C.decodeG1,
     fun bs => (toArray 128#usize bs).bind C.decodeG2⟩
 
-/-- `syscallPairing C`: the spec's pairing is the syscall's. -/
-@[reducible] def syscallPairing (C : AltBn128Contracts s G1 G2 GT) :
+/-- `syscallPairing C`: instantiates the spec's pairing with the syscall's pairing `C.e`. -/
+@[reducible] def syscallPairing (C : CodeModel.AltBn128Contracts s G1 G2 GT) :
     @Spec.Pairing (syscallGroups C) :=
   @Spec.Pairing.mk (syscallGroups C) C.e
 
-/-- `programKey C`: the spec's deployed key is the program's key, as the syscalls decode it. The key is the
-    program's own constant, not sender data; whenever the verifier accepts a proof, every one
-    of its points decodes (`programVerifier_groth16`), so the default `0` is never used. -/
-@[reducible] def programKey (C : AltBn128Contracts s G1 G2 GT) :
+/-- `programKey C`: decodes the program's constant `VERIFYING_KEY` with the syscalls into the
+    spec's verification key. A point that does not decode becomes the default point, which never
+    applies: whenever the verifier accepts, every key point decodes (`programVerifier_groth16`). -/
+@[reducible] def programKey (C : CodeModel.AltBn128Contracts s G1 G2 GT) :
     @Spec.Groth16.VerificationKey (syscallGroups C) :=
   letI : Spec.Groups := syscallGroups C
-  let vk := zkcash_core.verifying_key.VERIFYING_KEY
-  { α := (C.decodeG1 vk.vk_alpha_g1).getD 0, β := (C.decodeG2 vk.vk_beta_g2).getD 0,
-    γ := (C.decodeG2 vk.vk_gamme_g2).getD 0, δ := (C.decodeG2 vk.vk_delta_g2).getD 0,
+  let vk := CodeModel.VERIFYING_KEY
+  { α := (C.decodeG1 vk.vk_alpha_g1).getD 0, β := (C.decodeG2 vk.vk_beta_g2).getD default,
+    γ := (C.decodeG2 vk.vk_gamme_g2).getD default, δ := (C.decodeG2 vk.vk_delta_g2).getD default,
     IC := fun i => ic C vk i.val }
 
+/-- `programDeployment C`: instantiates the spec's deployment with the program's key
+    (`programKey C`) and its SOL mint address `SOL_ADDRESS`. -/
+@[reducible] def programDeployment (C : CodeModel.AltBn128Contracts s G1 G2 GT) :
+    @Spec.Deployment (syscallGroups C) :=
+  @Spec.Deployment.mk (syscallGroups C) (programKey C) (toPubkey CodeModel.SOL_ADDRESS)
+
+/-- `withSyscallSpec C in t`: the term `t`, with the spec instantiated by the syscalls `C` and
+    the program's key (groups `syscallGroups C`, pairing `syscallPairing C`, deployment
+    `programDeployment C`). Shorthand for the three `letI`s that set these instances. -/
+macro "withSyscallSpec " C:term:max " in " t:term : term =>
+  `(letI : Spec.Groups := syscallGroups $C
+    letI : Spec.Pairing := syscallPairing $C
+    letI : Spec.Deployment := programDeployment $C
+    $t)
+
+/-- `SpecAllows C rent s tx`: every precondition of the spec's `transact` holds for `tx`'s
+    inputs (`toInputs tx`) in the world `toWorld d rent s`, with the spec instantiated by the
+    syscalls and the program's key. -/
+def SpecAllows {d : CodeModel.Deployment}
+    (C : CodeModel.AltBn128Contracts d.crypto.altBn128 G1 G2 GT) [Spec.PoseidonHashes] [Spec.Sha] (rent : Nat → U64) (s : CodeModel.State)
+    (tx : TransactTx) : Prop :=
+  withSyscallSpec C in
+  Spec.transactPreconditions (toInputs tx) (toWorld d rent s)
+
+/-- `SpecRun C params`: the type of spec runs from `initWorld params`, with the spec
+    instantiated by the syscalls and the program's key. -/
+abbrev SpecRun (C : CodeModel.AltBn128Contracts s G1 G2 GT) [Spec.PoseidonHashes] [Spec.Sha]
+    (params : Spec.InitParams) : Type :=
+  withSyscallSpec C in
+  Spec.Run (Spec.initWorld params)
+
+/-- `r.txs`: the transactions of the spec run `r`, in order. -/
+abbrev SpecRun.txs {C : CodeModel.AltBn128Contracts s G1 G2 GT}
+    [Spec.PoseidonHashes] [Spec.Sha] {params : Spec.InitParams} (r : SpecRun C params) : List Spec.TxInputs :=
+  withSyscallSpec C in
+  Spec.Run.txs r
+
 end
-
-/-! ## Decidability (so a statement can say the code returns `decide (spec predicate)`) -/
-
-/-- `p_eq`: the spec's field and the code's field are the same, `ZMod p` with the same `p`. -/
-theorem p_eq : Spec.p = bn254ScalarModulus := rfl
-
-instance (extAmt : ℤ) (f : ℕ) (pubAmt : Spec.F) :
-    Decidable (Spec.pubAmtConsistent extAmt f pubAmt) := by
-  unfold Spec.pubAmtConsistent; infer_instance
-
-instance (extAmt : ℤ) (f : ℕ) : Decidable (Spec.amountsInRange extAmt f) := by
-  unfold Spec.amountsInRange; infer_instance
-
-instance (inputs : Spec.TxInputs) : Decidable (Spec.encOutsFit inputs) := by
-  unfold Spec.encOutsFit; infer_instance
-
-instance (T : Spec.Tree) (R : Spec.F) : Decidable (Spec.rootKnown T R) :=
-  decidable_of_iff ((∃ i, T.history i = R) ∧ R ≠ 0) (by simp [Spec.rootKnown, Set.mem_range])
-
-instance (T : Spec.Tree) (bs : Spec.Bytes) : Decidable (Spec.rootBytesKnown T bs) := by
-  unfold Spec.rootBytesKnown; infer_instance
 
 end Connection

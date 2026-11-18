@@ -1,4 +1,4 @@
-import Connection.Hypotheses
+import Connection.Proofs.Collisions
 import Connection.Proofs.Invariant
 import Connection.Proofs.Handler
 import Connection.Proofs.ExtData
@@ -37,13 +37,13 @@ theorem fromPubkey_toPubkey (k : Pubkey) : fromPubkey (toPubkey k) = k := by
   have hlt : leNatOfList k.val < 2 ^ 256 := by
     have := leNatOfList_lt k.val; rw [hl] at this; simpa using this
   apply (Std.Array.eq_iff _ _).mpr
-  simp only [fromPubkey, toPubkey, Std.Array.from_val, BitVec.toNat_ofNat, Nat.mod_eq_of_lt hlt]
+  simp only [fromPubkey, toPubkey_def, Std.Array.from_val, BitVec.toNat_ofNat, Nat.mod_eq_of_lt hlt]
   exact leBytes32_leNat _ hl
 
 theorem toPubkey_fromPubkey (x : Spec.Pubkey) : toPubkey (fromPubkey x) = x := by
   have hlt : x.toNat < 256 ^ 32 := by have := x.isLt; simpa using this
   apply BitVec.eq_of_toNat_eq
-  simp only [toPubkey, fromPubkey, Std.Array.from_val, PrivacyCash.Proofs.G1.leNat_leBytes32 _ hlt,
+  simp only [toPubkey_def, fromPubkey, Std.Array.from_val, PrivacyCash.Proofs.G1.leNat_leBytes32 _ hlt,
     BitVec.toNat_ofNat]
   exact Nat.mod_eq_of_lt x.isLt
 
@@ -90,7 +90,7 @@ theorem serLength (inputs : Spec.TxInputs) :
     Spec.vecU8, Spec.u32LE, Spec.natToBytesLE]
   omega
 
-theorem lamportsOf_lt (s : State) (k : Pubkey) : lamportsOf s k < 2 ^ 64 := u64_lt _
+theorem lamportsOf_lt (s : State) (k : Pubkey) : s.lamports k < 2 ^ 64 := u64_lt _
 
 /-! ## A world without nullifier rent (the world the handler sees) -/
 
@@ -132,20 +132,20 @@ theorem toArray_toBytes {n : Usize} (a : Std.Array U8 n) : toArray n (toBytes a.
 theorem nullifierAddrOf_bytes (d : Deployment) (n : Pubkey) :
     nullifierAddrOf d 0 (toBytes n.val) = toPubkey (d.pda (nullifier0Seeds n)) ∧
     nullifierAddrOf d 1 (toBytes n.val) = toPubkey (d.pda (nullifier1Seeds n)) := by
-  simp [nullifierAddrOf, toArray_toBytes]
+  simp [nullifierAddrOf, Deployment.nullifierAddress, toArray_toBytes]
 
 /-- The spec's addresses of a `transact`'s two new nullifier accounts are the code's PDAs. -/
 theorem newNullifierAccount_toWorld (d : Deployment) (rent : Nat → U64) (s : State)
     (signers : List Pubkey) (a : TransactAccounts) (proof : zkcash_core.transact.Proof)
     (ext : I64) (fee : U64) (out1 out2 : Slice U8) :
-    (toWorld d rent s).state.newNullifierAccount (toInputs signers a proof ext fee out1 out2) 0
+    (toWorld d rent s).state.newNullifierAccount (toInputs ⟨⟨signers⟩, a, ⟨proof, ext, fee, out1, out2⟩⟩) 0
         = toPubkey (d.pda (nullifier0Seeds proof.input_nullifiers.val[0]!)) ∧
-      (toWorld d rent s).state.newNullifierAccount (toInputs signers a proof ext fee out1 out2) 1
+      (toWorld d rent s).state.newNullifierAccount (toInputs ⟨⟨signers⟩, a, ⟨proof, ext, fee, out1, out2⟩⟩) 1
         = toPubkey (d.pda (nullifier1Seeds proof.input_nullifiers.val[1]!)) := by
-  have hby0 : (toInputs signers a proof ext fee out1 out2).nullifierBytes 0
+  have hby0 : (toInputs ⟨⟨signers⟩, a, ⟨proof, ext, fee, out1, out2⟩⟩).nullifierBytes 0
       = toBytes proof.input_nullifiers.val[0]!.val := by
     simp [toInputs, Spec.TxInputs.nullifierBytes, publicInputs]
-  have hby1 : (toInputs signers a proof ext fee out1 out2).nullifierBytes 1
+  have hby1 : (toInputs ⟨⟨signers⟩, a, ⟨proof, ext, fee, out1, out2⟩⟩).nullifierBytes 1
       = toBytes proof.input_nullifiers.val[1]!.val := by
     simp [toInputs, Spec.TxInputs.nullifierBytes, publicInputs]
   refine ⟨?_, ?_⟩
@@ -153,10 +153,8 @@ theorem newNullifierAccount_toWorld (d : Deployment) (rent : Nat → U64) (s : S
   · show nullifierAddrOf d 1 _ = _; rw [hby1]; exact (nullifierAddrOf_bytes d _).2
 
 theorem mem_nullifierAccountsOf {d : Deployment} {s : State} {x : Spec.Pubkey} :
-    x ∈ nullifierAccountsOf d s ↔ IsNullifierAccount d s (fromPubkey x) := by
-  simp only [nullifierAccountsOf, Finset.mem_filter, and_iff_right_iff_imp]
-  intro _
-  exact Finset.mem_image.mpr ⟨x.toFin, Finset.mem_univ _, rfl⟩
+    x ∈ nullifierAccountsOf d s ↔ d.IsNullifierAccount s (fromPubkey x) := by
+  simp [nullifierAccountsOf]
 
 /-- A system account is not a nullifier account. -/
 theorem not_nullifierAccount_of_system {d : Deployment} {s : State} {k : Pubkey}
@@ -226,7 +224,7 @@ theorem TL_payN_ge {keys : List Pubkey} {p t : Pubkey} (hp : p ∈ keys) (ht : t
   simp only [payN]
   rw [TL_update ht, TL_update hp]
   by_cases h : t = p
-  · subst h; simp <;> omega
+  · subst h; simp; omega
   · rw [Function.update_of_ne h, if_neg h]; omega
 
 theorem payN_eq_moveN (b : Pubkey → ℕ) (p t : Pubkey) (x : ℕ) (h : t ≠ p ∨ x = 0) :
@@ -290,7 +288,7 @@ theorem moveN_mono {B B' : Pubkey → ℕ} (hle : ∀ j, B j ≤ B' j) {u : Pubk
   simp only [moveN, Function.update]
   by_cases h1 : j = v <;> by_cases h2 : j = u <;> by_cases h3 : v = u <;> simp_all
 
-theorem lamportsOf_le (s : State) (k : Pubkey) : lamportsOf s k ≤ (s k).lamports.val :=
+theorem lamportsOf_le (s : State) (k : Pubkey) : s.lamports k ≤ (s k).lamports.val :=
   le_refl _
 
 /-- Anchor `init`, in general: the payer tops the address up by `top` (the whole rent if the
@@ -395,9 +393,10 @@ theorem execTransact_ok {d : Deployment} {s s' : State} {tx : TxEnv} {a : Transa
   refine ⟨tree, tt, config, mb, s₁, env', tree', ap, not_not.mp hvalid, hmb, hs₁, ofResult_ok hres, e1, ?_⟩
   rw [e1]; exact e2
 
-variable [Spec.PoseidonHashes] [Spec.Sha] [Spec.Groups]
-  [AddCommGroup Spec.G1] [Module Spec.F Spec.G1] [AddCommGroup Spec.G2]
-  [Module Spec.F Spec.G2] [CommGroup Spec.GT] [Spec.Pairing] [Spec.Deployment]
+/-- Every balance of a mapped world fits a `u64`. -/
+theorem toWorld_fit (d : Deployment) (rent : Nat → U64) (s : State) (x : Spec.Pubkey) :
+    (toWorld d rent s).balances x < 2 ^ 64 :=
+  show (s (fromPubkey x)).lamports.val < 2 ^ 64 from (s (fromPubkey x)).lamports.hBounds
 
 /-- **The spec's rent step is Anchor's two `init`s.** With a positive rent, the signer pays each
     new nullifier address what it is missing, as the spec says (`nullifierRentEffects`). -/
@@ -411,9 +410,9 @@ theorem rentEffects_of_inits
     (h01 : a.nullifier0 ≠ a.nullifier1) (hnr : 0 < (rent nullifierAccountSpace).val)
     (hinits : (s.initAccount d.programId rent a.signer a.nullifier0 nullifierAccountSpace (.nullifier 0#u8)).bind
       (·.initAccount d.programId rent a.signer a.nullifier1 nullifierAccountSpace (.nullifier 0#u8)) = some s₁) :
-    (Spec.nullifierRentEffects (toInputs signers a proof ext fee out1 out2) (toWorld d rent s)).balances
+    (Spec.nullifierRentEffects (toInputs ⟨⟨signers⟩, a, ⟨proof, ext, fee, out1, out2⟩⟩) (toWorld d rent s)).balances
       = fun x => (s₁ (fromPubkey x)).lamports.val := by
-  set inputs := toInputs signers a proof ext fee out1 out2
+  set inputs := toInputs ⟨⟨signers⟩, a, ⟨proof, ext, fee, out1, out2⟩⟩
   set W := toWorld d rent s
   obtain ⟨sA, hA1, hA2⟩ := Option.bind_eq_some_iff.mp hinits
   obtain ⟨top0, -, -, -, hex0, hlamA, -, -, -⟩ := initAccount_spec hs0 hA1
@@ -446,22 +445,40 @@ theorem rentEffects_of_inits
   have := congrFun (show (fun k => (s₁ k).lamports.val) = _ by rw [hlam1, hlamA]) (fromPubkey x)
   exact this.symm
 
-/-- **One `transact`, exactly**: the spec's `transact` holds between the old and new worlds, and
-    the new state is well-formed. -/
-theorem transact_refines
+variable [Spec.PoseidonHashes] [Spec.Sha] [Spec.Groups]
+  [AddCommGroup Spec.G1] [Module Spec.F Spec.G1]
+  [CommGroup Spec.GT] [Spec.Pairing] [Spec.Deployment]
+
+/-- What `transact_refines_of` needs about the signer: it is none of the program's accounts (the
+    pool, the tree's and the config's account, an existing nullifier account) and neither of the
+    two new nullifier accounts. From `PdasDoNotSign` (`signerNotProgram_of_pdas`), or from the
+    spec's `signerNotPoolNotNullifiers` (completeness). -/
+structure SignerNotProgram (d : Deployment) (s : State) (a : TransactAccounts) : Prop where
+  pool : a.signer ≠ d.poolAddress
+  tree : a.signer ≠ d.treeAddress
+  config : a.signer ≠ d.configAddress
+  nf0 : a.signer ≠ a.nullifier0
+  nf1 : a.signer ≠ a.nullifier1
+  nullifier : ¬ d.IsNullifierAccount s a.signer
+
+/-- **One `transact`, exactly**, given what it needs about the signer: the spec's `transact`
+    holds between the old and new worlds. (That the new state is well-formed is `wf_transact`,
+    `Proofs/WellFormed.lean`.) -/
+theorem transact_refines_of
     {d : Deployment} {rent : Nat → U64} {s s' : State} {tx : TxEnv}
     {a : TransactAccounts} {proof : zkcash_core.transact.Proof} {extAmount : I64} {fee : U64}
     {out1 out2 : Slice U8} {events : List CommitmentData}
     (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
-    (hashes : HashesAgree d.crypto)
+    (hashes : HashesAgree d)
     (wf : WellFormed d s)
-    (solana : SolanaFacts d tx) (hrentPos : tx.RentPositive)
-    (crypto : CryptoFacts d proof) (circuit : CircuitFacts d {proof})
-    (rentFixed : SameRent rent tx)
+    (hsig : SignerNotProgram d s a) (hrentPos : tx.RentPositive)
+    (crypto : NewNullifierAddressesDiffer d proof) (circuit : CircuitFacts d {proof})
+    (rentFixed : SameRent rent tx.minimumBalance)
     (hProofValid : d.crypto.proofVerifier.verify proof = ok true →
-      Spec.proofValid (toInputs tx.signers a proof extAmount fee out1 out2)) :
-    let inputs := toInputs tx.signers a proof extAmount fee out1 out2
-    Spec.transact inputs (toWorld d rent s) (toWorld d rent s') ∧ WellFormed d s' := by
+      Spec.proofValid (toInputs ⟨⟨tx.signers⟩, a, ⟨proof, extAmount, fee, out1, out2⟩⟩))
+    (hmint : Spec.Deployment.solMint = toPubkey zkcash_core.transact.SOL_ADDRESS) :
+    let inputs := toInputs ⟨⟨tx.signers⟩, a, ⟨proof, extAmount, fee, out1, out2⟩⟩
+    Spec.transact inputs (toWorld d rent s) (toWorld d rent s') := by
   intro inputs
   have hx : execTransact d s tx a proof extAmount fee out1 out2 = .ok (s', events) := hstep
   obtain ⟨tree, tt, config, mb, s₁, env', tree', ap, hvalid, hmb, hs₁, hhandler, hs', hcons⟩ := execTransact_ok hx
@@ -469,23 +486,24 @@ theorem transact_refines
   have hmbr : rent = mb := by rw [rentFixed] at hmb; exact Option.some.inj hmb
   subst hmbr
   -- the program's accounts are the canonical ones
-  obtain ⟨htreeAddr, hshape⟩ := wf.tree _ _ hvalid.treeAccount.1
-  have hpoolAddr := wf.pool _ _ hvalid.treeTokenAccount.1
-  obtain ⟨hcfgAddr, hdr, hwr, hmr⟩ := wf.config _ _ hvalid.globalConfig.1
+  obtain ⟨htreeAddr, hshape, -⟩ := wf.tree _ _ hvalid.treeAccount.1
+  have hpoolAddr := (wf.pool _ _ hvalid.treeTokenAccount.1).1
+  obtain ⟨hcfgAddr, hdr, hwr, hmr, -⟩ := wf.config _ _ hvalid.globalConfig.1
   -- the nullifier accounts
   set n0 := proof.input_nullifiers.val[0]! with hn0
   set n1 := proof.input_nullifiers.val[1]! with hn1
   have hnf0 : a.nullifier0 = d.pda (nullifier0Seeds n0) := hvalid.nullifier0.1
   have hnf1 : a.nullifier1 = d.pda (nullifier1Seeds n1) := hvalid.nullifier1.1
   have hnf01 : a.nullifier0 ≠ a.nullifier1 := by
-    rw [hnf0, hnf1]; exact nullifier0_ne_nullifier1 crypto.nullifierAddressesDiffer
+    rw [hnf0, hnf1]; exact ne_of_distinct crypto (Set.mem_insert _ _) (Set.mem_insert_of_mem _ rfl)
+      (nullifier0Seeds_ne_nullifier1Seeds _ _ _ _)
   have hnr : 0 < (rent nullifierAccountSpace).val := hrentPos rent rentFixed _
   set nr := (rent nullifierAccountSpace).val with hnrdef
   -- the two `init`s: the signer tops each nullifier address up (by `top0`, `top1`)
   obtain ⟨sA, hA1, hA2⟩ := Option.bind_eq_some_iff.mp hs₁
   -- the signer is not a nullifier account: a PDA does not sign
-  have hs_nf0 : a.signer ≠ a.nullifier0 := fun e => solana.pdasDoNotSign _ (by rw [← hnf0, ← e]; exact hvalid.signer)
-  have hs_nf1 : a.signer ≠ a.nullifier1 := fun e => solana.pdasDoNotSign _ (by rw [← hnf1, ← e]; exact hvalid.signer)
+  have hs_nf0 : a.signer ≠ a.nullifier0 := hsig.nf0
+  have hs_nf1 : a.signer ≠ a.nullifier1 := hsig.nf1
   obtain ⟨top0, htop0, hsys0, hfull0, hex0, hlamA, hownA, hdataA, hotherA⟩ := initAccount_spec hs_nf0 hA1
   obtain ⟨top1, htop1, hsys1, hfull1, hex1, hlam1, hown1, hdata1, hother1⟩ := initAccount_spec hs_nf1 hA2
   have hsA : (sA a.signer).lamports.val = (s a.signer).lamports.val - top0 := by
@@ -508,7 +526,7 @@ theorem transact_refines
   have hnf1₁ : (s₁ a.nullifier1).owner = d.programId ∧ (s₁ a.nullifier1).data = .nullifier 0#u8 :=
     ⟨hown1, hdata1⟩
   -- the handler
-  have hok := handler_ok d.crypto _ tree config proof extAmount fee a.recipient a.feeRecipientAccount out1 out2
+  have hok := handler_ok d.crypto d.crypto.sha256 _ tree config proof extAmount fee a.recipient a.feeRecipientAccount out1 out2
     ap env' tree' hhandler
   -- the verifier: canonical public inputs
   have hcan := verifyProof_canonical _ proof _ hok.verify
@@ -516,14 +534,13 @@ theorem transact_refines
   have hcan0 : Canonical n0 := by simpa [publicInputs, hn0] using hcan 3 (by decide)
   have hcan1 : Canonical n1 := by simpa [publicInputs, hn1] using hcan 4 (by decide)
   -- what the old world reads
-  have htreeAt : treeAt s (treeAddr d) = tree := by
-    simp only [treeAt, ← htreeAddr, hvalid.treeAccount.1.2]
-  have hcfgAt : configAt s (configAddr d) = config := by
-    simp only [configAt, ← hcfgAddr, hvalid.globalConfig.1.2]
+  have htreeAt : s.treeAccount d.treeAddress = tree := by
+    simp only [PrivacyCash.Model.State.treeAccount, ← htreeAddr, hvalid.treeAccount.1.2]
+  have hcfgAt : s.configAccount d.configAddress = config := by
+    simp only [PrivacyCash.Model.State.configAccount, ← hcfgAddr, hvalid.globalConfig.1.2]
   have hpoolData : (s a.treeTokenAccount).data = .treeToken tt := hvalid.treeTokenAccount.1.2
   have hpoolOwner : (s a.treeTokenAccount).owner = d.programId := hvalid.treeTokenAccount.1.1
-  have hsigNotPool : a.signer ≠ a.treeTokenAccount := fun e => solana.pdasDoNotSign treeTokenSeeds (by
-    rw [← poolAddr, ← hpoolAddr, ← e]; exact hvalid.signer)
+  have hsigNotPool : a.signer ≠ a.treeTokenAccount := by rw [hpoolAddr]; exact hsig.pool
   have hnf0Init : Initializable s a.nullifier0 := hvalid.nullifier0.2
   have hnf1Init : Initializable s a.nullifier1 := hvalid.nullifier1.2
   have hpool_nf0 : a.treeTokenAccount ≠ a.nullifier0 := fun e => wf.programNotSystem (by
@@ -610,8 +627,13 @@ theorem transact_refines
     · exact Or.inr (by omega)
   -- the two appends
   obtain ⟨p1, p2, t1, hap1, hap2⟩ := hok.appends
-  obtain ⟨hT1, hsh1, hroom1, hidx1, hau1, hmax1, -⟩ := append_ok' d.crypto hashes _ tree t1 p1 hshape hap1
-  obtain ⟨hT2, hsh2, hroom2, -, hau2, hmax2, -⟩ := append_ok' d.crypto hashes _ t1 tree' p2 hsh1 hap2
+  -- the leaves are public inputs 5 and 6 (range-checked), the subtrees are canonical (`WellFormed`)
+  have hl0 : Canonical proof.output_commitments.val[0]! := by simpa [publicInputs] using hcan 5 (by decide)
+  have hl1 : Canonical proof.output_commitments.val[1]! := by simpa [publicInputs] using hcan 6 (by decide)
+  have hsub0 := wf.storedSubtrees _ _ hvalid.treeAccount.1
+  obtain ⟨hT1, hsh1, hroom1, hidx1, hau1, hmax1, -⟩ := append_ok' d hashes _ tree t1 p1 hshape hsub0 hl0 hap1
+  have hsub1 := append_subtrees_canonical' d hashes _ tree t1 p1 hshape hsub0 hl0 hap1
+  obtain ⟨hT2, hsh2, hroom2, -, hau2, hmax2, -⟩ := append_ok' d hashes _ t1 tree' p2 hsh1 hsub1 hl1 hap2
   -- external data
   obtain ⟨hsh, hcalc, hEq⟩ := hok.extHash
   -- the code returned a hash, so the serialized data fit in a vector
@@ -626,7 +648,7 @@ theorem transact_refines
   have hshe : hsh' = hsh := Option.some.inj (Result.ok_injective hcalc')
   subst hshe
   have hser : Spec.externalDataHash inputs = inputs.extDataHash := by
-    have hb := hashes.sha256 _ _ hsha
+    have hb := hashes.sha256_ok hsha
     have hlen : (Spec.serealizeExternalData inputs).length ≤ Usize.max := by
       rw [serLength]
       have : inputs.encOut0.length + inputs.encOut1.length = out1.length + out2.length := by
@@ -634,6 +656,7 @@ theorem transact_refines
       have := hvecFit; omega
     rw [toBytes_toSlice _ hlen] at hb
     simp only [Spec.externalDataHash, ← hb, natOfLE_toBytes]
+    rw [show inputs.extDataHash = toF proof.ext_data_hash from rfl, toF_def]
     exact hEq
   have hpoolDataN : ∀ b, (s a.treeTokenAccount).data ≠ .nullifier b := by
     rw [hpoolData]; intro b h; cases h
@@ -651,10 +674,10 @@ theorem transact_refines
   have hcfg_tree : a.globalConfig ≠ a.treeAccount := fun e => by
     have h1 := hvalid.globalConfig.1.2; have h2 := hvalid.treeAccount.1.2
     rw [e, h2] at h1; cases h1
-  have htreeAt' : treeAt s' (treeAddr d) = tree' := by
-    simp only [treeAt, ← htreeAddr, (hs'k a.treeAccount).2.2, if_true]
-  have hcfgAt' : configAt s' (configAddr d) = config := by
-    simp only [configAt, ← hcfgAddr, (hs'k a.globalConfig).2.2, if_neg hcfg_tree,
+  have htreeAt' : s'.treeAccount d.treeAddress = tree' := by
+    simp only [PrivacyCash.Model.State.treeAccount, ← htreeAddr, (hs'k a.treeAccount).2.2, if_true]
+  have hcfgAt' : s'.configAccount d.configAddress = config := by
+    simp only [PrivacyCash.Model.State.configAccount, ← hcfgAddr, (hs'k a.globalConfig).2.2, if_neg hcfg_tree,
       (hod₁ _ hcfg_nf0 hcfg_nf1).2, hvalid.globalConfig.1.2]
   -- the code's balances after the handler
   set Teff : (Pubkey → ℕ) → (Pubkey → ℕ) := fun B =>
@@ -678,10 +701,10 @@ theorem transact_refines
   have hW₁bal : W₁.balances = fun x => (s (fromPubkey x)).lamports.val := rfl
   have hnrW : W₁.nullifierRent = nr := rfl
   have hbalPool : W₁.poolBalance = (s a.treeTokenAccount).lamports.val := by
-    show (s (fromPubkey (toPubkey (poolAddr d)))).lamports.val = _
+    show (s (fromPubkey (toPubkey d.poolAddress))).lamports.val = _
     rw [fromPubkey_toPubkey, ← hpoolAddr]
   have hW₁pool : W₁.state.pool = toPubkey a.treeTokenAccount := by
-    show toPubkey (poolAddr d) = _; rw [hpoolAddr]
+    show toPubkey d.poolAddress = _; rw [hpoolAddr]
   -- the addresses of the new nullifier accounts
   obtain ⟨hb00, hb01⟩ := nullifierAddrOf_bytes d n0
   obtain ⟨hb10, hb11⟩ := nullifierAddrOf_bytes d n1
@@ -787,22 +810,43 @@ theorem transact_refines
   have hSep : Spec.poolNotRecipient inputs W₁.state.pool := by
     rw [hW₁pool]
     exact ⟨fun hn e => hnoself.1 hn (toPubkey_inj e), fun hf e => hnoself.2 hf (toPubkey_inj e)⟩
+  -- the signer is none of the program's accounts
   have hPda : Spec.signerNotPoolNotNullifiers inputs W₁.state := by
     refine ⟨?_, ?_, ?_⟩
-    · rw [hW₁pool]; exact fun e => hsigNotPool (toPubkey_inj e)
+    · rintro (e | e | e | e)
+      · rw [hW₁pool] at e; exact hsigNotPool (toPubkey_inj e)
+      · have e' : toPubkey a.signer ∈ nullifierAccountsOf d s := e
+        obtain ⟨ho, b, hd⟩ := mem_nullifierAccountsOf.mp e'
+        rw [fromPubkey_toPubkey] at ho hd
+        exact hsig.nullifier ⟨ho, b, hd⟩
+      · exact hsig.tree (toPubkey_inj e)
+      · exact hsig.config (toPubkey_inj e)
     · rw [ha0]; exact fun e => hs_nf0 (toPubkey_inj e)
     · rw [ha1]; exact fun e => hs_nf1 (toPubkey_inj e)
+  -- a new nullifier account is system-owned, the tree's and the config's accounts are the program's
+  have hTreeOwn : (s d.treeAddress).owner = d.programId := by
+    rw [← htreeAddr]; exact hvalid.treeAccount.1.1
+  have hCfgOwn : (s d.configAddress).owner = d.programId := by
+    rw [← hcfgAddr]; exact hvalid.globalConfig.1.1
   have hNew : Spec.nullifierAccountsCreatable W₁.state inputs := by
     refine ⟨?_, ?_, ?_⟩
     · rw [ha0, ha1]; exact fun e => hnf01 (toPubkey_inj e)
-    · rw [ha0, hW₁pool]; exact fun e => hpool_nf0 (toPubkey_inj e).symm
-    · rw [ha1, hW₁pool]; exact fun e => hpool_nf1 (toPubkey_inj e).symm
+    · rw [ha0]; rintro (e | e | e | e)
+      · rw [hW₁pool] at e; exact hpool_nf0 (toPubkey_inj e).symm
+      · exact not_nullifierAccount_of_system wf.programNotSystem hnf0Init.1 e
+      · exact wf.programNotSystem (by rw [← hTreeOwn, ← toPubkey_inj e]; exact hnf0Init.1)
+      · exact wf.programNotSystem (by rw [← hCfgOwn, ← toPubkey_inj e]; exact hnf0Init.1)
+    · rw [ha1]; rintro (e | e | e | e)
+      · rw [hW₁pool] at e; exact hpool_nf1 (toPubkey_inj e).symm
+      · exact not_nullifierAccount_of_system wf.programNotSystem hnf1Init.1 e
+      · exact wf.programNotSystem (by rw [← hTreeOwn, ← toPubkey_inj e]; exact hnf1Init.1)
+      · exact wf.programNotSystem (by rw [← hCfgOwn, ← toPubkey_inj e]; exact hnf1Init.1)
   have hpre : Spec.transactPreconditions inputs W₁ := by
     refine ⟨?knownRoot, hser, ?minimumFee, hpub, hProofValid hok.verify, ?fresh, ?distinct,
       hNew, ?depositLimit, hPS, hSS, List.mem_map_of_mem hvalid.signer, hPda, ?room, ?range, hfits,
-      hSep, ?canonical, ?fit⟩
+      hSep, ?canonical, ?fit, hmint.symm⟩
     case knownRoot =>
-      show Spec.rootBytesKnown (toTree (treeAt s (treeAddr d))) (toBytes proof.root.val)
+      show Spec.rootBytesKnown (toTree (s.treeAccount d.treeAddress)) (toBytes proof.root.val)
       rw [htreeAt, rootBytesKnown_iff]
       exact ⟨hcanR, isKnownRoot_safe tree proof.root hshape hcanR hok.root⟩
     case canonical =>
@@ -812,7 +856,7 @@ theorem transact_refines
       rw [canonicalEncoding_iff]
       exact ⟨hcan i.val i.isLt, by fin_cases i <;> rfl⟩
     case minimumFee =>
-      show Spec.feeSufficient (toConfig (configAt s (configAddr d)) (treeAt s (treeAddr d))) _ _
+      show Spec.feeSufficient (toConfig (s.configAccount d.configAddress) (s.treeAccount d.treeAddress)) _ _
       rw [hcfgAt, htreeAt]
       exact ((validateFee_iff extAmount fee config tree hdr hwr hmr).mp hok.feeOk).2
     case fresh =>
@@ -831,11 +875,11 @@ theorem transact_refines
       show toF n0 ≠ toF n1
       exact fun h => circuit.distinctNullifiers proof (Set.mem_singleton proof) hok.verify (toF_injOn hcan0 hcan1 h)
     case depositLimit =>
-      show extAmount.val > 0 → extAmount.val ≤ ((toConfig (configAt s (configAddr d)) (treeAt s (treeAddr d))).maxDepositLimit : ℤ)
+      show extAmount.val > 0 → extAmount.val ≤ ((toConfig (s.configAccount d.configAddress) (s.treeAccount d.treeAddress)).maxDepositLimit : ℤ)
       rw [hcfgAt, htreeAt]; intro hp
       have := hok.depositLimit hp; simpa [toConfig] using this
     case room =>
-      show (toTree (treeAt s (treeAddr d))).nextIndex ≤ 2 ^ 26 - 2
+      show (toTree (s.treeAccount d.treeAddress)).nextIndex ≤ 2 ^ 26 - 2
       rw [htreeAt]; simp only [toTree]; omega
     case range =>
       exact hpub0.2.1
@@ -854,8 +898,7 @@ theorem transact_refines
         have hab : ((extAmount.val.natAbs : ℕ) : ℤ) = extAmount.val := Int.natAbs_of_nonneg (le_of_lt hp')
         show ((s a.treeTokenAccount).lamports.val : ℤ) + extAmount.val < 2 ^ 64
         omega
-  -- the new state is well-formed
-  have hkeep := PrivacyCash.Model.execTransact_keepsOwned hx
+  -- what the step keeps: accounts other than the tree and the two new nullifier accounts
   have hfromOld : ∀ k, k ≠ a.treeAccount → k ≠ a.nullifier0 → k ≠ a.nullifier1 →
       (s' k).owner = (s k).owner ∧ (s' k).data = (s k).data := by
     intro k ht h0 h1
@@ -865,76 +908,15 @@ theorem transact_refines
     rintro k (rfl | rfl)
     · exact ⟨_, by rw [(hs'k _).2.2, if_neg (Ne.symm htree_nf0), hnf0₁.2]⟩
     · exact ⟨_, by rw [(hs'k _).2.2, if_neg (Ne.symm htree_nf1), hnf1₁.2]⟩
-  have hroots' : ∀ j : Fin 100, Canonical tree'.root_history.val[j.val]! :=
-    append_history_canonical _ hashes.poseidonCanonical _ _ _ _ hsh1
-      (append_history_canonical _ hashes.poseidonCanonical _ _ _ _ hshape
-        (wf.storedRoots _ _ hvalid.treeAccount.1) hap1) hap2
-  have hcanC0 : Canonical proof.output_commitments.val[0]! := by
-    simpa [publicInputs] using hcan 5 (by decide)
-  have hcanC1 : Canonical proof.output_commitments.val[1]! := by
-    simpa [publicInputs] using hcan 6 (by decide)
-  have hsubs' : ∀ j : Fin 26, Canonical tree'.subtrees.val[j.val]! :=
-    append_subtrees_canonical _ hashes.poseidonCanonical _ _ _ _ hsh1
-      (append_subtrees_canonical _ hashes.poseidonCanonical _ _ _ _ hshape
-        (wf.storedSubtrees _ _ hvalid.treeAccount.1) hcanC0 hap1) hcanC1 hap2
-  have hwf' : WellFormed d s' := by
-    refine ⟨wf.programNotSystem, ?_, ?_, ?_, ?_, ?_⟩
-    · intro k t ⟨ho, hd⟩
-      by_cases ht : k = a.treeAccount
-      · subst ht
-        rw [(hs'k _).2.2, if_pos rfl] at hd
-        cases hd; exact ⟨htreeAddr, hsh2⟩
-      by_cases h0 : k = a.nullifier0
-      · obtain ⟨b, hb⟩ := hnfData' k (Or.inl h0); rw [hb] at hd; cases hd
-      by_cases h1 : k = a.nullifier1
-      · obtain ⟨b, hb⟩ := hnfData' k (Or.inr h1); rw [hb] at hd; cases hd
-      obtain ⟨ho', hd'⟩ := hfromOld k ht h0 h1
-      exact wf.tree k t ⟨by rw [← ho']; exact ho, by rw [← hd']; exact hd⟩
-    · intro k p ⟨ho, hd⟩
-      by_cases ht : k = a.treeAccount
-      · subst ht; rw [(hs'k _).2.2, if_pos rfl] at hd; cases hd
-      by_cases h0 : k = a.nullifier0
-      · obtain ⟨b, hb⟩ := hnfData' k (Or.inl h0); rw [hb] at hd; cases hd
-      by_cases h1 : k = a.nullifier1
-      · obtain ⟨b, hb⟩ := hnfData' k (Or.inr h1); rw [hb] at hd; cases hd
-      obtain ⟨ho', hd'⟩ := hfromOld k ht h0 h1
-      exact wf.pool k p ⟨by rw [← ho']; exact ho, by rw [← hd']; exact hd⟩
-    · intro k c ⟨ho, hd⟩
-      by_cases ht : k = a.treeAccount
-      · subst ht; rw [(hs'k _).2.2, if_pos rfl] at hd; cases hd
-      by_cases h0 : k = a.nullifier0
-      · obtain ⟨b, hb⟩ := hnfData' k (Or.inl h0); rw [hb] at hd; cases hd
-      by_cases h1 : k = a.nullifier1
-      · obtain ⟨b, hb⟩ := hnfData' k (Or.inr h1); rw [hb] at hd; cases hd
-      obtain ⟨ho', hd'⟩ := hfromOld k ht h0 h1
-      exact wf.config k c ⟨by rw [← ho']; exact ho, by rw [← hd']; exact hd⟩
-    · intro k t ⟨ho, hd⟩
-      by_cases ht : k = a.treeAccount
-      · subst ht
-        rw [(hs'k _).2.2, if_pos rfl] at hd
-        cases hd; exact hroots'
-      by_cases h0 : k = a.nullifier0
-      · obtain ⟨b, hb⟩ := hnfData' k (Or.inl h0); rw [hb] at hd; cases hd
-      by_cases h1 : k = a.nullifier1
-      · obtain ⟨b, hb⟩ := hnfData' k (Or.inr h1); rw [hb] at hd; cases hd
-      obtain ⟨ho', hd'⟩ := hfromOld k ht h0 h1
-      exact wf.storedRoots k t ⟨by rw [← ho']; exact ho, by rw [← hd']; exact hd⟩
-    · intro k t ⟨ho, hd⟩
-      by_cases ht : k = a.treeAccount
-      · subst ht
-        rw [(hs'k _).2.2, if_pos rfl] at hd
-        cases hd; exact hsubs'
-      by_cases h0 : k = a.nullifier0
-      · obtain ⟨b, hb⟩ := hnfData' k (Or.inl h0); rw [hb] at hd; cases hd
-      by_cases h1 : k = a.nullifier1
-      · obtain ⟨b, hb⟩ := hnfData' k (Or.inr h1); rw [hb] at hd; cases hd
-      obtain ⟨ho', hd'⟩ := hfromOld k ht h0 h1
-      exact wf.storedSubtrees k t ⟨by rw [← ho']; exact ho, by rw [← hd']; exact hd⟩
   -- the effects
   have heff : Spec.AgreesOnProgramEffects inputs (Spec.transactEffects inputs W₁)
       (toWorld d rent s') := by
     have hext' : inputs.extAmt ≠ 0 := hext0
-    refine ⟨?tree, ?nulls, ?pool, ?addr, ?config, ?rentEx, ?nrent, ?bal⟩
+    refine ⟨?tree, ?nulls, ?pool, ?addr, ?config, ?treeA, ?cfgA, ?rentEx, ?nrent, ?bal⟩
+    case treeA =>
+      simp only [Spec.transactEffects, Spec.transferEffects, if_neg hext']; rfl
+    case cfgA =>
+      simp only [Spec.transactEffects, Spec.transferEffects, if_neg hext']; rfl
     case nulls =>
       show nullifierAccountsOf d s' = (Spec.transferEffects inputs
         (Spec.nullifierRentEffects inputs W₁)).state.nullifierAccounts ∪
@@ -942,7 +924,7 @@ theorem transact_refines
       rw [Spec.transferEffects_state, Spec.nullifierRentEffects_state, ha0, ha1]
       ext x
       rw [Finset.mem_union, mem_nullifierAccountsOf, Finset.mem_insert, Finset.mem_singleton]
-      show IsNullifierAccount d s' (fromPubkey x) ↔
+      show d.IsNullifierAccount s' (fromPubkey x) ↔
         x ∈ nullifierAccountsOf d s ∨ x = toPubkey a.nullifier0 ∨ x = toPubkey a.nullifier1
       rw [mem_nullifierAccountsOf]
       have hx : x = toPubkey (fromPubkey x) := (toPubkey_fromPubkey x).symm
@@ -978,19 +960,19 @@ theorem transact_refines
     case nrent =>
       simp only [Spec.transactEffects, Spec.transferEffects, if_neg hext']; rfl
     case tree =>
-      show toTree (treeAt s' (treeAddr d)) = _
+      show toTree (s'.treeAccount d.treeAddress) = _
       simp only [Spec.transactEffects, Spec.transferEffects, if_neg hext']
       rw [htreeAt']
       show toTree tree' = Spec.appendEffects (toF proof.output_commitments.val[1]!)
-        (Spec.appendEffects (toF proof.output_commitments.val[0]!) (toTree (treeAt s (treeAddr d))))
+        (Spec.appendEffects (toF proof.output_commitments.val[0]!) (toTree (s.treeAccount d.treeAddress)))
       rw [htreeAt, ← hT1, ← hT2]
     case pool =>
       simp only [Spec.transactEffects, Spec.transferEffects, if_neg hext']; rfl
     case config =>
-      show toConfig (configAt s' (configAddr d)) (treeAt s' (treeAddr d)) = _
+      show toConfig (s'.configAccount d.configAddress) (s'.treeAccount d.treeAddress) = _
       simp only [Spec.transactEffects, Spec.transferEffects, if_neg hext']
-      show toConfig (configAt s' (configAddr d)) (treeAt s' (treeAddr d))
-        = toConfig (configAt s (configAddr d)) (treeAt s (treeAddr d))
+      show toConfig (s'.configAccount d.configAddress) (s'.treeAccount d.treeAddress)
+        = toConfig (s.configAccount d.configAddress) (s.treeAccount d.treeAddress)
       rw [hcfgAt', htreeAt', hcfgAt, htreeAt]
       simp only [toConfig, hmax2, hmax1, hau2, hau1]
     case bal =>
@@ -998,7 +980,45 @@ theorem transact_refines
       funext x
       show (s' (fromPubkey x)).lamports.val = _
       rw [(hs'k _).1]
-  exact ⟨⟨hpre, heff⟩, hwf'⟩
+  exact ⟨hpre, heff⟩
+
+omit [Spec.PoseidonHashes] [Spec.Sha] [Spec.Groups] [AddCommGroup Spec.G1]
+  [Module Spec.F Spec.G1] [CommGroup Spec.GT] [Spec.Pairing]
+  [Spec.Deployment] in
+/-- What `PdasDoNotSign` gives about the signer of an accepted `transact`. -/
+theorem signerNotProgram_of_pdas {d : Deployment} {s s' : State} {tx : TxEnv}
+    {a : TransactAccounts} {proof : zkcash_core.transact.Proof} {extAmount : I64} {fee : U64}
+    {out1 out2 : Slice U8} {events : List CommitmentData}
+    (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
+    (wf : WellFormed d s) (solana : PdasDoNotSign d tx.toTxContext) : SignerNotProgram d s a := by
+  have hx : execTransact d s tx a proof extAmount fee out1 out2 = .ok (s', events) := hstep
+  obtain ⟨tree, tt, config, mb, s₁, env', tree', ap, hvalid, -⟩ := execTransact_ok hx
+  have hsig : ∀ seeds, a.signer ≠ d.pda seeds := fun seeds e => solana seeds (e ▸ hvalid.signer)
+  refine ⟨hsig _, hsig _, hsig _, ?_, ?_, ?_⟩
+  · rw [hvalid.nullifier0.1]; exact hsig _
+  · rw [hvalid.nullifier1.1]; exact hsig _
+  · rintro ⟨ho, b, hd⟩
+    obtain ⟨seeds, hk⟩ := wf.nullifiers _ b ⟨ho, hd⟩
+    exact hsig seeds hk
+
+/-- **One `transact`, exactly**: the spec's `transact` holds between the old and new worlds. -/
+theorem transact_refines
+    {d : Deployment} {rent : Nat → U64} {s s' : State} {tx : TxEnv}
+    {a : TransactAccounts} {proof : zkcash_core.transact.Proof} {extAmount : I64} {fee : U64}
+    {out1 out2 : Slice U8} {events : List CommitmentData}
+    (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
+    (hashes : HashesAgree d)
+    (wf : WellFormed d s)
+    (solana : PdasDoNotSign d tx.toTxContext) (hrentPos : tx.RentPositive)
+    (crypto : NewNullifierAddressesDiffer d proof) (circuit : CircuitFacts d {proof})
+    (rentFixed : SameRent rent tx.minimumBalance)
+    (hProofValid : d.crypto.proofVerifier.verify proof = ok true →
+      Spec.proofValid (toInputs ⟨⟨tx.signers⟩, a, ⟨proof, extAmount, fee, out1, out2⟩⟩))
+    (hmint : Spec.Deployment.solMint = toPubkey zkcash_core.transact.SOL_ADDRESS) :
+    let inputs := toInputs ⟨⟨tx.signers⟩, a, ⟨proof, extAmount, fee, out1, out2⟩⟩
+    Spec.transact inputs (toWorld d rent s) (toWorld d rent s') :=
+  transact_refines_of hstep hashes wf (signerNotProgram_of_pdas hstep wf solana) hrentPos crypto
+    circuit rentFixed hProofValid hmint
 
 /-- **One `transact`, up to changes allowed between transactions**: the spec's `transact` holds
     from the old world after an allowed change, to a world from which an allowed change leads to
@@ -1008,34 +1028,34 @@ theorem transact_refines_between
     {a : TransactAccounts} {proof : zkcash_core.transact.Proof} {extAmount : I64} {fee : U64}
     {out1 out2 : Slice U8} {events : List CommitmentData}
     (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
-    (hashes : HashesAgree d.crypto)
+    (hashes : HashesAgree d)
     (wf : WellFormed d s)
-    (solana : SolanaFacts d tx) (hrentPos : tx.RentPositive)
-    (crypto : CryptoFacts d proof) (circuit : CircuitFacts d {proof})
+    (solana : PdasDoNotSign d tx.toTxContext) (hrentPos : tx.RentPositive)
+    (crypto : NewNullifierAddressesDiffer d proof) (circuit : CircuitFacts d {proof})
     (rentFixed : tx.minimumBalance = some rent)
     (hProofValid : d.crypto.proofVerifier.verify proof = ok true →
-      Spec.proofValid (toInputs tx.signers a proof extAmount fee out1 out2)) :
-    let inputs := toInputs tx.signers a proof extAmount fee out1 out2
+      Spec.proofValid (toInputs ⟨⟨tx.signers⟩, a, ⟨proof, extAmount, fee, out1, out2⟩⟩))
+    (hmint : Spec.Deployment.solMint = toPubkey zkcash_core.transact.SOL_ADDRESS) :
+    let inputs := toInputs ⟨⟨tx.signers⟩, a, ⟨proof, extAmount, fee, out1, out2⟩⟩
     ∃ b₁ : Spec.UpdatedValuesBetweenTransacts, b₁.Allowed (toWorld d rent s) ∧
       ∃ b₂ : Spec.UpdatedValuesBetweenTransacts,
       Spec.transact inputs ((toWorld d rent s).withUpdatedValues b₁)
         ((toWorld d rent s').withUpdatedValues b₂) ∧
       (Spec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent s')).Allowed
         ((toWorld d rent s').withUpdatedValues b₂) ∧
-      WellFormed d s' ∧ b₁.adminChanges = [] ∧
-      b₁.balances (toPubkey (poolAddr d)) = lamportsOf s (poolAddr d) ∧
+      b₁.adminChanges = [] ∧
+      b₁.balances (toPubkey d.poolAddress) = s.lamports d.poolAddress ∧
       b₂.config = (toWorld d rent s').state.config ∧
-      b₂.balances (toPubkey (poolAddr d)) = lamportsOf s' (poolAddr d) := by
-  obtain ⟨htx, wf'⟩ :=
-    transact_refines hstep hashes wf solana hrentPos crypto circuit rentFixed hProofValid
+      b₂.balances (toPubkey d.poolAddress) = s'.lamports d.poolAddress := by
+  have htx :=
+    transact_refines hstep hashes wf solana hrentPos crypto circuit rentFixed hProofValid hmint
   have h1 := Spec.World.withUpdatedValues_self (toWorld d rent s)
   have h2 := Spec.World.withUpdatedValues_self (toWorld d rent s')
   refine ⟨Spec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent s),
-    ⟨le_refl _, .noChange _⟩, Spec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent s'),
-    by rw [h1, h2]; exact htx, ⟨?_, ?_⟩, wf', rfl, ?_, rfl, ?_⟩
-  · rw [h2]; exact le_refl _
-  · rw [h2]; exact .noChange _
-  · show lamportsOf s (fromPubkey (toPubkey (poolAddr d))) = _; rw [fromPubkey_toPubkey]
-  · show lamportsOf s' (fromPubkey (toPubkey (poolAddr d))) = _; rw [fromPubkey_toPubkey]
+    Spec.UpdatedValuesBetweenTransacts.Allowed.self _ (toWorld_fit d rent s),
+    Spec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent s'),
+    by rw [h1, h2]; exact htx, by rw [h2]; exact .self _ (toWorld_fit d rent s'), rfl, ?_, rfl, ?_⟩
+  · show s.lamports (fromPubkey (toPubkey d.poolAddress)) = _; rw [fromPubkey_toPubkey]
+  · show s'.lamports (fromPubkey (toPubkey d.poolAddress)) = _; rw [fromPubkey_toPubkey]
 
 end Connection

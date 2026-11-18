@@ -181,7 +181,7 @@ theorem pubkeyToBytes_toPubkey (k : Pubkey) : Spec.PubkeyToBytes (toPubkey k) = 
   have hlen : k.val.length = 32 := by simp
   have hlt : leNatOfList k.val < 2 ^ 256 := by
     have := leNatOfList_lt k.val; rw [hlen] at this; simpa using this
-  simp only [Spec.PubkeyToBytes, toPubkey, BitVec.toNat_ofNat, Nat.mod_eq_of_lt hlt]
+  simp only [Spec.PubkeyToBytes, toPubkey_def, BitVec.toNat_ofNat, Nat.mod_eq_of_lt hlt]
   have h := natToBytesLE_leNat k.val
   rw [hlen] at h; exact h
 

@@ -32,14 +32,17 @@ def minusTwo32 : Std.Array U8 32#usize := Std.Array.make 32#usize
    0x79#u8, 0xb9#u8, 0x70#u8, 0x91#u8, 0x43#u8, 0xe1#u8, 0xf5#u8, 0x93#u8, 0xef#u8, 0xff#u8,
    0xff#u8, 0xff#u8] (by simp)
 
+/-- The spec's modulus `p` is the code's `bn254ScalarModulus`. -/
+theorem p_eq : Spec.p = bn254ScalarModulus := rfl
+
 theorem beNat_three32 : beNat three32 = 3 := by rfl
 theorem beNat_minusTwo32 : beNat minusTwo32 = bn254ScalarModulus - 2 := by rfl
-theorem toF_three32 : toF three32 = 3 := by simp only [toF, beNat_three32]; rfl
+theorem toF_three32 : toF three32 = 3 := by simp only [toF_def, beNat_three32]; rfl
 theorem toF_minusTwo32 : toF minusTwo32 = -2 := by
-  rw [toF, beNat_minusTwo32, ← p_eq, Nat.cast_sub (by decide), ZMod.natCast_self, zero_sub]; rfl
-theorem canonical_three32 : Canonical three32 := by simp only [Canonical, beNat_three32]; decide
+  rw [toF_def, beNat_minusTwo32, ← p_eq, Nat.cast_sub (by decide), ZMod.natCast_self, zero_sub]; rfl
+theorem canonical_three32 : Canonical three32 := by simp only [canonical_def, beNat_three32]; decide
 theorem canonical_minusTwo32 : Canonical minusTwo32 := by
-  simp only [Canonical, beNat_minusTwo32]; decide
+  simp only [canonical_def, beNat_minusTwo32]; decide
 
 /-- The withdrawal's proof bytes: root `1`, public amount `-2`, nullifiers `2` and `3`, two
     zero output commitments. The proof points are those of the toy deposit. -/
@@ -133,7 +136,7 @@ theorem toy_append_history (c : Spec.F) (T : Spec.Tree) :
   split_ifs <;> rfl
 
 theorem dep_relation :
-    Spec.RelationS (toInputs toyTx.signers depA depProof 2#i64 0#u64 emptySlice emptySlice).pubInputs depWit where
+    Spec.RelationS (toInputs ⟨⟨toyTx.signers⟩, depA, ⟨depProof, 2#i64, 0#u64, emptySlice, emptySlice⟩⟩).pubInputs depWit where
   outputCommitmentIntegrity := by
     intro j
     fin_cases j <;>
@@ -160,7 +163,7 @@ theorem dep_relation :
     intro j; fin_cases j <;> simp [depWit, hval]
 
 theorem spend_relation {ext : I64} {fee : U64} :
-    Spec.RelationS (toInputs toyTx.signers spendA spendProof ext fee emptySlice emptySlice).pubInputs spendWit where
+    Spec.RelationS (toInputs ⟨⟨toyTx.signers⟩, spendA, ⟨spendProof, ext, fee, emptySlice, emptySlice⟩⟩).pubInputs spendWit where
   outputCommitmentIntegrity := by
     intro j
     fin_cases j <;>
@@ -200,41 +203,43 @@ theorem spend_pre (sB : State) (tree₂ t1 : merkle_tree.MerkleTreeAccount) (con
   unfold HandlerPre
   have hsp := hsplit; unfold ToySplit at hsp
   obtain ⟨-, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, hTP, -⟩ := dep_addr
-  obtain ⟨-, w0P, -, w01, -, -, -, w1P, -, w11, -, -, w0n1, -⟩ := spend_addr
+  obtain ⟨w0t, w0P, w0c, w01, -, -, w1t, w1P, w1c, w11, -, -, w0n1, -⟩ := spend_addr
+  obtain ⟨tP, -, cP, -⟩ := addr_facts
   have hfacts := handlerAddr_facts toyTx.signers spendA spendProof ext fee emptySlice emptySlice sB 1#u64
-    tree₂ config ∅ w0n1 w0P w1P (Ne.symm w01) (Ne.symm w11) (Ne.symm hTP)
+    tree₂ config ∅ w0n1 w0P w1P (Ne.symm w01) (Ne.symm w11) (Ne.symm hTP) w0t w0c w1t w1c (Ne.symm tP)
+    (Ne.symm cP) rfl
   have hdec := decode_toInputs (signers := toyTx.signers) toyC spendProof spendA ext 0#u64 emptySlice emptySlice
     toy_alpha_decodes rfl toy_zeros_decodes
-  have he : (toInputs toyTx.signers spendA spendProof ext fee emptySlice emptySlice).extAmt = ext.val := rfl
-  have hf : (toInputs toyTx.signers spendA spendProof ext fee emptySlice emptySlice).f = fee.val := rfl
+  have he : (toInputs ⟨⟨toyTx.signers⟩, spendA, ⟨spendProof, ext, fee, emptySlice, emptySlice⟩⟩).extAmt = ext.val := rfl
+  have hf : (toInputs ⟨⟨toyTx.signers⟩, spendA, ⟨spendProof, ext, fee, emptySlice, emptySlice⟩⟩).f = fee.val := rfl
   have h3P : pk 3#u8 ≠ tokenA := by unfold tokenA; decide +kernel
   have h4P : pk 4#u8 ≠ tokenA := by unfold tokenA; decide +kernel
   have hpool : (handlerWorld spendA sB 1#u64 tree₂ config ∅ (handlerAddr spendA)).state.pool = toPubkey tokenA := rfl
   have hnr : (handlerWorld spendA sB 1#u64 tree₂ config ∅ (handlerAddr spendA)).nullifierRent = 0 := rfl
-  have hA : (toInputs toyTx.signers spendA spendProof ext fee emptySlice emptySlice).A = toPubkey (pk 3#u8) := rfl
-  have hs : (toInputs toyTx.signers spendA spendProof ext fee emptySlice emptySlice).s = toPubkey (pk 1#u8) := rfl
-  have ht : (toInputs toyTx.signers spendA spendProof ext fee emptySlice emptySlice).t = toPubkey (pk 4#u8) := rfl
+  have hA : (toInputs ⟨⟨toyTx.signers⟩, spendA, ⟨spendProof, ext, fee, emptySlice, emptySlice⟩⟩).A = toPubkey (pk 3#u8) := rfl
+  have hs : (toInputs ⟨⟨toyTx.signers⟩, spendA, ⟨spendProof, ext, fee, emptySlice, emptySlice⟩⟩).s = toPubkey (pk 1#u8) := rfl
+  have ht : (toInputs ⟨⟨toyTx.signers⟩, spendA, ⟨spendProof, ext, fee, emptySlice, emptySlice⟩⟩).t = toPubkey (pk 4#u8) := rfl
   have hpb : (handlerWorld spendA sB 1#u64 tree₂ config ∅ (handlerAddr spendA)).balances (toPubkey tokenA) = 3 := by
     show (sB (fromPubkey (toPubkey tokenA))).lamports.val = 3
     rw [fromPubkey_toPubkey, hpoolB]
   refine @Spec.transactPreconditions.mk _ (syscallGroups toyC) (inferInstanceAs (AddCommGroup Unit))
     (inferInstanceAs (Module Spec.F Unit))
     (inferInstanceAs (CommGroup Unit))
-    (syscallPairing toyC) (@Spec.Deployment.mk (syscallGroups toyC) (programKey toyC)) _ _
-    ?_ ?_ ?_ ?_ ⟨_, hdec, rfl⟩ ?_ ?_ hfacts.1 ?_ ?_ ?_ ?_ hfacts.2 ?_ ?_ ?_ ?_ ?_ ?_
+    (syscallPairing toyC) (programDeployment toyC) _ _
+    ?_ ?_ ?_ ?_ ⟨_, hdec, rfl⟩ ?_ ?_ hfacts.1 ?_ ?_ ?_ ?_ hfacts.2 ?_ ?_ ?_ ?_ ?_ ?_ (by unfold Spec.mintIsSol; rfl)
   · -- the root: the deposit's last append stored the root `1`
     show Spec.rootBytesKnown (toTree tree₂) (toBytes one32.val)
     rw [rootBytesKnown_iff]
     refine ⟨canonical_one32, ⟨⟨(toTree t1).rootIndex + 1, ?_⟩, by rw [toF_one32]; decide⟩⟩
     rw [htree, toy_append_history, toF_one32]
-  · show (Spec.natOfLE (List.replicate 32 0) : Spec.F) = toF zeros32
-    rw [toF_zeros32]; rfl
+  · unfold Spec.externalDataBound Spec.externalDataHash
+    rw [toy_extDataHash]; rfl
   · unfold Spec.feeSufficient; rw [he, hf]; simp [handlerWorld, toConfig, hwr]
     rcases hsp with ⟨h1, h2⟩ | ⟨h1, h2⟩ <;> simp [h1, h2]
   · unfold Spec.pubAmtConsistent; rw [he, hf]
     refine ⟨fun h => by omega, ?_⟩
     show toF minusTwo32 = _; rw [toF_minusTwo32]
-    rcases hsp with ⟨h1, h2⟩ | ⟨h1, h2⟩ <;> simp [h1, h2] <;> norm_num
+    rcases hsp with ⟨h1, h2⟩ | ⟨h1, h2⟩ <;> simp [h1, h2]; norm_num
   · simp [Spec.nullifiersFresh, Spec.State.spent, handlerWorld]
   · show toF two32 ≠ toF three32
     rw [toF_two32, toF_three32]; decide
@@ -340,14 +345,15 @@ theorem toy_spend_ok (s₂ : State) (tree₂ t1 : merkle_tree.MerkleTreeAccount)
   have hfeeB : (sB (pk 4#u8)).lamports.val = 0 := by
     rw [hsB _ p41' q40 q41]; exact (hz _ p4T p4K p4C p41' p4a p4b).1
   -- the handler
-  obtain ⟨ap, env', tree', hh⟩ := handler_ok_exists toyCrypto toyC toyLaws toyHashesAgree toyHashesSucceed
-    toySyscalls toyKey spendA sB 1#u64 tree₂ config ∅ (handlerAddr spendA) spendProof ext fee emptySlice
+  obtain ⟨ap, env', tree', hh⟩ := handler_ok_exists toyD toyC toyLaws toyHashesAgree toyPoseidonSucceeds
+    toySha256Succeeds toySyscalls toyKey
+    spendA sB 1#u64 tree₂ config ∅ (handlerAddr spendA) spendProof ext fee emptySlice
     emptySlice hshape
     hroots hsubs (by omega) (by omega) (by omega)
     ⟨by rw [oB, oA, hPs], by rw [dB, dA, hPs]; rfl⟩ toyFit (by rcases hsplit with ⟨h, -⟩ | ⟨h, -⟩ <;> rw [h] <;> decide) alpha_ne_zeros
     (spend_pre sB tree₂ t1 config c htree hTn hwr hpoolB hrecB hfeeB hsplit)
   -- lamports are conserved
-  have hok := handler_ok toyCrypto _ _ _ _ _ _ _ _ _ _ _ _ _ hh
+  have hok := handler_ok toyCrypto toyCrypto.sha256 _ _ _ _ _ _ _ _ _ _ _ _ _ hh
   obtain ⟨v', -, -, hwd, -⟩ := hok.rent
   have hneg : ext.val < 0 := by rcases hsplit with ⟨h, -⟩ | ⟨h, -⟩ <;> rw [h] <;> decide
   have hsum : ext.val.natAbs + fee.val = 2 := by
@@ -402,8 +408,8 @@ theorem toy_spend_execution {ext : I64} {fee : U64} (hsplit : ToySplit ext fee) 
       step toyD toyS0 toyTx (.initialize toyInitA) = .ok (s₁, []) ∧
       step toyD s₁ toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) = .ok (s₂, e₂) ∧
       step toyD s₂ toyTx (.transact spendA spendProof ext fee emptySlice emptySlice) = .ok (s₃, e₃) ∧
-      Initialized toyD s₁ ∧ (CryptoFacts toyD spendProof ∧ CircuitFacts toyD {spendProof}) ∧
-      SameRent toyRent toyTx ∧
+      Initialized toyD s₁ ∧ (NewNullifierAddressesDiffer toyD spendProof ∧ CircuitFacts toyD {spendProof}) ∧
+      SameRent toyRent toyTx.minimumBalance ∧
       (s₂ (pk 1#u8)).owner = systemProgram ∧ (s₂ (pk 1#u8)).data.isEmpty := by
   obtain ⟨s₁, tree, token, config, hinit, hT, hK, hC, hP, hO, hshape, hroots, hsubs, hT0, hTn, hTb, hTm,
     hkb, hcb, hdr, hwr, hmr⟩ := toy_init_ok
@@ -413,8 +419,11 @@ theorem toy_spend_execution {ext : I64} {fee : U64} (hsplit : ToySplit ext fee) 
     show (do let s' ← execInitialize toyD toyS0 toyTx toyInitA; pure (s', [])) = _
     rw [hinit]; rfl
   -- the deposit's two appends
-  obtain ⟨-, hsh1, -, hn1, -, -, hb1⟩ := append_ok' toyCrypto toyHashesAgree _ tree t1 p1 hshape hap1
-  obtain ⟨htree, hsh2, -, hn2, -, -, hb2⟩ := append_ok' toyCrypto toyHashesAgree _ t1 tree₂ p2 hsh1 hap2
+  have hl : Canonical depProof.output_commitments.val[0]! := by show Canonical zeros32; exact canonical_zeros32
+  have hl' : Canonical depProof.output_commitments.val[1]! := by show Canonical zeros32; exact canonical_zeros32
+  obtain ⟨-, hsh1, -, hn1, -, -, hb1⟩ := append_ok' toyD toyHashesAgree _ tree t1 p1 hshape hsubs hl hap1
+  have hsubs1 := append_subtrees_canonical' toyD toyHashesAgree _ tree t1 p1 hshape hsubs hl hap1
+  obtain ⟨htree, hsh2, -, hn2, -, -, hb2⟩ := append_ok' toyD toyHashesAgree _ t1 tree₂ p2 hsh1 hsubs1 hl' hap2
   -- the tree after the deposit stores canonical roots and subtrees (`WellFormed`)
   have hrun₂ : Run toyD toyS0 [.program toyTx (.initialize toyInitA) [],
       .program toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) e₂] s₂ :=
@@ -432,10 +441,10 @@ theorem toy_spend_execution {ext : I64} {fee : U64} (hsplit : ToySplit ext fee) 
   have p31' : pk 3#u8 ≠ pk 1#u8 := pk_ne (by decide)
   have p41' : pk 4#u8 ≠ pk 1#u8 := pk_ne (by decide)
   refine ⟨s₁, s₂, s₃, e₂, e₃, hinitStep, hstep₂, hstep₃,
-    ⟨⟨tree, by unfold HoldsTree; rw [show treeAddr toyD = treeA from rfl, hT]; exact ⟨rfl, rfl⟩⟩,
-     ⟨token, by unfold HoldsTreeToken; rw [show poolAddr toyD = tokenA from rfl, hK]; exact ⟨rfl, rfl⟩⟩,
-     ⟨config, by unfold HoldsGlobalConfig; rw [show configAddr toyD = configA from rfl, hC]; exact ⟨rfl, rfl⟩⟩⟩,
-    ⟨⟨?_⟩, CircuitFacts.of_distinct ?_⟩, rfl, by rw [hP2], by rw [hP2]; rfl⟩
+    ⟨⟨tree, by unfold HoldsTree; rw [show toyD.treeAddress = treeA from rfl, hT]; exact ⟨rfl, rfl⟩⟩,
+     ⟨token, by unfold HoldsTreeToken; rw [show toyD.poolAddress = tokenA from rfl, hK]; exact ⟨rfl, rfl⟩⟩,
+     ⟨config, by unfold HoldsGlobalConfig; rw [show toyD.configAddress = configA from rfl, hC]; exact ⟨rfl, rfl⟩⟩⟩,
+    ⟨?_, CircuitFacts.of_distinct ?_⟩, rfl, by rw [hP2], by rw [hP2]; rfl⟩
   · intro x hx y hy hxy
     simp only [Set.mem_insert_iff, Set.mem_singleton_iff] at hx hy
     rcases hx with rfl | rfl <;> rcases hy with rfl | rfl
@@ -445,40 +454,65 @@ theorem toy_spend_execution {ext : I64} {fee : U64} (hsplit : ToySplit ext fee) 
     · rfl
   · show two32 ≠ three32; decide +kernel
 
-/-- The three-event toy execution, split at any program step. -/
-theorem toy_split3 {e₁ e₂ e₃ ev : Event} {pre post : List Event} (h : [e₁, e₂, e₃] = pre ++ ev :: post) :
-    ev = e₁ ∨ ev = e₂ ∨ ev = e₃ := by
-  rcases pre with _ | ⟨x, _ | ⟨y, _ | ⟨z, pre⟩⟩⟩
-  · simp at h; exact Or.inl h.1.symm
-  · simp at h; exact Or.inr (Or.inl h.2.1.symm)
-  · simp at h; exact Or.inr (Or.inr h.2.2.1.symm)
-  · simp at h
+/-- The withdrawal example's addresses (nullifiers `two32`, `three32`) don't collide. -/
+theorem toy_collisionFree_spend : TransactAddressesDistinct toyD spendProof := by
+  have hnd : ([toyD.pdaInput merkleTreeSeeds, toyD.pdaInput treeTokenSeeds,
+      toyD.pdaInput globalConfigSeeds,
+      toyD.pdaInput (nullifier0Seeds two32), toyD.pdaInput (nullifier1Seeds three32),
+      toyD.pdaInput (nullifier0Seeds three32), toyD.pdaInput (nullifier1Seeds two32)].map
+        toyD.createProgramAddress).Nodup := by
+    unfold toyD; decide +kernel
+  have e0 : spendProof.input_nullifiers.val[0]! = two32 := rfl
+  have e1 : spendProof.input_nullifiers.val[1]! = three32 := rfl
+  intro x hx y hy hxy
+  simp only [transactSeeds, fixedSeeds, e0, e1, Set.mem_union, Set.mem_insert_iff,
+    Set.mem_singleton_iff] at hx hy
+  exact List.inj_on_of_nodup_map hnd (by simpa [or_assoc] using hx)
+    (by simpa [or_assoc] using hy) hxy
 
 /-! ## Non-vacuity, with a real spend -/
 
 /-- `transact_connection`'s hypotheses hold together in one toy deployment, for an accepted
     deposit and for an accepted withdrawal (a transaction that pays out of the pool). -/
 theorem toy_transact_nonvacuous :
-    ∃ (d : Deployment) (rent : Nat → U64) (s₀ : State)
+    ∃ (d : Deployment) (rent : Nat → U64)
       (C : AltBn128Contracts d.crypto.altBn128 Unit Unit Unit),
-      PairingLaws C.e ∧ Genesis d.programId s₀ ∧ DeploymentFacts d ∧ HashesAgree d.crypto ∧
-      (∃ (evs : List Event) (s s' : State) (tx : TxEnv) (a : TransactAccounts) (proof : transact.Proof)
-          (extAmount : I64) (fee : U64) (out1 out2 : Slice U8) (events : List CommitmentData),
-        Run d s₀ evs s ∧ Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s' ∧
-        extAmount.val > 0 ∧ SolanaFacts d tx ∧ CryptoFacts d proof ∧ CircuitFacts d {proof} ∧
-        SameRent rent tx) ∧
-      (∃ (evs : List Event) (s s' : State) (tx : TxEnv) (a : TransactAccounts) (proof : transact.Proof)
-          (extAmount : I64) (fee : U64) (out1 out2 : Slice U8) (events : List CommitmentData),
-        Run d s₀ evs s ∧ Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s' ∧
-        extAmount.val < 0 ∧ SolanaFacts d tx ∧ CryptoFacts d proof ∧ CircuitFacts d {proof} ∧
-        SameRent rent tx) := by
+      PairingLaws C.e ∧ ProgramNotSystem d ∧ HashesAgree d ∧
+      (∃ (s s' : State) (tx : TransactTx) (sysvarRent : Option (Nat → U64))
+          (events : List CommitmentData),
+        Reachable d s ∧ Run d s [.program (tx.env sysvarRent) tx.instruction events] s' ∧
+        tx.args.extAmount.val > 0 ∧ PdasDoNotSign d tx.ctx ∧ ¬ AddressCollision d {tx.args.proof} ∧
+        CircuitFacts d {tx.args.proof} ∧ SameRent rent sysvarRent) ∧
+      (∃ (s s' : State) (tx : TransactTx) (sysvarRent : Option (Nat → U64))
+          (events : List CommitmentData),
+        Reachable d s ∧ Run d s [.program (tx.env sysvarRent) tx.instruction events] s' ∧
+        tx.args.extAmount.val < 0 ∧ PdasDoNotSign d tx.ctx ∧ ¬ AddressCollision d {tx.args.proof} ∧
+        CircuitFacts d {tx.args.proof} ∧ SameRent rent sysvarRent) := by
   obtain ⟨s₁, s₂, s₃, e₂, e₃, h1, h2, h3, -, crypto, outside, -⟩ := toy_spend_execution toySplit_one
   obtain ⟨s₁', s₂', e₂', h1', -, hpid, h2', -, solana, depCrypto, depOutside⟩ := toy_execution
-  exact ⟨toyD, toyRent, toyS0, toyC, toyLaws, toyGenesis, toyDeploymentFacts, toyHashesAgree,
-    ⟨_, s₁', s₂', toyTx, depA, depProof, 2#i64, 0#u64, emptySlice, emptySlice, e₂',
-      .program h1' toyTx_rentPositive (.nil _), .program h2' toyTx_rentPositive (.nil _), by simp, solana, depCrypto.1, depCrypto.2, depOutside⟩,
-    ⟨_, s₂, s₃, toyTx, spendA, spendProof, wdExt, 1#u64, emptySlice, emptySlice, e₃,
-      .program h1 toyTx_rentPositive (.program h2 toyTx_rentPositive (.nil _)), .program h3 toyTx_rentPositive (.nil _), by rw [wdExt_val]; decide, solana, crypto.1, crypto.2, outside⟩⟩
+  exact ⟨toyD, toyRent, toyC, toyLaws, toyProgramNotSystem, toyHashesAgree,
+    ⟨s₁', s₂', ⟨toyTx.toTxContext, depA, ⟨depProof, 2#i64, 0#u64, emptySlice, emptySlice⟩⟩,
+      toyTx.minimumBalance, e₂',
+      ⟨_, _, toyGenesis, .program h1' toyTx_rentPositive (.nil _)⟩, .program h2' toyTx_rentPositive (.nil _), by simp, solana, noCollision_of_free (toy_collisionFree _ _), depCrypto.2, depOutside⟩,
+    ⟨s₂, s₃, ⟨toyTx.toTxContext, spendA, ⟨spendProof, wdExt, 1#u64, emptySlice, emptySlice⟩⟩,
+      toyTx.minimumBalance, e₃,
+      ⟨_, _, toyGenesis, .program h1 toyTx_rentPositive (.program h2 toyTx_rentPositive (.nil _))⟩, .program h3 toyTx_rentPositive (.nil _), by rw [wdExt_val]; decide, solana, noCollision_of_free toy_collisionFree_spend, crypto.2, outside⟩⟩
+
+/-- The deposit's seeds are collision-free. -/
+theorem toy_collisionFree_dep : TransactAddressesDistinct toyD depProof :=
+  toy_collisionFree _ _
+
+/-- No address collision in an example execution whose transactions use the deposit's or the
+    withdrawal's proof. -/
+theorem toy_noCollision (evs : List Event)
+    (h : ∀ tx a proof ext fee out1 out2 em,
+      Event.program tx (.transact a proof ext fee out1 out2) em ∈ evs →
+      proof = depProof ∨ proof = spendProof) :
+    ¬ AddressCollision toyD (proofsIn evs) :=
+  noExecutionCollision toy_fixed_addresses fun tx a proof ext fee out1 out2 em hm => by
+    rcases h tx a proof ext fee out1 out2 em hm with rfl | rfl
+    · exact toy_collisionFree_dep
+    · exact toy_collisionFree_spend
 
 /-- **The hypotheses of `run_connection` and of the goals about runs hold together, with a real
     spend.** The execution `initialize`, deposit, withdrawal satisfies every hypothesis of
@@ -490,9 +524,9 @@ theorem toy_spend_nonvacuous :
     ∃ (d : Deployment) (s₀ s : State) (evs : List Event) (states : List State)
       (C : AltBn128Contracts d.crypto.altBn128 Unit Unit Unit),
       PairingLaws C.e ∧ Genesis d.programId s₀ ∧ ExecutionPath d s₀ evs states s ∧
-      DeploymentFacts d ∧
-      HashesAgree d.crypto ∧ ExecutionAssumptions d s₀ evs ∧
-      (∀ tx ix em, .program tx ix em ∈ evs → SameRent toyRent tx) ∧ Initialized d s ∧
+      ProgramNotSystem d ∧
+      HashesAgree d ∧ ExecutionAssumptions d evs ∧ ¬ AddressCollision d (proofsIn evs) ∧
+      (∀ tx ix em, .program tx ix em ∈ evs → SameRent toyRent tx.minimumBalance) ∧ Initialized d s ∧
       (runTxs evs).length = 2 ∧
       ∃ wit : ℕ → Spec.Witness,
         (∀ j (h : j < (runTxs evs).length), Spec.RelationS (runTxs evs)[j].pubInputs (wit j)) ∧
@@ -507,14 +541,19 @@ theorem toy_spend_nonvacuous :
   have htxs : runTxs [Event.program toyTx (.initialize toyInitA) [],
       .program toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) e₂,
       .program toyTx (.transact spendA spendProof wdExt 1#u64 emptySlice emptySlice) e₃] =
-      [toInputs toyTx.signers depA depProof 2#i64 0#u64 emptySlice emptySlice,
-        toInputs toyTx.signers spendA spendProof wdExt 1#u64 emptySlice emptySlice] := by
+      [toInputs ⟨⟨toyTx.signers⟩, depA, ⟨depProof, 2#i64, 0#u64, emptySlice, emptySlice⟩⟩,
+        toInputs ⟨⟨toyTx.signers⟩, spendA, ⟨spendProof, wdExt, 1#u64, emptySlice, emptySlice⟩⟩] := by
     simp [runTxs, stepTxs]
   refine ⟨toyD, toyS0, s₃, _, _, toyC, toyLaws, toyGenesis, .program h1 toyTx_rentPositive (.program h2 toyTx_rentPositive (.program h3 toyTx_rentPositive (.nil _))),
-    toyDeploymentFacts, toyHashesAgree, ⟨toy_fixed_addresses, ?_⟩, ?_, hi₃, by rw [htxs]; rfl,
+    toyProgramNotSystem, toyHashesAgree, ExecutionFacts.toAssumptions ⟨toy_fixed_addresses, ?_⟩,
+    toy_noCollision _ (by
+      intro tx a proof ext fee out1 out2 em hm
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
+      rcases hm with h | h | h <;> cases h <;> simp), ?_, hi₃, by rw [htxs]; rfl,
     fun j => if j = 0 then depWit else spendWit, ?_, ?_, rfl, rfl⟩
-  · intro pre post s tx ix em hsplit _
-    rcases toy_split3 hsplit with hev | hev | hev <;> cases hev
+  · intro tx ix em hm
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
+    rcases hm with hev | hev | hev <;> cases hev
     · trivial
     · exact ⟨solana, depCrypto⟩
     · exact ⟨solana, crypto⟩

@@ -1,4 +1,5 @@
 import Connection.Proofs.WellFormed
+import Connection.Proofs.ExecutionView
 import Connection.Proofs.Bridge
 open Aeneas Aeneas.Std Result PrivacyCash.Model
 
@@ -49,7 +50,7 @@ theorem env_initialized {d : Deployment} {s s' : State} (h : EnvStep d.programId
 /-- Two states with the same spec tree and the same nullifier accounts map to worlds that
     differ only in their balances and config. -/
 theorem toWorld_withUpdatedValues_of_same_tree {d : Deployment} {rent : Nat → U64}
-    {s s' : State} (ht : toTree (treeAt s' (treeAddr d)) = toTree (treeAt s (treeAddr d)))
+    {s s' : State} (ht : toTree (s'.treeAccount d.treeAddress) = toTree (s.treeAccount d.treeAddress))
     (hn : nullifierAccountsOf d s' = nullifierAccountsOf d s) :
     toWorld d rent s' = (toWorld d rent s).withUpdatedValues
       (Spec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent s')) := by
@@ -81,11 +82,11 @@ theorem set_data_nullifierAccounts {d : Deployment} {s : State} {key : Pubkey} {
   rw [mem_nullifierAccountsOf, mem_nullifierAccountsOf]
   by_cases hk : fromPubkey x = key
   · rw [hk]
-    simp only [IsNullifierAccount, State.set, if_pos rfl]
+    simp only [PrivacyCash.Model.Deployment.IsNullifierAccount, State.set]
     constructor
     · rintro ⟨-, b, hb⟩; exact absurd hb (hnew b)
     · rintro ⟨-, b, hb⟩; exact absurd hb (hold b)
-  · simp only [IsNullifierAccount, State.set, if_neg hk]
+  · simp only [PrivacyCash.Model.Deployment.IsNullifierAccount, State.set, if_neg hk]
 
 /-- **Outside actions are changes allowed between transactions.** The program's data is
     untouched, and the pool only gains lamports. -/
@@ -100,16 +101,23 @@ theorem env_between {d : Deployment} {rent : Nat → U64} {s s' : State}
   have dc := ((h _).1 hc.1).2.1
   have hw := toWorld_withUpdatedValues_of_same_tree (d := d) (rent := rent)
     (s := s) (s' := s')
-    (by simp only [treeAt, dt]) (env_nullifierAccounts h)
-  refine ⟨hw, ⟨?_, ?_⟩⟩
-  · obtain ⟨-, dp, lp⟩ := (h _).1 hp.1
-    show lamportsOf s (fromPubkey (toPubkey (poolAddr d)))
-      ≤ lamportsOf s' (fromPubkey (toPubkey (poolAddr d)))
-    rw [fromPubkey_toPubkey]
-    simp only [lamportsOf, dp, hp.2]
-    exact lp
+    (by simp only [PrivacyCash.Model.State.treeAccount, dt]) (env_nullifierAccounts h)
+  refine ⟨hw, ⟨?_, toWorld_fit d rent s', ?_⟩⟩
+  · -- the program owns its accounts, so they only gain
+    intro x hx
+    show s.lamports (fromPubkey x) ≤ s'.lamports (fromPubkey x)
+    have hown : (s (fromPubkey x)).owner = d.programId := by
+      rcases hx with rfl | hx | rfl | rfl
+      · show (s (fromPubkey (toPubkey d.poolAddress))).owner = _
+        rw [fromPubkey_toPubkey]; exact hp.1
+      · exact (mem_nullifierAccountsOf.mp hx).1
+      · show (s (fromPubkey (toPubkey d.treeAddress))).owner = _
+        rw [fromPubkey_toPubkey]; exact ht.1
+      · show (s (fromPubkey (toPubkey d.configAddress))).owner = _
+        rw [fromPubkey_toPubkey]; exact hc.1
+    exact ((h _).1 hown).2.2
   · have : (toWorld d rent s').state.config = (toWorld d rent s).state.config := by
-      simp only [toWorld, treeAt, configAt, dt, dc]
+      simp only [toWorld, PrivacyCash.Model.State.treeAccount, PrivacyCash.Model.State.configAccount, dt, dc]
     show Spec.ReachableByAdminChanges [] _ (toWorld d rent s').state.config
     rw [this]; exact .noChange _
 
@@ -168,39 +176,41 @@ theorem ugc_between {d : Deployment} {rent : Nat → U64} {s s' : State}
   | Ok u =>
   cases h
   have hval := not_not.mp hv
-  obtain ⟨hka, hd0, hw0, hm0⟩ := wf.config _ _ hval.globalConfig.1
+  obtain ⟨hka, hd0, hw0, hm0, -⟩ := wf.config _ _ hval.globalConfig.1
   obtain ⟨hc', hmv⟩ := ugc_spec config config' dep wd m (ofResult_ok hres)
   obtain ⟨⟨t, ht⟩, ⟨p, hp⟩, -⟩ := hi
-  have hne : treeAddr d ≠ a.globalConfig := fun e => by
+  have hne : d.treeAddress ≠ a.globalConfig := fun e => by
     have h1 := ht.2; rw [e, hval.globalConfig.1.2] at h1; cases h1
-  have hpne : poolAddr d ≠ a.globalConfig := fun e => by
+  have hpne : d.poolAddress ≠ a.globalConfig := fun e => by
     have h1 := hp.2; rw [e, hval.globalConfig.1.2] at h1; cases h1
   set s' := s.set a.globalConfig { s a.globalConfig with data := .globalConfig config' } with hs'
   have keep : ∀ k, k ≠ a.globalConfig → s' k = s k := fun k hk => set_data_other hk
   have hkey : s' a.globalConfig = { s a.globalConfig with data := .globalConfig config' } := by simp [hs']
-  have htree : treeAt s' (treeAddr d) = treeAt s (treeAddr d) := by
-    simp only [treeAt, keep _ hne]
+  have htree : s'.treeAccount d.treeAddress = s.treeAccount d.treeAddress := by
+    simp only [PrivacyCash.Model.State.treeAccount, keep _ hne]
   refine ⟨⟨⟨t, by unfold HoldsTree; rw [keep _ hne]; exact ht⟩, ⟨p, by unfold HoldsTreeToken; rw [keep _ hpne]; exact hp⟩,
     ⟨config', ?_⟩⟩, toWorld_withUpdatedValues_of_same_tree (by rw [htree])
       (set_data_nullifierAccounts (by rw [hval.globalConfig.1.2]; intro b h; cases h)
-        (by intro b h; cases h)), ⟨?_, ?_⟩⟩
+        (by intro b h; cases h)), ⟨?_, toWorld_fit d rent _, ?_⟩⟩
   · unfold HoldsGlobalConfig; rw [← hka, hkey]; exact ⟨hval.globalConfig.1.1, rfl⟩
   · -- balances: unchanged
-    show lamportsOf s (fromPubkey (toPubkey (poolAddr d)))
-      ≤ lamportsOf s' (fromPubkey (toPubkey (poolAddr d)))
-    simp only [fromPubkey_toPubkey, lamportsOf, keep _ hpne, le_refl]
+    intro x _
+    show s.lamports (fromPubkey x) ≤ s'.lamports (fromPubkey x)
+    by_cases hx : fromPubkey x = a.globalConfig
+    · rw [PrivacyCash.Model.State.lamports, PrivacyCash.Model.State.lamports, hx, hkey]
+    · rw [PrivacyCash.Model.State.lamports, PrivacyCash.Model.State.lamports, keep _ hx]
   · -- config: one allowed admin change
-    have hcfg : configAt s (configAddr d) = config := by
-      simp only [configAt, ← hka, hval.globalConfig.1.2]
-    have hcfg' : configAt s' (configAddr d) = config' := by
-      simp only [configAt, ← hka, hkey]
+    have hcfg : s.configAccount d.configAddress = config := by
+      simp only [PrivacyCash.Model.State.configAccount, ← hka, hval.globalConfig.1.2]
+    have hcfg' : s'.configAccount d.configAddress = config' := by
+      simp only [PrivacyCash.Model.State.configAccount, ← hka, hkey]
     show Spec.ReachableByAdminChanges
       [⟨tx.signers.map toPubkey,
-        .feeSettings (dep.getD (configAt s (configAddr d)).deposit_fee_rate).val
-          (wd.getD (configAt s (configAddr d)).withdrawal_fee_rate).val
-          (m.getD (configAt s (configAddr d)).fee_error_margin).val⟩]
-      (toConfig (configAt s (configAddr d)) (treeAt s (treeAddr d)))
-      (toConfig (configAt s' (configAddr d)) (treeAt s' (treeAddr d)))
+        .feeSettings (dep.getD (s.configAccount d.configAddress).deposit_fee_rate).val
+          (wd.getD (s.configAccount d.configAddress).withdrawal_fee_rate).val
+          (m.getD (s.configAccount d.configAddress).fee_error_margin).val⟩]
+      (toConfig (s.configAccount d.configAddress) (s.treeAccount d.treeAddress))
+      (toConfig (s'.configAccount d.configAddress) (s'.treeAccount d.treeAddress))
     rw [hcfg, hcfg', htree]
     refine .extend (chs := []) ⟨tx.signers.map toPubkey,
       .feeSettings (dep.getD config.deposit_fee_rate).val (wd.getD config.withdrawal_fee_rate).val
@@ -242,33 +252,36 @@ theorem udl_between {d : Deployment} {rent : Nat → U64} {s s' : State}
   have hval := not_not.mp hv
   obtain ⟨hka, -⟩ := wf.tree _ _ hval.treeAccount.1
   obtain ⟨-, ⟨p, hp⟩, ⟨c, hc⟩⟩ := hi
-  have hpne : poolAddr d ≠ a.treeAccount := fun e => by
+  have hpne : d.poolAddress ≠ a.treeAccount := fun e => by
     have h1 := hp.2; rw [e, hval.treeAccount.1.2] at h1; cases h1
-  have hcne : configAddr d ≠ a.treeAccount := fun e => by
+  have hcne : d.configAddress ≠ a.treeAccount := fun e => by
     have h1 := hc.2; rw [e, hval.treeAccount.1.2] at h1; cases h1
   set s' := s.set a.treeAccount { s a.treeAccount with data := .treeAccount tree' } with hs'
   have keep : ∀ k, k ≠ a.treeAccount → s' k = s k := fun k hk => set_data_other hk
   have hkey : s' a.treeAccount = { s a.treeAccount with data := .treeAccount tree' } := by simp [hs']
-  have hT : treeAt s (treeAddr d) = tree := by simp only [treeAt, ← hka, hval.treeAccount.1.2]
-  have hT' : treeAt s' (treeAddr d) = tree' := by simp only [treeAt, ← hka, hkey]
-  have hC : configAt s' (configAddr d) = configAt s (configAddr d) := by
-    simp only [configAt, keep _ hcne]
+  have hT : s.treeAccount d.treeAddress = tree := by simp only [PrivacyCash.Model.State.treeAccount, ← hka, hval.treeAccount.1.2]
+  have hT' : s'.treeAccount d.treeAddress = tree' := by simp only [PrivacyCash.Model.State.treeAccount, ← hka, hkey]
+  have hC : s'.configAccount d.configAddress = s.configAccount d.configAddress := by
+    simp only [PrivacyCash.Model.State.configAccount, keep _ hcne]
   refine ⟨⟨⟨tree', ?_⟩, ⟨p, by unfold HoldsTreeToken; rw [keep _ hpne]; exact hp⟩, ⟨c, by unfold HoldsGlobalConfig; rw [keep _ hcne]; exact hc⟩⟩,
     toWorld_withUpdatedValues_of_same_tree (by rw [hT, hT', ht']; rfl)
       (set_data_nullifierAccounts (by rw [hval.treeAccount.1.2]; intro b h; cases h)
-        (by intro b h; cases h)), ⟨?_, ?_⟩⟩
+        (by intro b h; cases h)), ⟨?_, toWorld_fit d rent _, ?_⟩⟩
   · unfold HoldsTree; rw [← hka, hkey]; exact ⟨hval.treeAccount.1.1, rfl⟩
-  · show lamportsOf s (fromPubkey (toPubkey (poolAddr d)))
-      ≤ lamportsOf s' (fromPubkey (toPubkey (poolAddr d)))
-    simp only [fromPubkey_toPubkey, lamportsOf, keep _ hpne, le_refl]
+  · intro x _
+    show s.lamports (fromPubkey x) ≤ s'.lamports (fromPubkey x)
+    by_cases hx : fromPubkey x = a.treeAccount
+    · rw [PrivacyCash.Model.State.lamports, PrivacyCash.Model.State.lamports, hx, hkey]
+    · rw [PrivacyCash.Model.State.lamports, PrivacyCash.Model.State.lamports, keep _ hx]
   · show Spec.ReachableByAdminChanges [⟨tx.signers.map toPubkey, .depositLimit newLimit.val⟩]
-      (toConfig (configAt s (configAddr d)) (treeAt s (treeAddr d)))
-      (toConfig (configAt s' (configAddr d)) (treeAt s' (treeAddr d)))
+      (toConfig (s.configAccount d.configAddress) (s.treeAccount d.treeAddress))
+      (toConfig (s'.configAccount d.configAddress) (s'.treeAccount d.treeAddress))
     rw [hC, hT, hT', ht']
     refine .extend (chs := []) ⟨tx.signers.map toPubkey, .depositLimit newLimit.val⟩ (.noChange _) ?_
     have hsig : toPubkey tree.authority ∈ tx.signers.map toPubkey := by
       rw [hval.treeAccount.2.2]; exact List.mem_map_of_mem hval.authority
-    simp only [Spec.AdminChange.apply, toConfig, if_pos hsig]
+    have hlt : newLimit.val < 2 ^ 64 := newLimit.hBounds
+    simp only [Spec.AdminChange.apply, toConfig, if_pos (And.intro hsig hlt)]
 
 /-! ## `transact` -/
 
@@ -295,12 +308,12 @@ theorem transact_initialized {d : Deployment} {s s' : State} {tx : TxEnv}
     obtain ⟨o2, d2⟩ := k2 k n1
     obtain ⟨o1, d1⟩ := k1 k n0
     exact ⟨o2.trans o1, d2.trans d1⟩
-  have htA : a.treeAccount = treeAddr d := (wf.tree _ _ hvalid.treeAccount.1).1
+  have htA : a.treeAccount = d.treeAddress := (wf.tree _ _ hvalid.treeAccount.1).1
   have s'_other : ∀ k, k ≠ a.treeAccount → (s' k).owner = (s₁ k).owner ∧ (s' k).data = (s₁ k).data := by
     intro k hk; rw [hs']; simp [State.set, hk, State.withBalances]
-  have hpt : poolAddr d ≠ a.treeAccount := fun e => by
+  have hpt : d.poolAddress ≠ a.treeAccount := fun e => by
     have h1 := hp.2; rw [e, hvalid.treeAccount.1.2] at h1; cases h1
-  have hct : configAddr d ≠ a.treeAccount := fun e => by
+  have hct : d.configAddress ≠ a.treeAccount := fun e => by
     have h1 := hc.2; rw [e, hvalid.treeAccount.1.2] at h1; cases h1
   refine ⟨⟨tree', ?_⟩, ⟨p, ?_⟩, ⟨c, ?_⟩⟩
   · unfold HoldsTree
@@ -354,10 +367,10 @@ theorem initLoop_values (iter : core.ops.range.Range Usize)
     rw [hn, bind_tc_ok] at hr
     subst ho
     obtain ⟨zb, hzi, hr⟩ := bindOk hr
-    obtain ⟨zb', hzi', hzbv⟩ := okOfE (Std.Array.index_usize_spec z it.start (by simp <;> omega))
+    obtain ⟨zb', hzi', hzbv⟩ := okOfE (Std.Array.index_usize_spec z it.start (by simp; omega))
     rw [hzi'] at hzi; obtain rfl := Result.ok_injective hzi
     obtain ⟨a2, ha2, hr⟩ := bindOk hr
-    obtain ⟨a2', ha2', ha2v⟩ := okOfE (Std.Array.update_spec a it.start zb' (by simp <;> omega))
+    obtain ⟨a2', ha2', ha2v⟩ := okOfE (Std.Array.update_spec a it.start zb' (by simp; omega))
     rw [ha2'] at ha2; obtain rfl := Result.ok_injective ha2
     have hrr := (Result.ok_injective hr).symm
     subst hrr
@@ -369,11 +382,11 @@ theorem initLoop_values (iter : core.ops.range.Range Usize)
       rw [ha2v]
       simp only [Std.Array.set_val_eq]
       by_cases hji : j = it.start.val
-      · rw [getElem!_pos _ _ (by simp <;> omega)]; simp only [hji, List.getElem_set_self]
-        rw [hzbv, getElem!_pos _ _ (by simp <;> omega)]
-      · rw [getElem!_pos _ _ (by simp <;> omega)]
+      · rw [getElem!_pos _ _ (by simp; omega)]; simp only [hji, List.getElem_set_self]
+        rw [hzbv, getElem!_pos _ _ (by simp; omega)]
+      · rw [getElem!_pos _ _ (by simp; omega)]
         have := ha j (by omega)
-        rw [getElem!_pos _ _ (by simp <;> omega)] at this
+        rw [getElem!_pos _ _ (by simp; omega)] at this
         have hne : it.start.val ≠ j := Ne.symm hji
         simpa [hne] using this
     · show 26 - it1.start.val < 26 - it.start.val; omega
@@ -412,12 +425,12 @@ theorem initTree_values {H : zkcash_core.merkle_tree.Hasher Unit}
   have hgv : hgt.val = 26 := by
     have := (Result.ok_injective hhgt).symm
     rw [this]; simp [zkcash_core.admin.MERKLE_TREE_HEIGHT]
-  obtain ⟨ir', hir', hirv⟩ := okOfE (Std.Array.index_usize_spec z hgt (by simp <;> omega))
+  obtain ⟨ir', hir', hirv⟩ := okOfE (Std.Array.index_usize_spec z hgt (by simp; omega))
   rw [hir'] at hir; obtain rfl := Result.ok_injective hir
   obtain ⟨a1', ha1', ha1v⟩ := okOfE (Std.Array.update_spec t0.root_history 0#usize ir' (by simp))
   rw [ha1'] at ha1; obtain rfl := Result.ok_injective ha1
   have hir26 : ir' = z.val[26]! := by
-    simp [hirv, hgv, List.getElem!_eq_getElem?_getD]
+    simp [hirv, hgv]
   refine ⟨initLoop_values _ _ _ _ rfl (by simpa using hgv) hsub, hir26, ?_, by simp, by simp, rfl, rfl⟩
   intro j
   show a1'.val[j.val]! = _
@@ -433,7 +446,7 @@ theorem initTree_values {H : zkcash_core.merkle_tree.Hasher Unit}
 /-- Zero bytes are the field element 0. -/
 theorem toF_zeroBytes32 : toF (Std.Array.repeat 32#usize 0#u8) = 0 := by
   have hb : beNat (Std.Array.repeat 32#usize 0#u8) = 0 := by rfl
-  simp only [toF, hb, Nat.cast_zero]
+  simp only [toF_def, hb, Nat.cast_zero]
 
 /-- **The tree `initialize` writes is the spec's empty tree** (`Spec.initTree`), when the
     code's zero hashes are the spec's (`HashesAgree.zeroBytes`). -/
@@ -447,7 +460,7 @@ theorem initialize_toTree [Spec.PoseidonHashes] {H : zkcash_core.merkle_tree.Has
   obtain ⟨hsub, hroot, hhist, hni, hri, -, -⟩ := initTree_values hzb h
   have hzero : ∀ j : ℕ, j < 100 → zeroTree.root_history.val[j]! = Std.Array.repeat 32#usize 0#u8 := by
     intro j hj
-    rw [getElem!_pos _ _ (by simp <;> omega)]
+    rw [getElem!_pos _ _ (by simp; omega)]
     simp only [zeroTree, Std.Array.repeat_val, List.getElem_replicate]
   simp only [toTree, Spec.initTree, Spec.Tree.mk.injEq]
   refine ⟨hni, ?_, by rw [hroot, hzv 26 le_rfl], ?_, ?_⟩
@@ -540,6 +553,27 @@ theorem initAccount_lamports {pid : Pubkey} {s s' : State} {mb : Nat → U64} {p
     simp only [moveN, Function.update_self, Function.update_of_ne (Ne.symm hpk)]
     omega
 
+/-- Anchor `init` with a positive rent fails if the payer is the new account: an empty address
+    can't pay its own rent, and Anchor refuses a funded one paying for itself. -/
+theorem initAccount_payer_ne {pid : Pubkey} {s s' : State} {mb : Nat → U64} {payer key : Pubkey}
+    {space : Nat} {data : AccountData} (h : s.initAccount pid mb payer key space data = some s')
+    (hpos : 0 < (mb space).val) : payer ≠ key := by
+  intro hpk; subst hpk
+  unfold State.initAccount at h
+  obtain ⟨s₀, hs₀, -⟩ := Option.map_eq_some_iff.mp h
+  by_cases h0 : (s payer).lamports.val = 0
+  · rw [if_pos h0] at hs₀
+    unfold State.systemTransfer at hs₀
+    obtain ⟨b, hb, -⟩ := Option.map_eq_some_iff.mp hs₀
+    unfold systemTransferBalances at hb
+    split at hb
+    · rename_i hc
+      have := hc.2.2
+      simp only [State.balances] at this
+      omega
+    · cases hb
+  · rw [if_neg h0, if_pos rfl] at hs₀; cases hs₀
+
 /-- What `admin::initialize` returns when it succeeds: the tree `init_tree` wrote, a pool and a
     config whose authority is the caller, with fee rates 0 and 25 and fee error margin 500. -/
 theorem adminInitialize_values {H : zkcash_core.merkle_tree.Hasher Unit}
@@ -560,7 +594,7 @@ theorem adminInitialize_values {H : zkcash_core.merkle_tree.Hasher Unit}
     subst this
     obtain ⟨r1, hr1, h⟩ := bindOk h
     simp [core.result.Result.Insts.CoreOpsTryTraitFromResidualResultInfallible.from_residual,
-      core.convert.FromSame, Result.ok.injEq] at hr1
+      Result.ok.injEq] at hr1
     subst hr1
     have := Result.ok_injective h; simp at this
   | Ok u =>
@@ -574,20 +608,17 @@ theorem adminInitialize_values {H : zkcash_core.merkle_tree.Hasher Unit}
 
 /-- **`initialize` starts the spec's run.** The state right after it is the spec's start world
     `initWorld`, for the parameters it set: both authorities are the caller, who is the admin
-    when the deployment has one, the fee error margin is 500, the tree is the spec's empty tree. SOL
+    when the deployment has one, the settings are the documented defaults, the tree is the spec's empty tree. SOL
     already at the pool's address counts as sent to it before the first transaction (allowed). -/
 theorem init_between [Spec.PoseidonHashes] {d : Deployment} {rent : Nat → U64} {s s' : State}
     {tx : TxEnv} {a : InitializeAccounts}
-    (hdist : treeAddr d ≠ poolAddr d ∧ treeAddr d ≠ configAddr d ∧ poolAddr d ≠ configAddr d)
+    (hdist : d.treeAddress ≠ d.poolAddress ∧ d.treeAddress ≠ d.configAddress ∧ d.poolAddress ≠ d.configAddress)
     (hpid : d.programId ≠ systemProgram) (hrent : tx.minimumBalance = some rent)
-    (hnoNull : ∀ k, ¬ IsNullifierAccount d s k)
+    (hpos : ∀ n, 0 < (rent n).val)
+    (hnoNull : ∀ k, ¬ d.IsNullifierAccount s k)
     (hz : ∃ z, d.crypto.hasher.zero_bytes = ok z ∧ ∀ i, i ≤ 26 → toF (z.val[i]!) = Spec.Z i)
     (h : execInitialize d s tx a = .ok s') :
-    Initialized d s' ∧ ∃ params : Spec.InitParams,
-      params.pool = toPubkey (poolAddr d) ∧ params.nullifierAddr = nullifierAddrOf d ∧
-      params.rentExemptMin = (rent treeTokenAccountSpace).val ∧
-      params.nullifierRent = (rent nullifierAccountSpace).val ∧
-      params.admin = d.adminPubkey.map toPubkey ∧
+    Initialized d s' ∧ ∃ params : Spec.InitParams, RunOfDeployment d rent params ∧
       params.initializer = toPubkey a.authority ∧ params.signers = tx.signers.map toPubkey ∧
       params.cfg = (toWorld d rent s').state.config ∧
       params.balances = (toWorld d rent s').balances ∧
@@ -623,9 +654,9 @@ theorem init_between [Spec.PoseidonHashes] {d : Deployment} {rent : Nat → U64}
   obtain ⟨z, hzb, -⟩ := hz
   have hauth : tree.authority = a.authority := (initTree_values hzb hit).2.2.2.2.2.1
   -- the three accounts and their addresses
-  have htA : a.treeAccount = treeAddr d := hvalid.treeAccount.1
-  have hpA : a.treeTokenAccount = poolAddr d := hvalid.treeTokenAccount.1
-  have hcA : a.globalConfig = configAddr d := hvalid.globalConfig.1
+  have htA : a.treeAccount = d.treeAddress := hvalid.treeAccount.1
+  have hpA : a.treeTokenAccount = d.poolAddress := hvalid.treeTokenAccount.1
+  have hcA : a.globalConfig = d.configAddress := hvalid.globalConfig.1
   obtain ⟨dtp, dtc, dpc⟩ := hdist
   rw [← htA, ← hpA] at dtp
   rw [← htA, ← hcA] at dtc
@@ -652,14 +683,14 @@ theorem init_between [Spec.PoseidonHashes] {d : Deployment} {rent : Nat → U64}
     intro k; rw [hs']
     simp only [State.set]
     split_ifs <;> simp_all
-  have dT : (s' (treeAddr d)).data = .treeAccount tree := by
+  have dT : (s' d.treeAddress).data = .treeAccount tree := by
     rw [← htA, (hs'k _).2.2, if_neg dtc, if_neg dtp, if_pos rfl]
-  have dP : (s' (poolAddr d)).data = .treeToken token := by
+  have dP : (s' d.poolAddress).data = .treeToken token := by
     rw [← hpA, (hs'k _).2.2, if_neg dpc, if_pos rfl]
-  have dC : (s' (configAddr d)).data = .globalConfig config := by
+  have dC : (s' d.configAddress).data = .globalConfig config := by
     rw [← hcA, (hs'k _).2.2, if_pos rfl]
-  have hT : treeAt s' (treeAddr d) = tree := by simp only [treeAt, dT]
-  have hC : configAt s' (configAddr d) = config := by simp only [configAt, dC]
+  have hT : s'.treeAccount d.treeAddress = tree := by simp only [PrivacyCash.Model.State.treeAccount, dT]
+  have hC : s'.configAccount d.configAddress = config := by simp only [PrivacyCash.Model.State.configAccount, dC]
   have hinit : Initialized d s' := by
     refine ⟨⟨tree, ?_, dT⟩, ⟨token, ?_, dP⟩, ⟨config, ?_, dC⟩⟩
     · rw [← htA, (hs'k _).1]; exact own1
@@ -672,7 +703,7 @@ theorem init_between [Spec.PoseidonHashes] {d : Deployment} {rent : Nat → U64}
     rw [mem_nullifierAccountsOf]
     rintro ⟨ho, b, hd⟩
     rw [(hs'k _).2.2] at hd
-    split_ifs at hd with e1 e2 e3 <;> (try cases hd)
+    split_ifs at hd with e1 e2 e3
     rw [(hs'k _).1, (k3 _ e1).1, (k2 _ e2).1, (k1 _ e3).1] at ho
     rw [(k3 _ e1).2, (k2 _ e2).2, (k1 _ e3).2] at hd
     exact hnoNull _ ⟨ho, b, hd⟩
@@ -684,23 +715,59 @@ theorem init_between [Spec.PoseidonHashes] {d : Deployment} {rent : Nat → U64}
     intro x hx
     obtain ⟨k, hk, rfl⟩ := Option.map_eq_some_iff.mp hx
     rw [hadmin k hk]
-  have pm : (toConfig config tree).feeErrorMargin ≤ 10000 := by simp [toConfig, hc]
-  have pdr : (toConfig config tree).depositFeeRate ≤ 10000 := by simp [toConfig, hc]
-  have pwr : (toConfig config tree).withdrawalFeeRate ≤ 10000 := by simp [toConfig, hc]
+  have pdr : (toConfig config tree).depositFeeRate = 0 := by simp [toConfig, hc]
+  have pwr : (toConfig config tree).withdrawalFeeRate = 25 := by simp [toConfig, hc]
+  have pm : (toConfig config tree).feeErrorMargin = 500 := by simp [toConfig, hc]
+  have plim : (toConfig config tree).maxDepositLimit = 1_000_000_000_000 := by
+    simp [toConfig, (initTree_values hzb hit).2.2.2.2.2.2,
+      zkcash_core.admin.DEFAULT_MAX_DEPOSIT_AMOUNT]
   have psg : toPubkey a.authority ∈ tx.signers.map toPubkey :=
     List.mem_map_of_mem hvalid.authority
+  -- the initializer pays for the three accounts, so it is none of them
+  have na1 := initAccount_payer_ne h₁ (hpos _)
+  have na2 := initAccount_payer_ne h₂ (hpos _)
+  have na3 := initAccount_payer_ne h₃ (hpos _)
+  have pnc : toPubkey a.authority ≠ toPubkey d.poolAddress ∧
+      toPubkey a.authority ≠ toPubkey d.treeAddress ∧ toPubkey a.authority ≠ toPubkey d.configAddress :=
+    ⟨fun e => na2 (by rw [hpA]; exact toPubkey_inj e), fun e => na1 (by rw [htA]; exact toPubkey_inj e),
+      fun e => na3 (by rw [hcA]; exact toPubkey_inj e)⟩
+  -- the tree's and the config's accounts hold at least their rent
+  have htl : (rent treeAccountSpace).val ≤ (s₁ a.treeAccount).lamports.val := by
+    rw [(initAccount_lamports h₃).2 _ dtc (by rw [(k2 _ dtp).1, o1]; exact hpid),
+      (initAccount_lamports h₂).2 _ dtp (by rw [o1]; exact hpid)]
+    exact (initAccount_lamports h₁).1
+  have hcl : (rent globalConfigSpace).val ≤ (s₁ a.globalConfig).lamports.val :=
+    (initAccount_lamports h₃).1
+  have tP : toPubkey d.treeAddress ≠ toPubkey d.poolAddress := fun e => dtp (by rw [htA, hpA]; exact toPubkey_inj e)
+  have tC : toPubkey d.treeAddress ≠ toPubkey d.configAddress := fun e => dtc (by rw [htA, hcA]; exact toPubkey_inj e)
+  have cP : toPubkey d.configAddress ≠ toPubkey d.poolAddress := fun e => dpc (by rw [hpA, hcA]; exact (toPubkey_inj e).symm)
   refine ⟨hinit, ⟨toConfig config tree, (toWorld d rent s').balances, (rent treeTokenAccountSpace).val,
-    (rent nullifierAccountSpace).val, toPubkey (poolAddr d), nullifierAddrOf d, toPubkey a.authority,
-    tx.signers.map toPubkey, psg, d.adminPubkey.map toPubkey, pa, pl, pad, pm, pdr, pwr⟩,
-    rfl, rfl, rfl, rfl, rfl, rfl, rfl, hcfg.symm, rfl, ?_, ?_, ?_⟩
+    (rent nullifierAccountSpace).val, toPubkey d.poolAddress, nullifierAddrOf d, toPubkey d.treeAddress,
+    toPubkey d.configAddress, (rent treeAccountSpace).val, (rent globalConfigSpace).val,
+    toWorld_fit d rent s', toPubkey a.authority, pnc,
+    tx.signers.map toPubkey, psg, d.adminPubkey.map toPubkey, pa, pl, pad, pdr, pwr, pm, plim⟩,
+    ⟨rfl, fun _ => rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩, rfl, rfl, hcfg.symm, rfl, ?_, ?_, ?_, ?_⟩
   · simp only [toWorld, Spec.initWorld, Spec.World.withUpdatedValues,
       Spec.UpdatedValuesBetweenTransacts.unchanged, hT, hnull',
-      htree]
-  · -- the pool gained at least nothing
-    show (Spec.initWorld _).poolBalance ≤ lamportsOf s' (fromPubkey (toPubkey (poolAddr d)))
-    simp only [Spec.World.poolBalance, Spec.initWorld, Function.update_self,
-      fromPubkey_toPubkey, lamportsOf, dP]
-    rw [← hpA, (hs'k _).2.1]; exact hpl
+      htree]; rfl
+  · -- the program's accounts gained at least nothing; there are no nullifier accounts yet
+    rintro x (rfl | hx | rfl | rfl)
+    · show (Spec.initWorld _).poolBalance ≤ s'.lamports (fromPubkey (toPubkey d.poolAddress))
+      simp only [Spec.World.poolBalance, Spec.initWorld, Function.update_self,
+        fromPubkey_toPubkey, PrivacyCash.Model.State.lamports]
+      rw [← hpA, (hs'k _).2.1]; exact hpl
+    · simp [Spec.initWorld] at hx
+    · show (Spec.initWorld _).balances (toPubkey d.treeAddress) ≤
+        s'.lamports (fromPubkey (toPubkey d.treeAddress))
+      simp only [Spec.initWorld, Function.update_of_ne tP, Function.update_of_ne tC,
+        Function.update_self, fromPubkey_toPubkey, PrivacyCash.Model.State.lamports]
+      rw [← htA, (hs'k _).2.1]; exact htl
+    · show (Spec.initWorld _).balances (toPubkey d.configAddress) ≤
+        s'.lamports (fromPubkey (toPubkey d.configAddress))
+      simp only [Spec.initWorld, Function.update_of_ne cP, Function.update_self,
+        fromPubkey_toPubkey, PrivacyCash.Model.State.lamports]
+      rw [← hcA, (hs'k _).2.1]; exact hcl
+  · exact toWorld_fit d rent s'
   · show Spec.ReachableByAdminChanges [] (toConfig config tree)
       (toWorld d rent s').state.config
     rw [hcfg]; exact .noChange _
@@ -752,14 +819,14 @@ theorem initialized_no_initialize {d : Deployment} {s s' : State} {tx : TxEnv}
   have hvalid := not_not.mp hv
   obtain ⟨⟨t, ht⟩, -, -⟩ := hi
   apply hpid
-  rw [← ht.1, show treeAddr d = a.treeAccount from hvalid.treeAccount.1.symm]
+  rw [← ht.1, show d.treeAddress = a.treeAccount from hvalid.treeAccount.1.symm]
   exact hvalid.treeAccount.2.1
 
 /-! ## The bridge, one event at a time -/
 
 section
-variable [Spec.PoseidonHashes] [Spec.Sha] {G1 G2 GT : Type} [AddCommGroup G1]
-  [Module Spec.F G1] [AddCommGroup G2] [Module Spec.F G2] [CommGroup GT]
+variable [Spec.PoseidonHashes] [Spec.Sha] {G1 G2 GT : Type} [AddCommGroup G1] [Inhabited G2]
+  [Module Spec.F G1] [CommGroup GT]
 
 /-- What the bridge keeps along an execution. -/
 def BridgeInv (d : Deployment) (rent : Nat → U64) (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT)
@@ -768,9 +835,7 @@ def BridgeInv (d : Deployment) (rent : Nat → U64) (C : AltBn128Contracts d.cry
   WellFormed d s ∧
     ((NoProgramAccounts d s ∧ txs = [] ∧ v = {}) ∨
       (Initialized d s ∧
-        letI : Spec.Groups := syscallGroups C
-        letI : Spec.Pairing := syscallPairing C
-        letI : Spec.Deployment := ⟨programKey C⟩
+        withSyscallSpec C in
         ∃ (params : Spec.InitParams) (r : Spec.Run (Spec.initWorld params)),
           RunMatchesView d rent v txs s params r))
 
@@ -781,25 +846,19 @@ theorem RunMatchesView.between {d : Deployment} {rent : Nat → U64}
     {v v' : ExecutionView} {txs : List Spec.TxInputs} {s s' : State}
     {chs : List Spec.AdminChange}
     (hv : v' = { v with openGap := v.openGap ++ chs })
-    (h : letI : Spec.Groups := syscallGroups C
-      letI : Spec.Pairing := syscallPairing C
-      letI : Spec.Deployment := ⟨programKey C⟩
+    (h : withSyscallSpec C in
       ∃ (params : Spec.InitParams) (r : Spec.Run (Spec.initWorld params)),
         RunMatchesView d rent v txs s params r)
     (hw : toWorld d rent s' = (toWorld d rent s).withUpdatedValues
       (recordChanges (toWorld d rent s') chs))
     (ha : (recordChanges (toWorld d rent s') chs).Allowed (toWorld d rent s)) :
-    letI : Spec.Groups := syscallGroups C
-    letI : Spec.Pairing := syscallPairing C
-    letI : Spec.Deployment := ⟨programKey C⟩
+    withSyscallSpec C in
     ∃ (params : Spec.InitParams) (r : Spec.Run (Spec.initWorld params)),
       RunMatchesView d rent v' txs s' params r := by
-  letI : Spec.Groups := syscallGroups C
-  letI : Spec.Pairing := syscallPairing C
-  letI : Spec.Deployment := ⟨programKey C⟩
+  withSyscallSpec C
   subst hv
-  obtain ⟨params, r, h1, h0, h2, h3, h4, hi, htx, hpl, hp, hal, ha', hgl, hg, b, hb, hgap, heq⟩ := h
-  refine ⟨params, r, h1, h0, h2, h3, h4, hi, htx, hpl, hp, hal, ha', hgl, hg,
+  obtain ⟨params, r, hdep, hi, htx, hpl, hp, hal, ha', hgl, hg, b, hb, hgap, heq⟩ := h
+  refine ⟨params, r, hdep, hi, htx, hpl, hp, hal, ha', hgl, hg,
     b.andThen (recordChanges (toWorld d rent s') chs), ?_, ?_, ?_⟩
   · rw [heq] at ha
     exact hb.trans ha
@@ -819,11 +878,12 @@ theorem bridge_env {d : Deployment} {rent : Nat → U64}
     refine ⟨wf_envStep wf h, Or.inr ⟨env_initialized h hi, ?_⟩⟩
     exact RunMatchesView.between (chs := []) (by cases v; simp) hr hw ha
 
-/-- The program's three fixed accounts differ (from `ExecutionAssumptions.fixedAddressesDiffer`). -/
-theorem fixed_addresses_differ {d : Deployment} {s₀ : State} {evs : List Event}
-    (assume : ExecutionAssumptions d s₀ evs) :
-    treeAddr d ≠ poolAddr d ∧ treeAddr d ≠ configAddr d ∧ poolAddr d ≠ configAddr d :=
-  singleton_pdas_distinct _ _ _ assume.fixedAddressesDiffer
+omit [Spec.PoseidonHashes] [Spec.Sha] in
+/-- The program's three fixed accounts differ (from `ExecutionFacts.fixedAddressesDiffer`). -/
+theorem fixed_addresses_differ {d : Deployment} {evs : List Event}
+    (assume : ExecutionFacts d evs) :
+    d.treeAddress ≠ d.poolAddress ∧ d.treeAddress ≠ d.configAddress ∧ d.poolAddress ≠ d.configAddress :=
+  singleton_pdas_distinct_of _ _ _ assume.fixedAddressesDiffer
 
 /-- **Each instruction keeps the invariant.** `initialize` starts the spec run; `transact`
     extends it by its transaction (the main per-step theorem); the admin instructions are
@@ -833,26 +893,24 @@ theorem bridge_step {d : Deployment} {rent : Nat → U64}
     {v : ExecutionView} {txs : List Spec.TxInputs} {s s' : State}
     {tx : TxEnv} {ix : Instruction} {em : List CommitmentData}
     (hinv : BridgeInv d rent C v txs s)
-    (hpid : d.programId ≠ systemProgram) (hashes : HashesAgree d.crypto)
-    (hdist : treeAddr d ≠ poolAddr d ∧ treeAddr d ≠ configAddr d ∧ poolAddr d ≠ configAddr d)
-    (hstepA : StepAssumptions d tx ix) (hrentA : SameRent rent tx)
+    (hpid : d.programId ≠ systemProgram) (hashes : HashesAgree d)
+    (hdist : d.treeAddress ≠ d.poolAddress ∧ d.treeAddress ≠ d.configAddress ∧ d.poolAddress ≠ d.configAddress)
+    (hstepA : StepFacts d tx ix) (hrentA : SameRent rent tx.minimumBalance)
     (h : step d s tx ix = .ok (s', em)) (hrentPos : tx.RentPositive) :
     BridgeInv d rent C (v.afterEvent d rent s (.program tx ix em) s') (txs ++ stepTxs tx ix) s' := by
-  letI : Spec.Groups := syscallGroups C
-  letI : Spec.Pairing := syscallPairing C
-  letI : Spec.Deployment := ⟨programKey C⟩
+  withSyscallSpec C
   obtain ⟨wf, hn | ⟨hi, hr⟩⟩ := hinv
   · -- before initialization: only `initialize` succeeds, and it starts the spec run
-    have wf' := wf_step hashes.poseidonCanonical hashes.zeroBytesCanonical wf h
+    have wf' := wf_step hashes.poseidon_canonical hashes.zeroBytes_canonical wf h
     obtain ⟨a, rfl⟩ := noProgram_step hn.1 h
     obtain ⟨s₁, h1, h2⟩ := PrivacyCash.Model.Except.bind_ok h
     cases h2
-    obtain ⟨hi', params, hp1, hp0, hp2, hp3, hp4, hp5, hp6, hp7, hp8, heq, ha⟩ := init_between hdist
-      hpid hrentA hn.1.2.2.2 hashes.zeroBytes h1
+    obtain ⟨hi', params, hdep, hp5, hp6, hp7, hp8, heq, ha⟩ := init_between hdist
+      hpid hrentA (fun n => hrentPos rent hrentA n) hn.1.2.2.2 hashes.zeroBytes_agree h1
     obtain ⟨-, rfl, rfl⟩ := hn
     refine ⟨wf', Or.inr ⟨hi', ?_⟩⟩
-    refine ⟨params, Spec.Run.empty _, hp1, hp0, hp2, hp3, hp4,
-      ⟨_, rfl, hp5, hp6, hp7, hp8⟩, by simp [stepTxs], rfl, ?_, rfl, ?_, rfl, ?_,
+    refine ⟨params, Spec.Run.empty _, hdep,
+      ⟨_, rfl, hp5, hp6, hp7, fun x _ => by rw [hp8]⟩, by simp [stepTxs], rfl, ?_, rfl, ?_, rfl, ?_,
       Spec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent s'), ha, rfl, ?_⟩
     · intro j hj; exact absurd hj (by simp [Spec.Run.empty])
     · intro j hj; exact absurd hj (by simp [Spec.Run.empty])
@@ -861,14 +919,14 @@ theorem bridge_step {d : Deployment} {rent : Nat → U64}
   · cases ix with
     | «initialize» a => exact (initialized_no_initialize hpid hi h).elim
     | updateDepositLimit a l =>
-      have wf' := wf_step hashes.poseidonCanonical hashes.zeroBytesCanonical wf h
+      have wf' := wf_step hashes.poseidon_canonical hashes.zeroBytes_canonical wf h
       obtain ⟨s₁, h1, h2⟩ := PrivacyCash.Model.Except.bind_ok h
       cases h2
       obtain ⟨hi', hw, ha⟩ := udl_between (rent := rent) wf hi h1
       simp only [stepTxs, List.append_nil]
       exact ⟨wf', Or.inr ⟨hi', RunMatchesView.between rfl hr hw ha⟩⟩
     | updateGlobalConfig a dep wd m =>
-      have wf' := wf_step hashes.poseidonCanonical hashes.zeroBytesCanonical wf h
+      have wf' := wf_step hashes.poseidon_canonical hashes.zeroBytes_canonical wf h
       obtain ⟨s₁, h1, h2⟩ := PrivacyCash.Model.Except.bind_ok h
       cases h2
       obtain ⟨hi', hw, ha⟩ := ugc_between (rent := rent) wf hi h1
@@ -877,17 +935,18 @@ theorem bridge_step {d : Deployment} {rent : Nat → U64}
     | transact a proof ext fee out1 out2 =>
       obtain ⟨solana, crypto, circuit⟩ := hstepA
       have hrent : tx.minimumBalance = some rent := hrentA
-      obtain ⟨b₁, hb₁, b₂, htx, hb₂, wf', hb₁nil, hb₁pool, hb₂cfg, hb₂pool⟩ :=
+      have wf' := wf_step hashes.poseidon_canonical hashes.zeroBytes_canonical wf h
+      obtain ⟨b₁, hb₁, b₂, htx, hb₂, hb₁nil, hb₁pool, hb₂cfg, hb₂pool⟩ :=
         transact_refines_between_verified C laws h hashes wf solana hrentPos crypto circuit hrent
       have hi' := transact_initialized wf hi h
-      obtain ⟨params, r, hp1, hp0, hp2, hp3, hp4, hinit, htxs, hpl, hpb, hal, hafter, hgl, hgaps, b, hb, hgap, heq⟩ := hr
+      obtain ⟨params, r, hdep, hinit, htxs, hpl, hpb, hal, hafter, hgl, hgaps, b, hb, hgap, heq⟩ := hr
       rw [heq] at htx hb₁
       rw [Spec.World.withUpdatedValues_twice] at htx
       obtain ⟨r', hr'tx, hr'f, hws, hup, hlast⟩ := r.snoc _ (hb.trans hb₁) _ _ htx
       have hlen : r'.txs.length = r.txs.length + 1 := by rw [hr'tx]; simp
       have hfinal : r'.ws (r.txs.length + 1) = r'.final := by
         unfold Spec.Run.final; rw [hlen]
-      refine ⟨wf', Or.inr ⟨hi', params, r', hp1, hp0, hp2, hp3, hp4, hinit, ?_, ?_, ?_, ?_, ?_, ?_, ?_,
+      refine ⟨wf', Or.inr ⟨hi', params, r', hdep, hinit, ?_, ?_, ?_, ?_, ?_, ?_, ?_,
         Spec.UpdatedValuesBetweenTransacts.unchanged
         (toWorld d rent s'), ?_, rfl, ?_⟩⟩
       · rw [hr'tx, htxs]; rfl
@@ -900,7 +959,7 @@ theorem bridge_step {d : Deployment} {rent : Nat → U64}
         · have hj' : j = r.txs.length := by omega
           subst hj'
           rw [List.getElem?_append_right (by omega), hpl, Nat.sub_self, hlast]
-          simp only [List.length_singleton, List.getElem?_cons_zero, Option.some.injEq]
+          simp only [List.getElem?_cons_zero, Option.some.injEq]
           exact hb₁pool.symm
       · simp only [ExecutionView.afterEvent, List.length_append, List.length_singleton]
         omega
@@ -911,7 +970,7 @@ theorem bridge_step {d : Deployment} {rent : Nat → U64}
         · have hj' : j = r.txs.length := by omega
           subst hj'
           rw [List.getElem?_append_right (by omega), hal, Nat.sub_self, hfinal, hr'f]
-          simp only [List.length_singleton, List.getElem?_cons_zero, Option.some.injEq, Prod.mk.injEq]
+          simp only [List.getElem?_cons_zero, Option.some.injEq, Prod.mk.injEq]
           refine ⟨?_, ?_⟩
           · show _ = { (toWorld d rent s').state with
               config := b₂.config }
@@ -926,13 +985,14 @@ theorem bridge_step {d : Deployment} {rent : Nat → U64}
         · have hj' : j = r.txs.length := by omega
           subst hj'
           rw [List.getElem?_append_right (by omega), hgl, Nat.sub_self, hlast]
-          simp only [List.length_singleton, List.getElem?_cons_zero, Option.some.injEq]
+          simp only [List.getElem?_cons_zero, Option.some.injEq]
           show v.openGap = b.adminChanges ++ b₁.adminChanges
           rw [hb₁nil, hgap, List.append_nil]
       · rw [hr'f]; exact hb₂
       · rw [hr'f, Spec.World.withUpdatedValues_twice]
         exact (Spec.World.withUpdatedValues_self _).symm
 
+omit [Spec.PoseidonHashes] [Spec.Sha] in
 /-- An execution path is an execution. -/
 theorem ExecutionPath.toRun {d : Deployment} {s s' : State} {evs : List Event} {states : List State}
     (h : ExecutionPath d s evs states s') : Run d s evs s' := by
@@ -941,6 +1001,7 @@ theorem ExecutionPath.toRun {d : Deployment} {s s' : State} {evs : List Event} {
   | program hs hr _ ih => exact .program hs hr ih
   | env he _ ih => exact .env he ih
 
+omit [Spec.PoseidonHashes] [Spec.Sha] in
 /-- A one-step execution is an accepted step with positive rent. -/
 theorem Run.single_inv {d : Deployment} {s s' : State} {tx : TxEnv} {ix : Instruction}
     {em : List CommitmentData} (h : Run d s [.program tx ix em] s') :
@@ -948,6 +1009,7 @@ theorem Run.single_inv {d : Deployment} {s s' : State} {tx : TxEnv} {ix : Instru
   cases h with
   | program hs hr hnil => cases hnil; exact ⟨hs, hr⟩
 
+omit [Spec.PoseidonHashes] [Spec.Sha] in
 /-- An execution is an execution path, through some states. -/
 theorem Run.toExecutionPath {d : Deployment} {s s' : State} {evs : List Event}
     (h : Run d s evs s') : ∃ states, ExecutionPath d s evs states s' := by
@@ -960,8 +1022,8 @@ theorem Run.toExecutionPath {d : Deployment} {s s' : State} {evs : List Event}
 theorem bridge_run {d : Deployment} {rent : Nat → U64}
     {C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT} {laws : PairingLaws C.e} {s₀ : State}
     {all : List Event} (hpid : d.programId ≠ systemProgram)
-    (hashes : HashesAgree d.crypto) (assume : ExecutionAssumptions d s₀ all)
-    (sameRent : ∀ tx ix em, .program tx ix em ∈ all → SameRent rent tx) :
+    (hashes : HashesAgree d) (assume : ExecutionFacts d all)
+    (sameRent : ∀ tx ix em, .program tx ix em ∈ all → SameRent rent tx.minimumBalance) :
     ∀ {s s' : State} {evs pre : List Event} {states : List State} {v : ExecutionView}
       {txs : List Spec.TxInputs},
       all = pre ++ evs → Run d s₀ pre s → BridgeInv d rent C v txs s →
@@ -971,7 +1033,7 @@ theorem bridge_run {d : Deployment} {rent : Nat → U64}
   induction hrun generalizing pre v txs with
   | nil => simpa [runTxs, ExecutionView.afterEvents] using hinv
   | @program s₁ s₂ s₃ tx ix emitted events states hstep hrentPos hrest ih =>
-    have hA := assume.eachStep pre events s₁ tx ix emitted hall hpre
+    have hA := assume.eachStep tx ix emitted (by rw [hall]; simp)
     have hR := sameRent tx ix emitted (by rw [hall]; simp)
     have hinv' := bridge_step (laws := laws) hinv hpid hashes (fixed_addresses_differ assume) hA hR hstep hrentPos
     have := ih (pre := pre ++ [.program tx ix emitted]) (by rw [hall]; simp)
@@ -990,27 +1052,26 @@ theorem execution_is_spec_run_pf {d : Deployment} {rent : Nat → U64} {s₀ s :
     (hgen : Genesis d.programId s₀) (hrun : ExecutionPath d s₀ evs states s)
     (hpid : d.programId ≠ systemProgram)
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
-    (hashes : HashesAgree d.crypto) (assume : ExecutionAssumptions d s₀ evs)
-    (sameRent : ∀ tx ix em, .program tx ix em ∈ evs → SameRent rent tx) :
+    (hashes : HashesAgree d) (assume : ExecutionFacts d evs)
+    (sameRent : ∀ tx ix em, .program tx ix em ∈ evs → SameRent rent tx.minimumBalance) :
     (NoProgramAccounts d s ∧ runTxs evs = []) ∨
-      (letI : Spec.Groups := syscallGroups C
-       letI : Spec.Pairing := syscallPairing C
-       letI : Spec.Deployment := ⟨programKey C⟩
+      (withSyscallSpec C in
        IsSpecRun d rent s₀ evs states s) := by
   have h0 : BridgeInv d rent C {} [] s₀ :=
     ⟨wf_genesis hgen hpid, Or.inl ⟨genesis_noProgramAccounts hgen, rfl, rfl⟩⟩
   have := bridge_run (C := C) (laws := laws) hpid hashes assume sameRent (pre := []) (by simp) (.nil _) h0 hrun
   simp only [List.nil_append] at this
-  rcases this.2 with ⟨hn, ht, -⟩ | ⟨-, hr⟩
+  rcases this.2 with ⟨hn, ht, -⟩ | ⟨-, params, r, hr⟩
   · exact Or.inl ⟨hn, ht⟩
-  · exact Or.inr hr
+  · withSyscallSpec C
+    exact Or.inr ⟨params, r, isRunOf_of_view hrun.length_eq hr⟩
 
+omit [Spec.PoseidonHashes] [Spec.Sha] in
 /-- Assumptions for an execution hold for any prefix of it. -/
-theorem ExecutionAssumptions.prefix {d : Deployment} {s₀ : State}
-    {evs more : List Event} (h : ExecutionAssumptions d s₀ (evs ++ more)) :
-    ExecutionAssumptions d s₀ evs :=
-  ⟨h.fixedAddressesDiffer, fun pre post s tx ix em he hr =>
-    h.eachStep pre (post ++ more) s tx ix em (by rw [he]; simp) hr⟩
+theorem ExecutionFacts.prefix {d : Deployment}
+    {evs more : List Event} (h : ExecutionFacts d (evs ++ more)) :
+    ExecutionFacts d evs :=
+  ⟨h.fixedAddressesDiffer, fun tx ix em hm => h.eachStep tx ix em (List.mem_append_left _ hm)⟩
 
 /-- An initialized execution is a spec run (the bridge, without its "not initialized" case). -/
 theorem code_spec_run {d : Deployment} {rent : Nat → U64} {s₀ s : State} {evs : List Event}
@@ -1018,11 +1079,9 @@ theorem code_spec_run {d : Deployment} {rent : Nat → U64} {s₀ s : State} {ev
     (hgen : Genesis d.programId s₀) (hrun : ExecutionPath d s₀ evs states s)
     (hpid : d.programId ≠ systemProgram)
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
-    (hashes : HashesAgree d.crypto) (assume : ExecutionAssumptions d s₀ evs)
-    (sameRent : ∀ tx ix em, .program tx ix em ∈ evs → SameRent rent tx) (hi : Initialized d s) :
-    letI : Spec.Groups := syscallGroups C
-    letI : Spec.Pairing := syscallPairing C
-    letI : Spec.Deployment := ⟨programKey C⟩
+    (hashes : HashesAgree d) (assume : ExecutionFacts d evs)
+    (sameRent : ∀ tx ix em, .program tx ix em ∈ evs → SameRent rent tx.minimumBalance) (hi : Initialized d s) :
+    withSyscallSpec C in
     IsSpecRun d rent s₀ evs states s := by
   rcases execution_is_spec_run_pf hgen hrun hpid C laws hashes assume sameRent with ⟨hn, -⟩ | hr
   · obtain ⟨⟨t, ht⟩, -, -⟩ := hi; exact (hn.1 _ _ ht).elim
@@ -1034,39 +1093,34 @@ theorem run_satisfies {d : Deployment} {rent : Nat → U64} {s₀ s : State} {ev
     (hgen : Genesis d.programId s₀) (hrun : ExecutionPath d s₀ evs states s)
     (hpid : d.programId ≠ systemProgram)
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
-    (hashes : HashesAgree d.crypto) (assume : ExecutionAssumptions d s₀ evs)
-    (sameRent : ∀ tx ix em, .program tx ix em ∈ evs → SameRent rent tx) (hi : Initialized d s) :
-    letI : Spec.Groups := syscallGroups C
-    letI : Spec.Pairing := syscallPairing C
-    letI : Spec.Deployment := ⟨programKey C⟩
+    (hashes : HashesAgree d) (assume : ExecutionFacts d evs)
+    (sameRent : ∀ tx ix em, .program tx ix em ∈ evs → SameRent rent tx.minimumBalance) (hi : Initialized d s) :
+    withSyscallSpec C in
     ∀ (P : ∀ params : Spec.InitParams, Spec.Run (Spec.initWorld params) → Prop),
       (∀ params r, P params r) →
       ∃ (params : Spec.InitParams) (r : Spec.Run (Spec.initWorld params)),
         IsRunOf d rent s₀ evs states s params r ∧ P params r := by
-  letI : Spec.Groups := syscallGroups C
-  letI : Spec.Pairing := syscallPairing C
-  letI : Spec.Deployment := ⟨programKey C⟩
+  withSyscallSpec C
   intro P hP
   obtain ⟨params, r, h⟩ := code_spec_run hgen hrun hpid C laws hashes assume sameRent hi
   exact ⟨params, r, h, hP params r⟩
 
 /-- The per-transaction connection, for a `transact` in an execution from genesis. -/
-theorem transact_connection_pf {d : Deployment} {rent : Nat → U64} {s₀ s s' : State}
-    {evs : List Event} {tx : TxEnv} {a : TransactAccounts} {proof : zkcash_core.transact.Proof}
+theorem transact_connection_pf {d : Deployment} {rent : Nat → U64} {s s' : State}
+    {tx : TxEnv} {a : TransactAccounts} {proof : zkcash_core.transact.Proof}
     {extAmount : I64} {fee : U64} {out1 out2 : Slice U8} {events : List CommitmentData}
-    (hgen : Genesis d.programId s₀) (hrun : Run d s₀ evs s) (hpid : d.programId ≠ systemProgram)
+    (reachable : Reachable d s) (hpid : d.programId ≠ systemProgram)
     (hstep : Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s')
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
-    (hashes : HashesAgree d.crypto) (solana : SolanaFacts d tx)
-    (crypto : CryptoFacts d proof) (circuit : CircuitFacts d {proof}) (sameRent : SameRent rent tx) :
-    letI : Spec.Groups := syscallGroups C
-    letI : Spec.Pairing := syscallPairing C
-    letI : Spec.Deployment := ⟨programKey C⟩
-    let inputs := toInputs tx.signers a proof extAmount fee out1 out2
+    (hashes : HashesAgree d) (solana : PdasDoNotSign d tx.toTxContext)
+    (crypto : NewNullifierAddressesDiffer d proof) (circuit : CircuitFacts d {proof}) (sameRent : SameRent rent tx.minimumBalance) :
+    withSyscallSpec C in
+    let inputs := toInputs ⟨⟨tx.signers⟩, a, ⟨proof, extAmount, fee, out1, out2⟩⟩
     Spec.transact inputs (toWorld d rent s) (toWorld d rent s') :=
   have ⟨hs, hrentPos⟩ := Run.single_inv hstep
+  have ⟨_, _, hgen, hrun⟩ := reachable
   (transact_refines_verified C laws hs hashes (wf_reachable hgen hrun hpid hashes) solana hrentPos crypto circuit
-    sameRent).1
+    sameRent)
 
 end
 

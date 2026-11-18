@@ -1,67 +1,84 @@
-# Connection: code model ↔ spec
+# Connection: where it stands
 
-`lean/Connection/` connects the code model (`core-model/`: the extracted `zkcash_core` plus the
-hand-written Solana/Anchor model) to the spec (`lean/Spec/`). Open work is in `TODO.md`; how
-to review is in `REVIEWING.md`.
+`lean/Connection/` proves that the code model (`core-model/`) behaves as the spec
+(`lean/Spec/`) says. This page answers three questions: what is proved, what you must trust for
+it to mean something, and what differences were found. How to review: `REVIEWING.md`.
 
-## Theorems (`ConnectionTheorems.lean`; the `…_code` goals and their non-vacuity in `CodeModelStatements.lean`)
+## What is proved
 
-Kinds of hypothesis: **premise** (the situation the theorem is about), **asm** (approved
-assumption), **design** (agreed by-design exclusion), **owner** (the honest owner's choice),
-**limit** (what can legitimately block a spend), **finding** (a difference excluded by name). No
-invariant is a hypothesis: `WellFormed` is proved for every reachable state.
+- **The code accepts nothing the spec forbids.** Every `transact` the code accepts satisfies
+  the spec's `transact`: every precondition, exactly the spec's effects. Every execution from
+  genesis (transactions, admin instructions, outside actions such as donations) is a spec run.
+  No difference found.
+- **The code accepts everything the spec allows, except L1 and A0.** Whatever `transact` the
+  spec allows, the code's `step` accepts, Anchor's account checks included. Every spec run is
+  the run of some code execution. The two exceptions are findings (below).
+- **So the spec's security goals hold of the code:** G1 (balance), G2a (non-malleability), G4
+  (payouts), G5 (admin control); G3a and G3b (liveness) except L1 and A0. G2b has no code
+  version: it is about circuit witnesses only.
 
-| Theorem | Says | Hypotheses (kind) |
-|---|---|---|
-| `transact_connection` | every `transact` the code accepts satisfies the spec's `transact` (all preconditions, exact effects) | execution, then the transaction as one more step (core-model `Run`) (premise); `DeploymentFacts`, `HashesAgree`, `SolanaFacts`, `CryptoFacts`, `CircuitFacts`, syscall contracts, `PairingLaws`, `SameRent` (asm) |
-| `run_connection` | every execution is a run of the spec (`IsSpecRun`), or has not initialized the pool | execution (premise); `DeploymentFacts`, `HashesAgree`, syscall contracts, `PairingLaws` (asm); `ExecutionAssumptions` (asm); `SameRent` for every program instruction (asm) |
-| `execution_path_iff_run` | `ExecutionPath` (which `run_connection` takes) has exactly the executions of core-model's `Run` | none |
-| `handler_complete_except_L1_A0` | completeness at the handler: every transaction the spec allows, the handler accepts with the spec's effects | `HandlerContext`, `HandlerSpecAllows` (premise); `HashesAgree`, `CompletenessAssumptions`, syscall contracts, `PairingLaws` (asm); not L1, not A0 (finding) |
-| `spendsAreGenuine_code`, `noDoubleSpend_code`, `poolBacksNotes_code`, `onlyOwnerSpends_code`, `onlyAuthoritiesChangeConfig_code`, `adminPowersLimited_code` | G1a, G1b, G1c, G1d, G5a, G5b (the spec's named properties) hold of the execution's run | as `run_connection`; initialized (premise) |
-| `samePayout_code`, `onlySignersPay_code`, `exactPayouts_code` | G2a, G4a, G4b hold of every transaction the code accepts | as `transact_connection` |
-| `honestSpendIsAccepted_code` | G3a: an honest spend is accepted by `step`, or a hash break occurs | execution (premise); `DeploymentFacts`, `HashesAgree`, `CompletenessAssumptions`, syscall contracts, `PairingLaws`, `r.WitnessesFor wit` (T1) (asm); world = `r.final` (design); `ReachesProgram` (see below); not L1, not A0 (finding); `HonestSpend` (owner); `LimitsNotHit` (limit) |
-| `adminsCannotLockWithdrawals_code` | G3b: a way to withdraw `spentAmt` ≥ 2 exists, at least half reaches the recipient, and an honest transaction using it is accepted by `step`, or a hash break occurs | as G3a, but L1 can't arise; `spentAmt` (premise); `LimitsNotHit` minus the fee and deposit limit (limit) |
-| `admin_change_nonvacuous` | every hypothesis of `run_connection` holds in a toy execution with `update_deposit_limit` before a deposit, and every run of it records that admin change (G5a, G5b not vacuous on an admin change) | none |
-| `liveness_code_nonvacuous` | every hypothesis of G3a and G3b for the code holds for a toy withdrawal of a 2-lamport note, for every split G3b allows (1/1 and 2/0), and `step` accepts it | `usize` is 64 bits (asm: unprovable in Lean) |
-| `connection_nonvacuous` | every hypothesis of `run_connection` and of the run goals holds in a toy execution (deposit, then a withdrawal spending its note), with witnesses where the spend is non-zero | none |
-| `donation_nonvacuous` | every hypothesis of `run_connection` holds in a toy execution with an outside action (`EnvStep`: 1 lamport sent to the pool) before a deposit, and every run of it has `r.donated = 1` | none |
-| `handler_complete_nonvacuous` | every hypothesis of `handler_complete_except_L1_A0` holds for a toy deposit of 1 lamport with a nonzero `proof_a` | `usize` is 64 bits (asm: unprovable in Lean) |
-| `transact_connection_nonvacuous` | every hypothesis of `transact_connection` (so of G2a, G4a, G4b for the code) holds for an accepted deposit and an accepted withdrawal in one toy deployment | none |
+Every result ends in "… or an address collision occurs" (a SHA-256 collision between two
+derived addresses), as the spec's results end in a hash break. Collisions are not assumed away.
 
-`ReachesProgram`: `AccountsCorrect` (owner); `ProgramAccountsInPlace`, `NullifierAddressesFree`,
-`SolanaFacts`, positive rent (`TxEnv.RentPositive`, as core-model's `Run`), `SameRent` (asm).
+Not covered: Solana rejections that core-model leaves out (writable flags, rent exemption,
+compute and size limits; `core-model/README.md`), so "accepted" means accepted by core-model's
+`step`. For G3: a transfer or admin change after the run's last transaction.
 
-Not carried over: G2b (about circuit witnesses only). The build has no `sorry`. Axioms are machine-checked for the spec only (`Spec/Axioms.lean`); for the connection, check with `#print axioms` (`REVIEWING.md`).
+## What you must trust
+
+The spec's own assumptions T0–T3 (`Spec/Statements.lean`), core-model's
+(`core-model/README.md`), and these. **S** = soundness needs it, **C** = only completeness and
+G3 need it.
+
+| Assumption | Says | Why it holds | |
+|---|---|---|---|
+| `ProgramNotSystem` | the program is not the System Program | nothing can be deployed at that address | S |
+| `HashesAgree` | the spec's `H2` and `sha256` are the program's Poseidon (on canonical inputs) and SHA-256 | the spec leaves them abstract; this picks the real ones | S |
+| `SameRent` | the transaction sees the rent the spec uses | the spec has one rent constant (by design) | S |
+| syscall contracts, `PairingLaws` | what the `alt_bn128` syscalls return means; `e(−a, b) = e(a, b)⁻¹` | core-model's contracts; bilinearity | S |
+| `PdasDoNotSign` | no derived address signs a transaction | a derived address has no private key | S |
+| `CircuitFacts` | an accepted proof's two input nullifiers differ | only the circuit checks this (finding I1) | S |
+| `CryptoSucceeds` | Poseidon and the syscalls return a value on valid input; the key's G2 points decode | `light-poseidon` and Solana's syscalls fail only on invalid input | C |
+| `RuntimeFacts` | `usize` is 64 bits; rent is positive | the program runs on 64-bit SBF; Solana charges for account metadata | C |
+| `PdasOnlyByProgram` | only the program creates accounts at its derived addresses | creating one needs the address's signature | C |
+| `SignerIsPlain` (by design) | the signer is a system account with no data | the spec does not model owners; on Solana only such an account pays | C |
+
+Double-spend protection also rests on core-model's `EnvStep`: no outside action changes a
+program account's owner or data.
+
+No assumption bounds the sender's data (`TransactTx`: signers, accounts, proof, amounts, outputs):
+soundness assumes only `PdasDoNotSign` and `CircuitFacts` about it (`REPORT_NOTES.md`).
+
+## Theorems
+
+Labels say why a hypothesis is fair to assume, as in the spec; definitions in `REVIEWING.md`.
+**asm** is `[assumption]` (the table above). Every theorem also takes `ProgramNotSystem`,
+`HashesAgree`, the syscall contracts and `PairingLaws` (asm); the table lists only what it adds.
+
+| Theorem | Says | Adds | Non-vacuity |
+|---|---|---|---|
+| `transact_connection` | an accepted `transact` satisfies the spec's | execution + accepted step (premise); `PdasDoNotSign`, `CircuitFacts`, `SameRent` (asm) | `transact_connection_nonvacuous` |
+| `run_connection` | an execution is a spec run, or the pool is not initialized | execution (premise); `PdasDoNotSign`, `CircuitFacts` per `transact`, `SameRent` per instruction (asm) | `connection_nonvacuous`, `donation_nonvacuous`, `admin_change_nonvacuous` |
+| `transact_complete_except_L1_A0` | what the spec allows, `step` accepts, ending in the spec's `transactEffects` | execution, initialized, `AccountsListed` (premise); `CryptoSucceeds`, `RuntimeFacts`, `PdasOnlyByProgram`, `SameRent` (asm); `SignerIsPlain` (design); not L1, A0 (finding) | `transact_complete_nonvacuous` |
+| `run_complete_except_L1_A0` | a spec run is a code execution's run | the deployment's pool (premise); `CryptoSucceeds`, `RuntimeFacts` (asm); no L1, A0 (finding) | `run_complete_nonvacuous` |
+| G1a–d, G5a–b `_code` | the goal holds of the execution's run | as `run_connection`; initialized (premise) | `connection_nonvacuous`, `admin_change_nonvacuous` |
+| G2a, G4a–b `_code` | the goal holds of every accepted transaction | as `transact_connection` | `transact_connection_nonvacuous` |
+| `honestSpendIsAccepted_code` (G3a) | an honest spend is accepted, or a hash break | as `transact_complete`; nothing since the run's last transaction (premise); T1 (asm); `HonestSpend` (owner); `LimitsNotHit` (limit) | `liveness_code_nonvacuous` |
+| `adminsCannotLockWithdrawals_code` (G3b) | a withdrawal of `spentAmt ≥ 2` exists, half reaches the recipient, and is accepted | as G3a; no L1 (cannot arise); fewer limits | `liveness_code_nonvacuous` |
+
+The completeness and G3 non-vacuity statements take a 64-bit `usize` (unprovable in Lean). The
+build has no `sorry`; check axioms with `#print axioms` (`REVIEWING.md`).
 
 ## Findings
 
-Details for the program's authors are in `FINDINGS.md`. Only the completeness theorems (`handler_complete_except_L1_A0`, G3 for the code) exclude findings, by name.
+Details and recommendations: `FINDINGS.md`. Lean: `Findings.lean`, except I1.
 
-| ID | What | Where in Lean |
+| ID | What | Effect on the results |
 |---|---|---|
-| L1 | the code rejects `extAmt = 0`, the internal transfer the docs describe and the spec allows | `Findings.lean`: counterexamples (given a 64-bit `usize`); excluded in `handler_complete_except_L1_A0` |
-| A0 | the code rejects a proof whose `proof_a` is 64 zero bytes (arkworks rejects what the syscalls read as the identity) | `Findings.lean`: counterexample (given a 64-bit `usize`); excluded in `handler_complete_except_L1_A0` |
-| I1 | only the circuit keeps the two input nullifiers distinct | the code-model assumption `CircuitFacts` (an accepted proof's two nullifiers differ); without it `transact_connection` fails (`Proofs/ToyDup.lean`: `transact_connection_fails_without_circuit`) |
-| F7 | a root can be evicted (about 50 transactions) before an honest proof lands | spec: `rootKnown` (a limit on G3a) |
+| L1 | the code rejects `extAmt = 0`, the internal transfer the docs describe | excluded from completeness and G3a; counterexample `transact_complete_fails_for_internal_transfer` |
+| A0 | the code rejects a proof whose `proof_a` is 64 zero bytes (the syscalls read it as the identity; arkworks rejects it) | excluded from completeness, G3a, G3b; counterexample `transact_complete_fails_for_zero_proof_a` |
+| I1 | only the circuit keeps the two input nullifiers distinct | assumed (`CircuitFacts`); without it `transact_connection` fails (`Proofs/ToyDup.lean`) |
+| F7 | a root can be evicted (after about 50 transactions) before an honest proof lands | a limit on G3a (`rootKnown`) |
 
-Documentation notes (the spec includes the rule, marked ADDED MANUALLY (docs silent)):
-`extAmt = −2^63` is rejected; the fee rates and the fee error margin are at most 10000; only the admin key can initialize.
-
-## Assumed, not derived
-
-What each says is in its docstring. Linking the code to the spec (`Hypotheses.lean`):
-
-- `HashesAgree`: the deployment's hashes are the spec's.
-- `SameRent`: code and spec use the same rent. No Solana detail is excluded by design: the spec models nullifier accounts (pre-funded addresses, payments into them).
-
-About the code alone (`CodeModelAssumptions.lean`; core-model does not state them):
-
-- `DeploymentFacts`: the program is not the System Program, so an account the program owns is never mistaken for a free one.
-- `SolanaFacts`: no program-derived address signs, per transaction. (Positive rent is part of core-model's `Run`.)
-- `CircuitFacts`: an accepted proof's two input nullifiers differ (core-model's `Groth16Sound`; finding I1), per proof.
-- `CryptoFacts`: SHA-256 makes the two new nullifier accounts' addresses differ, per transaction.
-- `ExecutionAssumptions` (`run_connection`): `SolanaFacts`, `CryptoFacts`, `CircuitFacts` for every `transact`; the fixed addresses differ.
-- `CompletenessAssumptions` (`handler_complete_except_L1_A0`, G3a, G3b): the hashes and syscalls return a value on valid input; `usize` is 64 bits (SOLANA FACT, unprovable in Lean).
-- `ProgramAccountsInPlace`, `NullifierAddressesFree` (in `ReachesProgram`, G3 for the code): Anchor's account constraints hold.
-- Syscall contracts (`AltBn128Contracts`) and `PairingLaws`: the verifier bridge.
-- Core-model's own assumptions (`core-model/README.md`), in particular `EnvStep`, on which double-spend protection rests.
+Where the docs are silent, the spec adds rules marked ADDED MANUALLY; `FINDINGS.md` ("Notes")
+lists them as documentation the authors should add.

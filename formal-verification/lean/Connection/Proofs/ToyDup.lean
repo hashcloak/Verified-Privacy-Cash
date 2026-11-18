@@ -16,39 +16,34 @@ nullifiers differ: `nullifier2` and `nullifier3` get the addresses of `nullifier
 namespace Connection
 
 section
-variable {G1 G2 GT : Type} [AddCommGroup G1] [Module Spec.F G1] [AddCommGroup G2]
-  [Module Spec.F G2] [CommGroup GT] [Spec.PoseidonHashes] [Spec.Sha]
+variable {G1 G2 GT : Type} [AddCommGroup G1] [Module Spec.F G1] [Inhabited G2]
+  [CommGroup GT] [Spec.PoseidonHashes] [Spec.Sha]
 
 /-- The conclusion of `transact_connection`: the spec's `transact` holds between the worlds
     before and after the accepted transaction. -/
 def SpecTransactHolds (d : Deployment) (rent : Nat → U64) (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT)
-    (laws : PairingLaws C.e) (evs : List Event) (s s' : State) (tx : TxEnv) (a : TransactAccounts)
-    (proof : zkcash_core.transact.Proof) (extAmount : I64) (fee : U64) (out1 out2 : Slice U8) : Prop :=
-  letI : Spec.Groups := syscallGroups C
-  letI : Spec.Pairing := syscallPairing C
-  letI : Spec.Deployment := ⟨programKey C⟩
-  let inputs := toInputs tx.signers a proof extAmount fee out1 out2
-  Spec.transact inputs (toWorld d rent s) (toWorld d rent s')
+    (tx : TransactTx) (s s' : State) : Prop :=
+  withSyscallSpec C in
+  Spec.transact (toInputs tx) (toWorld d rent s) (toWorld d rent s')
 
 end
 
-/-- `transact_connection` without `CircuitFacts`; all other hypotheses are kept. -/
+/-- `transact_connection` without `CircuitFacts`: the same inputs, the other hypotheses in the
+    same order, the same conclusion. -/
 def TransactConnectionWithoutCircuit : Prop :=
-  ∀ (G1 G2 GT : Type) [AddCommGroup G1] [Module Spec.F G1] [AddCommGroup G2]
-    [Module Spec.F G2] [CommGroup GT] [Spec.PoseidonHashes] [Spec.Sha]
-    (d : Deployment) (rent : Nat → U64) (s₀ s s' : State) (evs : List Event) (tx : TxEnv)
-    (a : TransactAccounts) (proof : zkcash_core.transact.Proof) (extAmount : I64) (fee : U64)
-    (out1 out2 : Slice U8) (events : List CommitmentData)
-    (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e),
-    Genesis d.programId s₀ →
-    Run d s₀ evs s →
-    DeploymentFacts d →
-    Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s' →
-    HashesAgree d.crypto →
-    SolanaFacts d tx →
-    CryptoFacts d proof →
-    SameRent rent tx →
-    SpecTransactHolds d rent C laws evs s s' tx a proof extAmount fee out1 out2
+  ∀ (G1 G2 GT : Type) [AddCommGroup G1] [Module Spec.F G1] [Inhabited G2]
+    [CommGroup GT] [Spec.PoseidonHashes] [Spec.Sha]
+    (d : Deployment) (rent : Nat → U64) (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT)
+    (tx : TransactTx) (sysvarRent : Option (Nat → U64)) (s s' : State)
+    (events : List CommitmentData),
+    ProgramNotSystem d →
+    PairingLaws C.e →
+    HashesAgree d →
+    PdasDoNotSign d tx.ctx →
+    SameRent rent sysvarRent →
+    Reachable d s →
+    Run d s [.program (tx.env sysvarRent) tx.instruction events] s' →
+    SpecTransactHolds d rent C tx s s' ∨ AddressCollision d {tx.args.proof}
 
 namespace Toy
 open zkcash_core
@@ -95,8 +90,8 @@ def HandlerPreND (signers : List Pubkey) (a : TransactAccounts) (s₁ : State) (
   @PreExceptDistinct _ _ (syscallGroups toyC) (inferInstanceAs (AddCommGroup Unit))
     (inferInstanceAs (Module Spec.F Unit))
     (inferInstanceAs (CommGroup Unit))
-    (syscallPairing toyC) (@Spec.Deployment.mk (syscallGroups toyC) (programKey toyC))
-    (toInputs signers a proof ext fee out1 out2) (handlerWorld a s₁ v tree config accts addr)
+    (syscallPairing toyC) (programDeployment toyC)
+    (toInputs ⟨⟨signers⟩, a, ⟨proof, ext, fee, out1, out2⟩⟩) (handlerWorld a s₁ v tree config accts addr)
 
 /-- The spec's preconditions other than `distinctNullifiers` hold for the withdrawal (as
     `spend_pre`, with the split 2/0). -/
@@ -108,37 +103,39 @@ theorem dup_pre (sB : State) (tree₂ t1 : merkle_tree.MerkleTreeAccount) (confi
       emptySlice emptySlice := by
   unfold HandlerPreND
   obtain ⟨-, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, hTP, -⟩ := dep_addr
-  obtain ⟨w01, w02, -, w04, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -,
-    -, w12, -, w14, -, -, -, -, -, -, -, -⟩ := spend_addr
+  obtain ⟨w0t, w02, w0c, w04, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -,
+    w1t, w12, w1c, w14, -, -, -, -, -, -, -, -⟩ := spend_addr
   obtain ⟨w0n1, -, -⟩ := dup_addr
+  obtain ⟨tP, -, cP, -⟩ := addr_facts
   have hfacts := handlerAddr_facts toyTx.signers dupA dupProof dupExt 0#u64 emptySlice emptySlice sB 1#u64
-    tree₂ config ∅ w0n1 w02 w12 (Ne.symm w04) (Ne.symm w14) (Ne.symm hTP)
+    tree₂ config ∅ w0n1 w02 w12 (Ne.symm w04) (Ne.symm w14) (Ne.symm hTP) w0t w0c w1t w1c (Ne.symm tP)
+    (Ne.symm cP) rfl
   have hdec := decode_toInputs (signers := toyTx.signers) toyC dupProof dupA dupExt 0#u64 emptySlice emptySlice
     toy_alpha_decodes rfl toy_zeros_decodes
-  have he : (toInputs toyTx.signers dupA dupProof dupExt 0#u64 emptySlice emptySlice).extAmt = -2 := dupExt_val
-  have hf : (toInputs toyTx.signers dupA dupProof dupExt 0#u64 emptySlice emptySlice).f = 0 := by simp [toInputs]
+  have he : (toInputs ⟨⟨toyTx.signers⟩, dupA, ⟨dupProof, dupExt, 0#u64, emptySlice, emptySlice⟩⟩).extAmt = -2 := dupExt_val
+  have hf : (toInputs ⟨⟨toyTx.signers⟩, dupA, ⟨dupProof, dupExt, 0#u64, emptySlice, emptySlice⟩⟩).f = 0 := by simp [toInputs]
   have h3P : pk 3#u8 ≠ tokenA := by unfold tokenA; decide +kernel
   have h4P : pk 4#u8 ≠ tokenA := by unfold tokenA; decide +kernel
   have hpool : (handlerWorld dupA sB 1#u64 tree₂ config ∅ (handlerAddr dupA)).state.pool = toPubkey tokenA := rfl
   have hnr : (handlerWorld dupA sB 1#u64 tree₂ config ∅ (handlerAddr dupA)).nullifierRent = 0 := rfl
-  have hA : (toInputs toyTx.signers dupA dupProof dupExt 0#u64 emptySlice emptySlice).A = toPubkey (pk 3#u8) := rfl
-  have hs : (toInputs toyTx.signers dupA dupProof dupExt 0#u64 emptySlice emptySlice).s = toPubkey (pk 1#u8) := rfl
-  have ht : (toInputs toyTx.signers dupA dupProof dupExt 0#u64 emptySlice emptySlice).t = toPubkey (pk 4#u8) := rfl
+  have hA : (toInputs ⟨⟨toyTx.signers⟩, dupA, ⟨dupProof, dupExt, 0#u64, emptySlice, emptySlice⟩⟩).A = toPubkey (pk 3#u8) := rfl
+  have hs : (toInputs ⟨⟨toyTx.signers⟩, dupA, ⟨dupProof, dupExt, 0#u64, emptySlice, emptySlice⟩⟩).s = toPubkey (pk 1#u8) := rfl
+  have ht : (toInputs ⟨⟨toyTx.signers⟩, dupA, ⟨dupProof, dupExt, 0#u64, emptySlice, emptySlice⟩⟩).t = toPubkey (pk 4#u8) := rfl
   have hpb : (handlerWorld dupA sB 1#u64 tree₂ config ∅ (handlerAddr dupA)).balances (toPubkey tokenA) = 3 := by
     show (sB (fromPubkey (toPubkey tokenA))).lamports.val = 3
     rw [fromPubkey_toPubkey, hpoolB]
   refine @PreExceptDistinct.mk _ _ (syscallGroups toyC) (inferInstanceAs (AddCommGroup Unit))
     (inferInstanceAs (Module Spec.F Unit))
     (inferInstanceAs (CommGroup Unit))
-    (syscallPairing toyC) (@Spec.Deployment.mk (syscallGroups toyC) (programKey toyC)) _ _
+    (syscallPairing toyC) (programDeployment toyC) _ _
     ?_ ?_ ?_ ?_ ⟨_, hdec, rfl⟩ ?_ hfacts.1 ?_ ?_ ?_ ?_ hfacts.2 ?_ ?_ ?_ ?_ ?_ ?_
   · -- the root: the deposit's last append stored the root `1`
     show Spec.rootBytesKnown (toTree tree₂) (toBytes one32.val)
     rw [rootBytesKnown_iff]
     refine ⟨canonical_one32, ⟨⟨(toTree t1).rootIndex + 1, ?_⟩, by rw [toF_one32]; decide⟩⟩
     rw [htree, toy_append_history, toF_one32]
-  · show (Spec.natOfLE (List.replicate 32 0) : Spec.F) = toF zeros32
-    rw [toF_zeros32]; rfl
+  · unfold Spec.externalDataBound Spec.externalDataHash
+    rw [toy_extDataHash]; rfl
   · unfold Spec.feeSufficient; rw [he, hf]; simp [handlerWorld, toConfig, hwr]
   · unfold Spec.pubAmtConsistent; rw [he, hf]
     refine ⟨fun h => by omega, ?_⟩
@@ -230,14 +227,15 @@ theorem toy_dup_ok (s₂ : State) (tree₂ t1 : merkle_tree.MerkleTreeAccount) (
   have hrecB : (sB (pk 3#u8)).lamports.val = 0 := by
     rw [hsB _ p31' p30 p31]; exact (hz _ p3T p3K p3C p31' p3a p3b).1
   -- the handler, without distinct nullifiers
-  obtain ⟨ap, env', tree', hh⟩ := handler_ok_exists_nd toyCrypto toyC toyLaws toyHashesAgree toyHashesSucceed
-    toySyscalls toyKey dupA sB 1#u64 tree₂ config ∅ (handlerAddr dupA) dupProof dupExt 0#u64 emptySlice
+  obtain ⟨ap, env', tree', hh⟩ := handler_ok_exists_nd toyD toyC toyLaws toyHashesAgree toyPoseidonSucceeds
+    toySha256Succeeds toySyscalls toyKey
+    dupA sB 1#u64 tree₂ config ∅ (handlerAddr dupA) dupProof dupExt 0#u64 emptySlice
     emptySlice hshape
     hroots hsubs (by omega) (by omega) (by omega)
     ⟨by rw [oB, oA, hPs], by rw [dB, dA, hPs]; rfl⟩ toyFit (by rw [dupExt_val]; decide) alpha_ne_zeros
     (dup_pre sB tree₂ t1 config c htree hTn hwr hpoolB hrecB)
   -- lamports are conserved
-  have hok := handler_ok toyCrypto _ _ _ _ _ _ _ _ _ _ _ _ _ hh
+  have hok := handler_ok toyCrypto toyCrypto.sha256 _ _ _ _ _ _ _ _ _ _ _ _ _ hh
   obtain ⟨v', -, -, hwd, -⟩ := hok.rent
   have hneg : dupExt.val < 0 := by rw [dupExt_val]; decide
   have habs : dupExt.val.natAbs = 2 := by rw [dupExt_val]; rfl
@@ -286,10 +284,7 @@ theorem toy_dup_execution :
       step toyD toyS0 toyTx (.initialize toyInitA) = .ok (s₁, []) ∧
       step toyD s₁ toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) = .ok (s₂, e₂) ∧
       step toyD s₂ toyTx (.transact dupA dupProof dupExt 0#u64 emptySlice emptySlice) = .ok (s₃, e₃) ∧
-      PdaCollisionFree toyD.toAddresses
-        {toyD.pdaInput (nullifier0Seeds dupProof.input_nullifiers.val[0]!),
-         toyD.pdaInput (nullifier1Seeds dupProof.input_nullifiers.val[1]!)} ∧
-      SameRent toyRent toyTx := by
+      SameRent toyRent toyTx.minimumBalance := by
   obtain ⟨s₁, tree, token, config, hinit, hT, hK, hC, hP, hO, hshape, hroots, hsubs, hT0, hTn, hTb, hTm,
     hkb, hcb, hdr, hwr, hmr⟩ := toy_init_ok
   obtain ⟨s₂, e₂, tree₂, hstep₂, hT2, hK2, hC2, hP2, hO2, p1, p2, t1, hap1, hap2⟩ :=
@@ -298,8 +293,11 @@ theorem toy_dup_execution :
   have hinitStep : step toyD toyS0 toyTx (.initialize toyInitA) = .ok (s₁, []) := by
     show (do let s' ← execInitialize toyD toyS0 toyTx toyInitA; pure (s', [])) = _
     rw [hinit]; rfl
-  obtain ⟨-, hsh1, -, hn1, -, -, hb1⟩ := append_ok' toyCrypto toyHashesAgree _ tree t1 p1 hshape hap1
-  obtain ⟨htree, hsh2, -, hn2, -, -, hb2⟩ := append_ok' toyCrypto toyHashesAgree _ t1 tree₂ p2 hsh1 hap2
+  have hl : Canonical depProof.output_commitments.val[0]! := by show Canonical zeros32; exact canonical_zeros32
+  have hl' : Canonical depProof.output_commitments.val[1]! := by show Canonical zeros32; exact canonical_zeros32
+  obtain ⟨-, hsh1, -, hn1, -, -, hb1⟩ := append_ok' toyD toyHashesAgree _ tree t1 p1 hshape hsubs hl hap1
+  have hsubs1 := append_subtrees_canonical' toyD toyHashesAgree _ tree t1 p1 hshape hsubs hl hap1
+  obtain ⟨htree, hsh2, -, hn2, -, -, hb2⟩ := append_ok' toyD toyHashesAgree _ t1 tree₂ p2 hsh1 hsubs1 hl' hap2
   have hrun₂ : Run toyD toyS0 [.program toyTx (.initialize toyInitA) [],
       .program toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) e₂] s₂ :=
     .program hinitStep toyTx_rentPositive (.program hstep₂ toyTx_rentPositive (.nil _))
@@ -309,21 +307,27 @@ theorem toy_dup_execution :
   obtain ⟨s₃, e₃, hstep₃⟩ := toy_dup_ok s₂ tree₂ t1 token config _ hT2 hK2 hC2 hP2 hO2 hsh2
     (wf₂.storedRoots _ _ hold₂) (wf₂.storedSubtrees _ _ hold₂) htree (by rw [hn2, hn1, hTn]; rfl)
     (by rw [hb2, hb1, hTb]) hkb hcb hdr hwr hmr
-  obtain ⟨w01, w02, w03, w04, w05, w06, -, -, -, -, -, -, -, -, -, -, -, -, -,
-    w11, w12, w13, w14, w15, w16, p30, -, p40, -, p3a, p3b⟩ := spend_addr
-  obtain ⟨w0n1, p31, p41⟩ := dup_addr
-  obtain ⟨-, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, -, p3T, p3K, p3C, p4T, p4K, p4C,
-    -, -, p4a, p4b, -, -⟩ := dep_addr
-  have p31' : pk 3#u8 ≠ pk 1#u8 := pk_ne (by decide)
-  have p41' : pk 4#u8 ≠ pk 1#u8 := pk_ne (by decide)
-  refine ⟨s₁, s₂, s₃, e₂, e₃, hinitStep, hstep₂, hstep₃, ?_, rfl⟩
-  · intro x hx y hy hxy
-    simp only [Set.mem_insert_iff, Set.mem_singleton_iff] at hx hy
-    rcases hx with rfl | rfl <;> rcases hy with rfl | rfl
-    · rfl
-    · exact absurd hxy w0n1
-    · exact absurd hxy.symm w0n1
-    · rfl
+  exact ⟨s₁, s₂, s₃, e₂, e₃, hinitStep, hstep₂, hstep₃, rfl⟩
+
+/-- The withdrawal's addresses don't collide: with both nullifiers `two32`, its seeds are the
+    two nullifier seeds of `two32` and the three fixed seeds. -/
+theorem toy_collisionFree_dup : TransactAddressesDistinct toyD dupProof := by
+  have hnd : ([toyD.pdaInput (nullifier0Seeds two32), toyD.pdaInput (nullifier1Seeds two32),
+      toyD.pdaInput merkleTreeSeeds, toyD.pdaInput treeTokenSeeds,
+      toyD.pdaInput globalConfigSeeds].map toyD.createProgramAddress).Nodup := by
+    unfold toyD; decide +kernel
+  have e0 : dupProof.input_nullifiers.val[0]! = two32 := rfl
+  have e1 : dupProof.input_nullifiers.val[1]! = two32 := rfl
+  have mem : ∀ x, x ∈ transactSeeds toyD dupProof →
+      x ∈ [toyD.pdaInput (nullifier0Seeds two32), toyD.pdaInput (nullifier1Seeds two32),
+        toyD.pdaInput merkleTreeSeeds, toyD.pdaInput treeTokenSeeds,
+        toyD.pdaInput globalConfigSeeds] := by
+    intro x hx
+    simp only [transactSeeds, fixedSeeds, e0, e1, Set.mem_union, Set.mem_insert_iff,
+      Set.mem_singleton_iff] at hx
+    rcases hx with (h | h | h) | (h | h | h | h) <;> simp [h]
+  intro x hx y hy hxy
+  exact List.inj_on_of_nodup_map hnd (mem x hx) (mem y hy) hxy
 
 end Toy
 
@@ -333,14 +337,15 @@ attribute [local instance] Toy.toyPoseidon Toy.toySpecSha in
     hypothesis of `transact_connection` holds for it, and the spec's `transact` does not. -/
 theorem transact_connection_fails_without_circuit : ¬ TransactConnectionWithoutCircuit := by
   intro h
-  obtain ⟨s₁, s₂, s₃, e₂, e₃, h1, h2, h3, hdiff, outside⟩ := Toy.toy_dup_execution
-  obtain ⟨-, -, -, -, -, hpid, -, hashes, solana, -, -⟩ := Toy.toy_execution
-  have hspec := h Unit Unit Unit Toy.toyD Toy.toyRent Toy.toyS0
-    s₂ s₃ _ Toy.toyTx Toy.dupA Toy.dupProof Toy.dupExt 0#u64 Toy.emptySlice Toy.emptySlice e₃ Toy.toyC
-    Toy.toyLaws Toy.toyGenesis (.program h1 Toy.toyTx_rentPositive (.program h2 Toy.toyTx_rentPositive (.nil _))) Toy.toyDeploymentFacts
-    (.program h3 Toy.toyTx_rentPositive (.nil _)) hashes solana ⟨hdiff⟩ outside
-  unfold SpecTransactHolds at hspec
-  obtain ⟨⟨-, -, -, -, -, -, hdistinct, -⟩, -⟩ := hspec
-  exact hdistinct rfl
+  obtain ⟨s₁, s₂, s₃, e₂, e₃, h1, h2, h3, sameRent⟩ := Toy.toy_dup_execution
+  obtain ⟨-, -, -, -, -, -, -, -, solana, -, -⟩ := Toy.toy_execution
+  rcases h Unit Unit Unit Toy.toyD Toy.toyRent Toy.toyC
+      ⟨Toy.toyTx.toTxContext, Toy.dupA, ⟨Toy.dupProof, Toy.dupExt, 0#u64, Toy.emptySlice, Toy.emptySlice⟩⟩
+      Toy.toyTx.minimumBalance s₂ s₃ e₃ Toy.toyProgramNotSystem Toy.toyLaws Toy.toyHashesAgree solana sameRent
+      ⟨_, _, Toy.toyGenesis, .program h1 Toy.toyTx_rentPositive (.program h2 Toy.toyTx_rentPositive (.nil _))⟩
+      (.program h3 Toy.toyTx_rentPositive (.nil _)) with hspec | hc
+  · obtain ⟨⟨-, -, -, -, -, -, hdistinct, -⟩, -⟩ := hspec
+    exact hdistinct rfl
+  · exact noCollision_of_free Toy.toy_collisionFree_dup hc
 
 end Connection

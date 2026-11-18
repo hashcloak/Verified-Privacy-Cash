@@ -5,16 +5,28 @@ working; not the report itself.
 
 ## How to interpret the results
 
-**Scope.** The connection theorems are safety: whenever the code accepts a `transact`, the spec
-allows it, with exactly the spec's effects. It says nothing about transactions the code
-rejects. Completeness is checked for the program's own logic (the handler): L1 and A0 are
-the only wrong rejections there. Completeness through Anchor and the runtime is future work.
+**Scope.** Soundness: whenever the code accepts a `transact`, the spec allows it, with exactly
+the spec's effects, and every code execution is a spec run (`transact_connection`,
+`run_connection`). Completeness: whenever the spec allows a `transact`, the code accepts it,
+through Anchor, the handler and the runtime, and ends in the spec's world
+(`transact_complete_except_L1_A0`); every spec run is the run of a code execution
+(`run_complete_except_L1_A0`), except at findings L1 and A0, the only wrong rejections. Every
+result allows an address collision (a break) instead.
+
+**Run completeness covers a few runs Solana cannot produce.** The spec keeps only a
+transaction's fee payer (`inputs.s`) off the program's accounts; its other signers, and an admin
+change's signers, may be the pool, the tree, the config or a nullifier account. Those are PDAs and
+cannot sign on Solana. So `run_complete_except_L1_A0` also covers runs in which a program account
+co-signs; for them the code execution it builds is one the code model accepts but Solana would
+never produce. This weakens no claim (a larger set of spec runs only makes completeness say more,
+and soundness and the goals are unaffected), so the spec has no rule against it.
 
 **From steps to executions.** `run_connection` shows every execution of the
 code model is a run of the spec, so the spec's invariants (no double spending, every note
 backed, only the owner spends, only the authorities change the config) hold for the code.
-Between transactions the spec allows what Solana allows: SOL sent to any account (the pool only
-gains), other accounts spent from, and admin changes signed by the right authority.
+Between transactions the spec allows what Solana allows: SOL sent to any account (the program's
+accounts, the pool and the nullifier accounts, only gain), other accounts spent from, and admin
+changes signed by the right authority.
 
 **Nullifier accounts are modelled.** The spec records a spent nullifier as its nullifier
 account (one address per input slot); a nullifier is spent when its account exists in either
@@ -36,13 +48,14 @@ another limit of G3a or a hash break blocks it. It needs the limit of 100% on th
 A 1-lamport note can't get out at a 100% rate and a zero fee error margin. A rate raised after a
 transaction is built can make its fee too low; the owner then builds another.
 
-**G3 for the code assumes Anchor's account checks pass.** `honestSpendIsAccepted_code` and
-`adminsCannotLockWithdrawals_code` say: if the transaction passes Anchor's account checks, `step`
-accepts it, or a hash break occurs. They cover Anchor's `init`s, the handler and the lamport check.
-Assumed, not machine-checked: the program's accounts are in place, and the four nullifier addresses
-meet Anchor's `init` and `SystemAccount` constraints. The second holds for an unspent nullifier
-because only the program can create accounts at its derived addresses, and it does so only for
-nullifiers it spends, which is visible in `execTransact`. Internal transfers aren't covered (L1), nor
+**G3 for the code covers the whole `step`.** `honestSpendIsAccepted_code` and
+`adminsCannotLockWithdrawals_code` say: an honest transaction, as the owner submits it
+(`ReachesProgram`), is accepted by `step`, or a hash break occurs. Anchor's account checks are
+proved to pass: the program's accounts are in place (an invariant of the execution), and the
+four nullifier addresses meet Anchor's `init` and `SystemAccount` constraints because the spec
+says the nullifiers are unspent. That step assumes only the program creates accounts at its
+derived addresses (`PdasOnlyByProgram`; true on Solana, not stated by core-model); otherwise an
+address collision occurs. Internal transfers aren't covered (L1), nor
 a change in the gap since the last transaction. "Accepted" is by the code model, which leaves out
 some of Solana's rejections.
 
@@ -55,6 +68,21 @@ the spec's, facts about Solana and the circuit, the syscall contracts, and the S
 the spec deliberately leaves out. Each is named and documented in `Hypotheses.lean` (linking the
 code to the spec, by-design exclusions) or `CodeModelAssumptions.lean` (about the code alone).
 
+**Hash breaks: properties on named inputs, not computed data.** Collision resistance is never
+assumed. As in the spec (T2), a theorem that could fail through a hash collision ends in
+"… or a break occurs", where the break names its inputs (e.g. `Sha256Collision a b` for the two
+transactions' external data, `AddressCollision` for the seeds one transaction uses), or ranges
+over a finite set of the run's own data. This follows the convention of Zcash's Ironwood
+verification ("breaks as computed data") in substance, not in form, and the difference is a limit,
+not an error:
+- **Our breaks are propositions, proved classically.** Ironwood's are data, built by computable
+  reductions, so Lean checks that the colliding inputs are produced from the run, not obtained from
+  mere existence. Here that rests on an argument: the inputs are the attacker's own data in the run,
+  so a violation yields a collision after at most a search over a polynomial-size list.
+- **No probability layer.** We stop at "or a break on these inputs"; that such a break is unlikely
+  is prose (T2). Ironwood formalises the bound.
+Moving to Ironwood's form would mean redesigning the spec's breaks and every theorem using them.
+
 **Non-vacuity.** A theorem "if H then C" is true but says nothing if H can never hold, and
 Lean does not warn about this.
 - Results with no hypotheses hold unconditionally: the counterexamples in `Findings.lean`.
@@ -64,9 +92,12 @@ Lean does not warn about this.
   the hypotheses, so the theorem is not vacuous.
 - That argument is about what the assumptions mean. A mistake in how one is written in Lean
   (a formula stronger than intended, or impossible) would slip through. A Lean witness, one
-  toy execution where every hypothesis holds, checks the formulas themselves. It exists:
+  example execution where every hypothesis holds, checks the formulas themselves. It exists:
   `connection_nonvacuous`, an execution with a deposit and a withdrawal that spends the
   deposit's note, so the hypotheses also hold together on a real spend.
+- The examples use deliberately broken cryptography (constant or linear hashes, trivial
+  pairing). They show the hypotheses can hold, not that real cryptography reaches the good
+  outcome.
 
 **What the spec models from the wire.** The spec carries the bytes of the seven public
 inputs and of the proof points, and requires canonical encodings, so the check against input
@@ -86,19 +117,47 @@ connection proves it) or by Solana (proved from the runtime model). Example:
 recipient of a non-zero fee) is needed for G1c and G4. The program does not check it. For the
 payees, the runtime's lamport-conservation check enforces it, and the connection proves this
 from the model of that check. For the signer, it follows from the assumed Solana fact that a
-program-derived address cannot sign (`SolanaFacts.pdasDoNotSign`).
+program-derived address cannot sign (`PdasDoNotSign`).
 
-**Completeness.** Handler completeness covers the program's own logic (the extracted
-handler), not Anchor's checks or the runtime. It is proved except at L1 and A0.
+**Completeness.** Completeness of `transact` covers the whole `step`: Anchor's account checks,
+its `init`s, the handler and the runtime's lamport check; the accepted transaction ends in the
+spec's world. It is proved except at L1 and A0. It
+excludes, by design, a signer that is not a plain system account (`SignerIsPlain`): Solana rejects
+its payments, and the spec does not model account owners. The exclusion is slightly wider than
+needed: a signer that pays nothing (a withdrawal whose new nullifier addresses already hold the
+rent) may be any account. The code accepts those transactions, so no difference is hidden.
 
-**Toys.** The spec's and the connection's non-vacuity checks use deliberately broken toy
-cryptography (constant or linear hashes, trivial pairing). They show the hypotheses can hold, not that
-real cryptography reaches the good outcome.
+**The sender's data is unrestricted.** The connection theorems put almost no restriction on what
+a sender, possibly an attacker, sends in a `transact` (`TransactTx`, `Mapping.lean`): the
+signers, the accounts, the proof's bytes and its seven public inputs, the amounts, the fee and
+the encrypted outputs. Soundness (`transact_connection`, `run_connection`) assumes only two
+things about them:
+- no program-derived address signs (`PdasDoNotSign`), a Solana fact;
+- the proof does not break the circuit (`CircuitFacts`, finding I1), a cryptographic assumption.
+Otherwise the conclusion allows an address collision (a break), but does not assume its absence.
+Nothing bounds the values: public inputs `≥ p`, out-of-range amounts and malformed outputs are
+all covered. The spec receives the sender's raw bytes (`pubInputBytes`, `π`, the encrypted
+outputs), not only their field values, and rejects out-of-range ones (`canonicalInputs`,
+`amountRange`, `rootBytesKnown`). So for every input, the code either rejects the transaction or
+does exactly what the spec says; in particular it never silently reduces a value mod `p` where
+the spec would not. "The code" here is the code model: the extracted program inside
+core-model's model of Solana and Anchor (`core-model/README.md` lists what it leaves out).
+Completeness adds premises about the transaction as an honest owner submits it (`AccountsListed`,
+`SignerIsPlain`) and excludes findings L1 and A0; it is about the transactions the spec allows,
+not about attacks.
+
+**What completeness over runs adds.** The safety goals (G1, G2, G4, G5) cannot see the code
+rejecting a step the spec allows between transactions: if `initialize` rejected a valid initial
+config, or `update_global_config` always failed, every goal would still hold.
+`run_complete_except_L1_A0` rules this out: every spec run, with its initial config, admin
+changes and outside actions, is the run of a code execution, up to L1, A0 and address
+collisions. It also shows that core-model's outside actions (`EnvStep`) can make every change the
+spec allows between transactions, so the code model leaves out none of them.
 
 **How findings surface: an example.** A0 was found because a faithful theorem could not be
-proved. Handler completeness without the L1 case got stuck at the verifier's negation step,
+proved. Completeness of the handler without the L1 case got stuck at the verifier's negation step,
 and Lean then proved the statement false with a concrete counterexample. Two choices made it
-visible: handler completeness (safety cannot see the code rejecting more) and a spec that
+visible: completeness (safety cannot see the code rejecting more) and a spec that
 models the proof's bytes (so the two decoders became comparable).
 
 ## Solana facts in the spec
@@ -110,23 +169,33 @@ Each is how Solana works, not a rule of the program; keep this list in sync with
   The signer of a `transact` and the initializer of the pool really signed; Anchor's `Signer`
   check enforces both.
 - **Rent.** An account must hold a rent-exempt minimum, which grows with its size: the pool's
-  (`rentExemptMin`) and a nullifier account's (`nullifierRent`) differ. The pool is created
-  holding exactly its minimum; the signer pays each new nullifier account what its address
+  (`rentExemptMin`), a nullifier account's (`nullifierRent`), the tree's and the config's
+  (`InitParams.treeRent`, `configRent`) differ. `initialize` creates the pool, the tree's and the
+  config's accounts holding exactly their minimum (`initWorld`; SOL sent there earlier counts as
+  sent before the first transaction); the signer pays each new nullifier account what its address
   is missing to hold the rent (`nullifierTopUp`): anyone can send lamports to an address before
   an account exists there.
 - **Nullifier accounts** (`State.nullifierAccounts`, `nullifierAddr`). A spent nullifier is an
   account at a program-derived address, one per input slot; only the program creates such an
   account, and it never closes one, so the accounts stay between transactions.
+- **The program's accounts only gain between transactions** (`Allowed.programAccountsGain`).
+  Only an account's owner can debit it; the program owns the pool, the nullifier accounts and
+  the tree's and config's accounts (`State.IsProgramAccount`, `State.treeAccount`,
+  `configAccount`), and debits nothing outside `transact`. Without this, a nullifier
+  account could be drained to 0 lamports, which Solana deletes, re-opening its note.
 - **Anchor's `init` fails where an account exists** (`nullifierAccountsCreatable`): the two
-  new nullifier accounts are not the pool and not each other.
+  new nullifier accounts are none of the program's accounts and not each other.
 - **Zero-filled accounts.** A new account's bytes are zero, so the root history slots other
   than the first hold `0` after initialization (`initTree`).
-- **Balances are `u64`** (`balancesFit`). No real transaction is affected: `2^64` lamports
-  exceeds the total SOL supply.
+- **Balances are `u64`** (`balancesFit`; every balance between transactions,
+  `Allowed.balancesFit`, and at the start, `InitParams.balances_fit`). No real
+  transaction is affected: `2^64` lamports exceeds the total SOL supply.
 - **Encrypted outputs are shorter than `2^32` bytes** (`encOutsFit`). Borsh writes vector
   lengths as `u32`; the transaction size limit (1232 bytes) keeps them far below anyway.
-- **Program-derived addresses can't sign** (`signerNotPoolNotNullifiers`): the signer is not
-  the pool or a new nullifier account.
+- **Program-derived addresses can't sign** (`signerNotPoolNotNullifiers`): the signer is none of
+  the program's accounts (the pool, the nullifier accounts, the tree's and config's accounts) and not a new nullifier
+  account. Likewise the initializer is none of the three accounts `initialize` creates
+  (`InitParams.initializer_not_created`).
 - **The pool is not paid as a payee** (`poolNotRecipient`). The runtime rejects an instruction
   that doesn't conserve lamports.
 
