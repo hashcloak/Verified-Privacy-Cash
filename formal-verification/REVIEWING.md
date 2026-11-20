@@ -101,7 +101,7 @@ suspect.
 | `[owner]` | the honest owner makes it true by following the protocol | `HonestSpend`, `ReachesProgram` (G3: the right accounts, a plain signer) | An honest owner can always make it true |
 | `[limit]` | a check that can legitimately block a transaction | `LimitsNotHit` (G3) | It is a real limit of the protocol or an admin setting |
 | `[assumption Tn]` | the spec's trusted assumption Tn | T1 (G3) | As in the spec |
-| `[assumption]` | we rely on this trusted assumption about Solana, the libraries or the deployment (Lean cannot prove it); if it fails, the theorem says nothing | `HashesAgree`, `SameRent` (`Hypotheses.lean`); `ProgramNotSystem`, `PdasDoNotSign`, `CircuitFacts`, `PairingLaws`, syscall contracts, `CryptoSucceeds`, `RuntimeFacts`, `PdasOnlyByProgram` (`CodeModelAssumptions.lean`); core-model's own | It is true of the real system |
+| `[assumption]` | we rely on this trusted assumption about Solana, the libraries or the deployment (Lean cannot prove it); if it fails, the theorem says nothing | `HashesAgree`, `SameRent` (`Hypotheses.lean`); `ProgramNotSystem`, `TransactAssumptions` (no PDA signs; the circuit keeps the nullifiers distinct), `PairingLaws`, syscall contracts, `CryptoSucceeds`, `RuntimeFacts`, `PdasOnlyByProgram` (`CodeModelAssumptions.lean`); core-model's own | It is true of the real system |
 | `[design]` | it excludes cases Solana rejects, through a detail the spec does not model | `SignerIsPlain` (completeness): the spec has no account owners | Solana rejects every excluded case, or the code accepts it (see the definition) |
 | `[finding]` | the code differs from the spec there; the difference is reported | not L1, not A0 (completeness, G3) | `Findings.lean` proves the theorem fails without it |
 
@@ -157,10 +157,10 @@ says?
 - Do the maps match the program? Field elements big-endian and read mod p; addresses
   little-endian; nullifier accounts count as 0 in balances (`s.lamports`).
 - Is the spec's verifying key the program's (`programKey`)?
-- `IsRunOf`: is the spec run the execution's own? Check the start (pool address, rents, admin, what
+- `IsRunOf`: is the spec run the code run's own? Check the start (pool address, rents, admin, what
   `initialize` set up), and that each transaction's record (`TxRecord`: inputs, pool balance before,
-  state after, admin changes before) is the same on both sides (`executionTxRecords`,
-  `runTxRecords`; `ExecutionPath`, `stateAt`, `adminChangesBefore`, `toAdminChange`).
+  state after, admin changes before) is the same on both sides (`codeRunTxRecords`,
+  `runTxRecords`; `CodeRun`, `RunStep`, `adminChanges`, `toAdminChange`).
 
 **Core-model, which the theorems trust**
 - `EnvStep` (`core-model/PrivacyCash/Model/Execution.lean`): nothing outside the program

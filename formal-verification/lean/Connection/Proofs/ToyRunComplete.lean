@@ -4,8 +4,8 @@ open Aeneas Aeneas.Std Result PrivacyCash.Model
 
 /-! # A spec run that satisfies every hypothesis of run completeness (not for review)
 
-The spec run of the example execution genesis, `initialize`, the deposit of 2 lamports
-(`Proofs/ToyRun.lean`), obtained by soundness (`execution_is_spec_run_pf`). It is a run of the
+The spec run of the example code run genesis, `initialize`, the deposit of 2 lamports
+(`Proofs/ToyRun.lean`), obtained by soundness (`code_run_is_spec_run_pf`). It is a run of the
 toy deployment (`RunOfDeployment`), its one transaction is neither L1 nor A0, and no address
 collides. -/
 
@@ -45,27 +45,27 @@ theorem toy_run_complete_nonvacuous (h64 : Usize.max = 2 ^ 64 - 1) :
       ∧ (∀ tx ∈ r.txs, tx.π.A ≠ List.replicate 64 0)
       ∧ ¬ AddressCollision toyD (fromSpecProof '' {tx | tx ∈ r.txs})
       ∧ r.txs = [depInputs] := by
-  obtain ⟨s₁, s₂, e₂, h1, -, hpid, h2, -, solana, depCrypto, -⟩ := toy_execution
-  have hpath : ExecutionPath toyD toyS0 [.program toyTx (.initialize toyInitA) [],
-      .program toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) e₂] [s₁, s₂] s₂ :=
+  obtain ⟨s₁, s₂, e₂, h1, -, hpid, h2, -, depAssumptions, depAddressesDiffer, -⟩ := toy_run
+  have hpath : CodeRun toyD toyS0 [⟨toyS0, .program toyTx (.initialize toyInitA) [], s₁⟩,
+      ⟨s₁, .program toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) e₂, s₂⟩] s₂ :=
     .program h1 toyTx_rentPositive (.program h2 toyTx_rentPositive (.nil _))
-  have assume : ExecutionFacts toyD [.program toyTx (.initialize toyInitA) [],
+  have runFacts : RunFacts toyD [.program toyTx (.initialize toyInitA) [],
       .program toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) e₂] := by
     refine ⟨toy_fixed_addresses, ?_⟩
     intro tx ix em hm
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
     rcases hm with h | h <;> cases h
     · trivial
-    · exact ⟨solana, depCrypto⟩
+    · exact ⟨depAssumptions, depAddressesDiffer⟩
   have sameRent : ∀ tx ix em, Event.program tx ix em ∈ [.program toyTx (.initialize toyInitA) [],
       .program toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) e₂] →
       SameRent toyRent tx.minimumBalance := by
     intro tx ix em hm
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
     rcases hm with h | h <;> cases h <;> rfl
-  rcases execution_is_spec_run_pf toyGenesis hpath hpid toyC toyLaws toyHashesAgree assume sameRent with
+  rcases code_run_is_spec_run_pf toyGenesis hpath hpid toyC toyLaws toyHashesAgree runFacts sameRent with
     ⟨-, htx⟩ | ⟨params, r, hrun'⟩
-  · simp [runTxs, stepTxs] at htx
+  · simp [eventsOf, runTxs, stepTxs] at htx
   have hdep := hrun'.deployment
   have htx := hrun'.txs
   have hr : r.txs = [depInputs] := by rw [htx]; rfl

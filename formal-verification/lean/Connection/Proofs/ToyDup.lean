@@ -1,17 +1,18 @@
 import Connection.Proofs.ToySpend
 open Aeneas Aeneas.Std Result PrivacyCash.Model
 
-/-! # Finding I1: `transact_connection` fails without `CircuitFacts`
+/-! # Finding I1: `transact_connection` fails without `distinctNullifiers`
 
-`TransactConnectionWithoutCircuit` is `transact_connection`
-(`Connection/ConnectionTheorems.lean`) with the hypothesis `CircuitFacts` (the circuit keeps an
-accepted proof's two input nullifiers distinct) removed; every other hypothesis and the conclusion are unchanged. It is false
-(`transact_connection_fails_without_circuit`): in the toy deployment, after `initialize` and
-the toy deposit of 2 lamports, `step` accepts a withdrawal of those 2 lamports whose two input
-nullifiers are equal (both `2`), every remaining hypothesis holds, and the spec's `transact` does
-not (its precondition `nullifiersDistinct` fails). Neither the program nor Anchor checks that the
-nullifiers differ: `nullifier2` and `nullifier3` get the addresses of `nullifier0` and
-`nullifier1` themselves, and Anchor checks them (system accounts) before it creates those. -/
+`TransactConnectionWithoutCircuit` is `transact_connection` (`Connection/ConnectionTheorems.lean`)
+with the field `distinctNullifiers` of `TransactAssumptions` (the circuit keeps an accepted
+proof's two input nullifiers distinct) removed; every other hypothesis and the conclusion are
+unchanged. It is false (`transact_connection_fails_without_circuit`): in the toy deployment,
+after `initialize` and the toy deposit of 2 lamports, `step` accepts a withdrawal of those 2
+lamports whose two input nullifiers are equal (both `2`), every remaining hypothesis holds, and
+the spec's `transact` does not (its precondition `nullifiersDistinct` fails). Neither the program
+nor Anchor checks that the nullifiers differ: `nullifier2` and `nullifier3` get the addresses of
+`nullifier0` and `nullifier1` themselves, and Anchor checks them (system accounts) before it
+creates those. -/
 
 namespace Connection
 
@@ -28,8 +29,9 @@ def SpecTransactHolds (d : Deployment) (rent : Nat → U64) (C : AltBn128Contrac
 
 end
 
-/-- `transact_connection` without `CircuitFacts`: the same inputs, the other hypotheses in the
-    same order, the same conclusion. -/
+/-- `transact_connection` without `TransactAssumptions.distinctNullifiers`: the same inputs, the
+    other hypotheses in the same order (of `TransactAssumptions` only `pdasDoNotSign`), the same
+    conclusion. -/
 def TransactConnectionWithoutCircuit : Prop :=
   ∀ (G1 G2 GT : Type) [AddCommGroup G1] [Module Spec.F G1] [Inhabited G2]
     [CommGroup GT] [Spec.PoseidonHashes] [Spec.Sha]
@@ -39,7 +41,7 @@ def TransactConnectionWithoutCircuit : Prop :=
     ProgramNotSystem d →
     PairingLaws C.e →
     HashesAgree d →
-    PdasDoNotSign d tx.ctx →
+    (∀ seeds, d.pda seeds ∉ tx.ctx.signers) →
     SameRent rent sysvarRent →
     Reachable d s →
     Run d s [.program (tx.env sysvarRent) tx.instruction events] s' →
@@ -276,10 +278,10 @@ theorem toy_dup_ok (s₂ : State) (tree₂ t1 : merkle_tree.MerkleTreeAccount) (
     (by rw [hA, Option.bind_some, hB]) hh hTL
   exact ⟨_, events, hex⟩
 
-/-- The execution `initialize`, deposit, withdrawal with equal nullifiers: every step is
+/-- The code run `initialize`, deposit, withdrawal with equal nullifiers: every step is
     accepted, and the withdrawal satisfies every hypothesis of
-    `TransactConnectionWithoutCircuit` that is not about the execution. -/
-theorem toy_dup_execution :
+    `TransactConnectionWithoutCircuit` that is not about the code run. -/
+theorem toy_dup_run :
     ∃ (s₁ s₂ s₃ : State) (e₂ e₃ : List CommitmentData),
       step toyD toyS0 toyTx (.initialize toyInitA) = .ok (s₁, []) ∧
       step toyD s₁ toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) = .ok (s₂, e₂) ∧
@@ -332,16 +334,17 @@ theorem toy_collisionFree_dup : TransactAddressesDistinct toyD dupProof := by
 end Toy
 
 attribute [local instance] Toy.toyPoseidon Toy.toySpecSha in
-/-- **Finding I1: `transact_connection` cannot be proved without `CircuitFacts`.** The
+/-- **Finding I1: `transact_connection` cannot be proved without `distinctNullifiers`.** The
     code model accepts a withdrawal whose two input nullifiers are equal, every other
     hypothesis of `transact_connection` holds for it, and the spec's `transact` does not. -/
 theorem transact_connection_fails_without_circuit : ¬ TransactConnectionWithoutCircuit := by
   intro h
-  obtain ⟨s₁, s₂, s₃, e₂, e₃, h1, h2, h3, sameRent⟩ := Toy.toy_dup_execution
-  obtain ⟨-, -, -, -, -, -, -, -, solana, -, -⟩ := Toy.toy_execution
+  obtain ⟨s₁, s₂, s₃, e₂, e₃, h1, h2, h3, sameRent⟩ := Toy.toy_dup_run
+  obtain ⟨-, -, -, -, -, -, -, -, depAssumptions, -, -, -⟩ := Toy.toy_run
   rcases h Unit Unit Unit Toy.toyD Toy.toyRent Toy.toyC
       ⟨Toy.toyTx.toTxContext, Toy.dupA, ⟨Toy.dupProof, Toy.dupExt, 0#u64, Toy.emptySlice, Toy.emptySlice⟩⟩
-      Toy.toyTx.minimumBalance s₂ s₃ e₃ Toy.toyProgramNotSystem Toy.toyLaws Toy.toyHashesAgree solana sameRent
+      Toy.toyTx.minimumBalance s₂ s₃ e₃ Toy.toyProgramNotSystem Toy.toyLaws Toy.toyHashesAgree
+      depAssumptions.pdasDoNotSign sameRent
       ⟨_, _, Toy.toyGenesis, .program h1 Toy.toyTx_rentPositive (.program h2 Toy.toyTx_rentPositive (.nil _))⟩
       (.program h3 Toy.toyTx_rentPositive (.nil _)) with hspec | hc
   · obtain ⟨⟨-, -, -, -, -, -, hdistinct, -⟩, -⟩ := hspec

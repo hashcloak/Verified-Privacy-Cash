@@ -424,7 +424,7 @@ theorem execTransact_complete
     withSyscallSpec C in
     let inputs := toInputs ⟨⟨tx.signers⟩, a, ⟨proof, ext, fee, out1, out2⟩⟩
     Spec.transactPreconditions inputs (toWorld d rent s) →
-    ∃ s' evs, execTransact d s tx a proof ext fee out1 out2 = .ok (s', evs) := by
+    ∃ s' events, execTransact d s tx a proof ext fee out1 out2 = .ok (s', events) := by
   withSyscallSpec C
   intro inputs pre
   -- the signer and the two nullifier addresses, as the spec sees them
@@ -702,14 +702,15 @@ theorem transact_complete_square_pf
       show toPubkey a.signer ∈ nullifierAccountsOf d s
       rw [mem_nullifierAccountsOf, fromPubkey_toPubkey]; exact hn
   -- the two input nullifiers differ (`distinctNullifiers`)
-  have hcirc : CircuitFacts d {proof} := by
-    refine ⟨fun p hp _ => ?_⟩
+  have distinctNullifiers : Groth16Sound d.crypto NullifiersDiffer {proof} := by
+    intro p hp _
     rw [Set.mem_singleton_iff] at hp; subst hp
     intro e
     apply pre.distinctNullifiers
     exact congrArg toF e
   have htx := transact_refines_of hstep hashes wf hsig
-    (rentPositive_of_sameRent runtime sameRent) (newDiffer_of_distinct noCollision) hcirc sameRent
+    (rentPositive_of_sameRent runtime sameRent) (newDiffer_of_distinct noCollision)
+    distinctNullifiers sameRent
     (fun _ => pre.validZKP) rfl
   rw [hstep]
   exact agrees_eq htx.2
@@ -742,9 +743,9 @@ omit [Spec.PoseidonHashes] [Spec.Sha] in
 theorem accepts_ext_ne_zero {d : Deployment} {s : State} {tx : TxEnv} {a : TransactAccounts}
     {proof : zkcash_core.transact.Proof} {ext : I64} {fee : U64} {out1 out2 : Slice U8}
     (h : Accepts d s tx (.transact a proof ext fee out1 out2)) : ext.val ≠ 0 := by
-  obtain ⟨s', ev, hx⟩ := h
+  obtain ⟨s', events, hx⟩ := h
   obtain ⟨tree, tt, config, mb, s₁, env', tree', ap, -, -, -, hhandler, -⟩ :=
-    execTransact_ok (show execTransact d s tx a proof ext fee out1 out2 = .ok (s', ev) from hx)
+    execTransact_ok (show execTransact d s tx a proof ext fee out1 out2 = .ok (s', events) from hx)
   have h2 := (handler_ok d.crypto d.crypto.sha256 _ tree config proof ext fee a.recipient a.feeRecipientAccount
     out1 out2 ap env' tree' hhandler).pubAmt
   rw [checkPublicAmount_eq] at h2

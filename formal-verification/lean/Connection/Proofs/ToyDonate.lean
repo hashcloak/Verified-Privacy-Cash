@@ -1,11 +1,11 @@
 import Connection.Proofs.ToySpend
 open Aeneas Aeneas.Std Result PrivacyCash.Model
 
-/-! # A toy execution with an outside action: a donation to the pool (not for review)
+/-! # An example code run with an outside action: a donation to the pool (not for review)
 
 Genesis, `initialize`, an outside action (`EnvStep`) that sends 1 lamport to the pool, then the
 deposit of 2 lamports of `Connection/Proofs/ToyRun.lean` (from a pool holding 2 lamports instead
-of 1). Every hypothesis of `run_connection` holds, and every spec run of the execution counts the
+of 1). Every hypothesis of `run_connection` holds, and every spec run of the code run counts the
 lamport as donated: `r.donated = 1` (`toy_donation_nonvacuous`). So the `.env` case of
 `run_connection` is exercised, from `EnvStep` to the spec's `poolGains` and `Run.donated`. -/
 
@@ -29,15 +29,17 @@ theorem toy_donation_env {s₁ : State} {token : admin.TreeTokenAccount}
   · rw [State.set_other _ _ hk]
     exact ⟨fun h => ⟨h, rfl, le_refl _⟩, hnp k⟩
 
-/-- **The hypotheses of `run_connection` hold with a donation inside the run.** The execution
+/-- **The hypotheses of `run_connection` hold with a donation inside the run.** The code run
     `initialize`, a donation of 1 lamport to the pool, deposit satisfies every hypothesis of
     `run_connection`, and every spec run of it counts 1 lamport as donated. -/
 theorem toy_donation_nonvacuous :
-    ∃ (s₀ s : State) (evs : List Event) (states : List State),
-      Genesis toyD.programId s₀ ∧ ExecutionPath toyD s₀ evs states s ∧ ProgramNotSystem toyD ∧
-      PairingLaws toyC.e ∧ HashesAgree toyD ∧ ExecutionAssumptions toyD evs ∧ ¬ AddressCollision toyD (proofsIn evs) ∧
-      (∀ tx ix em, .program tx ix em ∈ evs → SameRent toyRent tx.minimumBalance) ∧ Event.env ∈ evs ∧
-      ∀ params r, IsRunOf toyD toyRent s₀ evs states s params r → r.donated = 1 := by
+    ∃ (s₀ s : State) (steps : List RunStep),
+      Genesis toyD.programId s₀ ∧ CodeRun toyD s₀ steps s ∧ ProgramNotSystem toyD ∧
+      PairingLaws toyC.e ∧ HashesAgree toyD ∧
+      TransactAssumptionsInRun toyD (eventsOf steps) ∧
+      ¬ AddressCollision toyD (proofsIn (eventsOf steps)) ∧
+      (∀ tx ix em, .program tx ix em ∈ eventsOf steps → SameRent toyRent tx.minimumBalance) ∧ Event.env ∈ eventsOf steps ∧
+      ∀ params r, IsRunOf toyD toyRent steps s params r → r.donated = 1 := by
   obtain ⟨s₁, tree, token, config, hinit, hT, hK, hC, hP, hO, hshape, hroots, hsubs, hT0, hTn, hTb, hTm,
     hkb, hcb, hdr, hwr, hmr⟩ := toy_init_ok
   have hpid : toyD.programId ≠ systemProgram := by unfold toyD; decide +kernel
@@ -69,20 +71,20 @@ theorem toy_donation_nonvacuous :
     (by rw [hs₁d, State.set_other _ _ (Ne.symm g2)]; exact hP) hO₁
     hshape hroots hsubs hT0 hTn hTb (hTm ▸ default_limit_ge2) hkb hcb hdr hwr hmr
   -- the facts the deposit needs, from the toy deposit after `initialize`
-  obtain ⟨-, -, -, -, -, -, -, -, solana, depCrypto, -⟩ := toy_execution
-  refine ⟨toyS0, s₂, _, _, toyGenesis, .program h1 toyTx_rentPositive (.env henv (.program h2 toyTx_rentPositive (.nil _))), toyProgramNotSystem, toyLaws,
-    toyHashesAgree, ExecutionFacts.toAssumptions ⟨toy_fixed_addresses, ?_⟩,
+  obtain ⟨-, -, -, -, -, -, -, -, depAssumptions, depAddressesDiffer, -⟩ := toy_run
+  refine ⟨toyS0, s₂, _, toyGenesis, .program h1 toyTx_rentPositive (.env henv (.program h2 toyTx_rentPositive (.nil _))), toyProgramNotSystem, toyLaws,
+    toyHashesAgree, RunFacts.toAssumptions ⟨toy_fixed_addresses, ?_⟩,
     toy_noCollision _ (by
       intro tx a proof ext fee out1 out2 em hm
-      simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
-      rcases hm with h | h | h <;> cases h; simp), ?_, by simp, ?_⟩
+      simp only [eventsOf, List.map_cons, List.map_nil, List.mem_cons, List.not_mem_nil, or_false] at hm
+      rcases hm with h | h | h <;> cases h; simp), ?_, by simp [eventsOf], ?_⟩
   · intro tx ix em hm
-    simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
+    simp only [eventsOf, List.map_cons, List.map_nil, List.mem_cons, List.not_mem_nil, or_false] at hm
     rcases hm with hev | hev | hev <;> cases hev
     · trivial
-    · exact ⟨solana, depCrypto⟩
+    · exact ⟨depAssumptions, depAddressesDiffer⟩
   · intro tx ix em hm
-    simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
+    simp only [eventsOf, List.map_cons, List.map_nil, List.mem_cons, List.not_mem_nil, or_false] at hm
     rcases hm with h | h | h <;> cases h <;> rfl
   · intro params r hr
     have hdep := hr.deployment
@@ -90,13 +92,13 @@ theorem toy_donation_nonvacuous :
     have hpool := hdep.pool
     have hrent := hdep.rentExemptMin
     -- the spec sees the pool's balance before the deposit: 2 lamports
-    -- the deposit is event 2, after the donation
-    have h0 := (hr.record (j := 0) (i := 2) rfl).1
-    have hs : stateAt toyS0 [s₁, s₁d, s₂] 2 = s₁d := rfl
+    -- the deposit is step 2, after the donation
+    have h0 : (r.updatedValues 0).balances (toPubkey toyD.poolAddress) = s₁d.lamports toyD.poolAddress :=
+      (hr.record (j := 0) rfl).1
     have hb : s₁d.lamports toyD.poolAddress = 2 := by
       unfold PrivacyCash.Model.State.lamports
       rw [show toyD.poolAddress = tokenA from rfl, hs₁d, State.set_same]; rfl
-    rw [hs, hb] at h0
+    rw [hb] at h0
     have hlen : r.txs.length = 1 := by rw [htxs]; rfl
     -- the spec's start world has the pool at its rent, 1 lamport
     unfold Spec.Run.donated Spec.Run.donations

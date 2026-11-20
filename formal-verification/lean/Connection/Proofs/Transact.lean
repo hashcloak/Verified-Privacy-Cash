@@ -351,8 +351,8 @@ def txKeys (a : TransactAccounts) : List Pubkey :=
 /-- What a successful `execTransact` consists of. -/
 theorem execTransact_ok {d : Deployment} {s s' : State} {tx : TxEnv} {a : TransactAccounts}
     {proof : zkcash_core.transact.Proof} {ext : I64} {fee : U64} {out1 out2 : Slice U8}
-    {evs : List CommitmentData}
-    (h : execTransact d s tx a proof ext fee out1 out2 = .ok (s', evs)) :
+    {events : List CommitmentData}
+    (h : execTransact d s tx a proof ext fee out1 out2 = .ok (s', events)) :
     ∃ (tree : zkcash_core.merkle_tree.MerkleTreeAccount) (tt : zkcash_core.admin.TreeTokenAccount)
       (config : zkcash_core.admin.GlobalConfig) (mb : Nat → U64) (s₁ : State) (env' : SolEnv)
       (tree' : zkcash_core.merkle_tree.MerkleTreeAccount) (ap : zkcash_core.transact.Appended),
@@ -459,8 +459,8 @@ variable [Spec.PoseidonHashes] [Spec.Sha] [Spec.Groups]
 
 /-- What `transact_refines_of` needs about the signer: it is none of the program's accounts (the
     pool, the tree's and the config's account, an existing nullifier account) and neither of the
-    two new nullifier accounts. From `PdasDoNotSign` (`signerNotProgram_of_pdas`), or from the
-    spec's `signerNotPoolNotNullifiers` (completeness). -/
+    two new nullifier accounts. From `TransactAssumptions.pdasDoNotSign`
+    (`signerNotProgram_of_pdas`), or from the spec's `signerNotPoolNotNullifiers` (completeness). -/
 structure SignerNotProgram (d : Deployment) (s : State) (a : TransactAccounts) : Prop where
   pool : a.signer ≠ d.poolAddress
   tree : a.signer ≠ d.treeAddress
@@ -480,7 +480,8 @@ theorem transact_refines_of
     (hashes : HashesAgree d)
     (wf : WellFormed d s)
     (hsig : SignerNotProgram d s a) (hrentPos : tx.RentPositive)
-    (crypto : NewNullifierAddressesDiffer d proof) (circuit : CircuitFacts d {proof})
+    (newAddressesDiffer : NewNullifierAddressesDiffer d proof)
+    (distinctNullifiers : Groth16Sound d.crypto NullifiersDiffer {proof})
     (rentFixed : SameRent rent tx.minimumBalance)
     (hProofValid : d.crypto.proofVerifier.verify proof = ok true →
       Spec.proofValid (toInputs ⟨⟨tx.signers⟩, a, ⟨proof, extAmount, fee, out1, out2⟩⟩))
@@ -503,7 +504,8 @@ theorem transact_refines_of
   have hnf0 : a.nullifier0 = d.pda (nullifier0Seeds n0) := hvalid.nullifier0.1
   have hnf1 : a.nullifier1 = d.pda (nullifier1Seeds n1) := hvalid.nullifier1.1
   have hnf01 : a.nullifier0 ≠ a.nullifier1 := by
-    rw [hnf0, hnf1]; exact ne_of_distinct crypto (Set.mem_insert _ _) (Set.mem_insert_of_mem _ rfl)
+    rw [hnf0, hnf1]
+    exact ne_of_distinct newAddressesDiffer (Set.mem_insert _ _) (Set.mem_insert_of_mem _ rfl)
       (nullifier0Seeds_ne_nullifier1Seeds _ _ _ _)
   have hnr : 0 < (rent nullifierAccountSpace).val := hrentPos rent rentFixed _
   set nr := (rent nullifierAccountSpace).val with hnrdef
@@ -881,7 +883,8 @@ theorem transact_refines_of
           not_nullifierAccount_of_system hns hnf1Init.1⟩⟩
     case distinct =>
       show toF n0 ≠ toF n1
-      exact fun h => circuit.distinctNullifiers proof (Set.mem_singleton proof) hok.verify (toF_injOn hcan0 hcan1 h)
+      exact fun h =>
+        distinctNullifiers proof (Set.mem_singleton proof) hok.verify (toF_injOn hcan0 hcan1 h)
     case depositLimit =>
       show extAmount.val > 0 → extAmount.val ≤ ((toConfig (s.configAccount d.configAddress) (s.treeAccount d.treeAddress)).maxDepositLimit : ℤ)
       rw [hcfgAt, htreeAt]; intro hp
@@ -993,15 +996,17 @@ theorem transact_refines_of
 omit [Spec.PoseidonHashes] [Spec.Sha] [Spec.Groups] [AddCommGroup Spec.G1]
   [Module Spec.F Spec.G1] [CommGroup Spec.GT] [Spec.Pairing]
   [Spec.Deployment] in
-/-- What `PdasDoNotSign` gives about the signer of an accepted `transact`. -/
+/-- What `TransactAssumptions.pdasDoNotSign` gives about the signer of an accepted `transact`. -/
 theorem signerNotProgram_of_pdas {d : Deployment} {s s' : State} {tx : TxEnv}
     {a : TransactAccounts} {proof : zkcash_core.transact.Proof} {extAmount : I64} {fee : U64}
     {out1 out2 : Slice U8} {events : List CommitmentData}
     (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
-    (wf : WellFormed d s) (solana : PdasDoNotSign d tx.toTxContext) : SignerNotProgram d s a := by
+    (wf : WellFormed d s) (pdasDoNotSign : ∀ seeds, d.pda seeds ∉ tx.toTxContext.signers) :
+    SignerNotProgram d s a := by
   have hx : execTransact d s tx a proof extAmount fee out1 out2 = .ok (s', events) := hstep
   obtain ⟨tree, tt, config, mb, s₁, env', tree', ap, hvalid, -⟩ := execTransact_ok hx
-  have hsig : ∀ seeds, a.signer ≠ d.pda seeds := fun seeds e => solana seeds (e ▸ hvalid.signer)
+  have hsig : ∀ seeds, a.signer ≠ d.pda seeds :=
+    fun seeds e => pdasDoNotSign seeds (e ▸ hvalid.signer)
   refine ⟨hsig _, hsig _, hsig _, ?_, ?_, ?_⟩
   · rw [hvalid.nullifier0.1]; exact hsig _
   · rw [hvalid.nullifier1.1]; exact hsig _
@@ -1017,16 +1022,16 @@ theorem transact_refines
     (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
     (hashes : HashesAgree d)
     (wf : WellFormed d s)
-    (solana : PdasDoNotSign d tx.toTxContext) (hrentPos : tx.RentPositive)
-    (crypto : NewNullifierAddressesDiffer d proof) (circuit : CircuitFacts d {proof})
+    (txAssumptions : TransactAssumptions d tx.toTxContext proof) (hrentPos : tx.RentPositive)
+    (newAddressesDiffer : NewNullifierAddressesDiffer d proof)
     (rentFixed : SameRent rent tx.minimumBalance)
     (hProofValid : d.crypto.proofVerifier.verify proof = ok true →
       Spec.proofValid (toInputs ⟨⟨tx.signers⟩, a, ⟨proof, extAmount, fee, out1, out2⟩⟩))
     (hmint : Spec.Deployment.solMint = toPubkey zkcash_core.transact.SOL_ADDRESS) :
     let inputs := toInputs ⟨⟨tx.signers⟩, a, ⟨proof, extAmount, fee, out1, out2⟩⟩
     Spec.transact inputs (toWorld d rent s) (toWorld d rent s') :=
-  transact_refines_of hstep hashes wf (signerNotProgram_of_pdas hstep wf solana) hrentPos crypto
-    circuit rentFixed hProofValid hmint
+  transact_refines_of hstep hashes wf
+    (signerNotProgram_of_pdas hstep wf txAssumptions.pdasDoNotSign) hrentPos newAddressesDiffer txAssumptions.distinctNullifiers rentFixed hProofValid hmint
 
 /-- **One `transact`, up to changes allowed between transactions**: the spec's `transact` holds
     from the old world after an allowed change, to a world from which an allowed change leads to
@@ -1038,8 +1043,8 @@ theorem transact_refines_between
     (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
     (hashes : HashesAgree d)
     (wf : WellFormed d s)
-    (solana : PdasDoNotSign d tx.toTxContext) (hrentPos : tx.RentPositive)
-    (crypto : NewNullifierAddressesDiffer d proof) (circuit : CircuitFacts d {proof})
+    (txAssumptions : TransactAssumptions d tx.toTxContext proof) (hrentPos : tx.RentPositive)
+    (newAddressesDiffer : NewNullifierAddressesDiffer d proof)
     (rentFixed : tx.minimumBalance = some rent)
     (hProofValid : d.crypto.proofVerifier.verify proof = ok true →
       Spec.proofValid (toInputs ⟨⟨tx.signers⟩, a, ⟨proof, extAmount, fee, out1, out2⟩⟩))
@@ -1056,7 +1061,8 @@ theorem transact_refines_between
       b₂.config = (toWorld d rent s').state.config ∧
       b₂.balances (toPubkey d.poolAddress) = s'.lamports d.poolAddress := by
   have htx :=
-    transact_refines hstep hashes wf solana hrentPos crypto circuit rentFixed hProofValid hmint
+    transact_refines hstep hashes wf txAssumptions hrentPos newAddressesDiffer rentFixed hProofValid
+      hmint
   have h1 := Spec.World.withUpdatedValues_self (toWorld d rent s)
   have h2 := Spec.World.withUpdatedValues_self (toWorld d rent s')
   refine ⟨Spec.UpdatedValuesBetweenTransacts.unchanged (toWorld d rent s),

@@ -1,14 +1,14 @@
-import Connection.Proofs.Execution
+import Connection.Proofs.Run
 import Connection.Proofs.StepComplete
 open Aeneas Aeneas.Std Result PrivacyCash.Model
 
 /-! # Proofs: completeness over runs
 
 NOT FOR REVIEW. Every spec run (of this deployment, without transactions of findings L1 and A0)
-is the image of a code execution: `initialize`, the admin instructions and the outside actions
+is the image of a code run: `initialize`, the admin instructions and the outside actions
 can do every change the spec allows between transactions, and `transact` every transaction.
 
-The execution is built step by step. It keeps every account either the program's (owned by it,
+The code run is built step by step. It keeps every account either the program's (owned by it,
 with one of its account types) or a plain system account (`Tidy`), which gives the premises of
 `transact`'s completeness (`PdasOnlyByProgram`, `SignerIsPlain`). -/
 
@@ -133,7 +133,7 @@ theorem initAccount_funded {pid : Pubkey} {s : State} {mb : Nat → U64} {payer 
 /-! ## Every account the program's, or a plain system account -/
 
 /-- `Tidy d s`: every account is either the program's (owned by it, with one of its account types)
-    or a plain system account (owned by the System Program, no data). The executions built here
+    or a plain system account (owned by the System Program, no data). The code runs built here
     keep this. -/
 def Tidy (d : Deployment) (s : State) : Prop :=
   ∀ k, ((s k).owner = d.programId ∧ (s k).data.isProgramData = true) ∨
@@ -798,14 +798,14 @@ theorem proofBytes_lengths {d : Deployment} (C : AltBn128Contracts d.crypto.altB
     exact ⟨toArray_some_length hx, toArray_some_length hy, toArray_some_length hz⟩
   · cases h
 
-/-- **One spec transaction inside a run.** From a tidy state an execution from genesis reached,
+/-- **One spec transaction inside a run.** From a tidy state a code run from genesis reached,
     a transaction the spec allows (not of findings L1 or A0, and without an address collision) is
     accepted as `fromSpecTransact`, and leads to exactly the spec's `transactEffects`. -/
-theorem transact_run_step {d : Deployment} {rent : Nat → U64} {s₀ s : State} {evs : List Event}
-    (hpid : d.programId ≠ systemProgram)
+theorem transact_run_step {d : Deployment} {rent : Nat → U64} {s₀ s : State}
+    {events : List Event} (hpid : d.programId ≠ systemProgram)
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
     (hashes : HashesAgree d) (crypto : CryptoSucceeds d.crypto C) (runtime : RuntimeFacts rent)
-    (hgen : Genesis d.programId s₀) (hrun : Run d s₀ evs s) (tidy : Tidy d s)
+    (hgen : Genesis d.programId s₀) (hrun : Run d s₀ events s) (tidy : Tidy d s)
     (hi : Initialized d s) (inputs : Spec.TxInputs)
     (hpre : withSyscallSpec C in
       Spec.transactPreconditions inputs (toWorld d rent s))
@@ -861,34 +861,23 @@ end Connection
 
 namespace Connection
 
-/-! ## Executions and views, piece by piece -/
+/-! ## Code runs and views, piece by piece -/
 
-theorem ExecutionPath.append {d : Deployment} {s s' s'' : State} {e₁ e₂ : List Event}
-    {st₁ st₂ : List State} (h₁ : ExecutionPath d s e₁ st₁ s') (h₂ : ExecutionPath d s' e₂ st₂ s'') :
-    ExecutionPath d s (e₁ ++ e₂) (st₁ ++ st₂) s'' := by
+theorem CodeRun.append {d : Deployment} {s s' s'' : State} {steps₁ steps₂ : List RunStep}
+    (h₁ : CodeRun d s steps₁ s') (h₂ : CodeRun d s' steps₂ s'') :
+    CodeRun d s (steps₁ ++ steps₂) s'' := by
   induction h₁ with
   | nil => exact h₂
-  | program hs hr _ ih => exact .program hs hr (ih h₂)
-  | env he _ ih => exact .env he (ih h₂)
+  | cons he _ ih => exact .cons he (ih h₂)
 
-theorem afterEvents_append {d : Deployment} {rent : Nat → U64} {s s' : State}
-    {e₁ e₂ : List Event} {st₁ st₂ : List State} (h₁ : ExecutionPath d s e₁ st₁ s')
-    (v : ExecutionView) :
-    ExecutionView.afterEvents d rent v s (e₁ ++ e₂) (st₁ ++ st₂) =
-      ExecutionView.afterEvents d rent (ExecutionView.afterEvents d rent v s e₁ st₁) s' e₂ st₂ := by
-  induction h₁ generalizing v with
-  | nil => rfl
-  | program _ _ _ ih => exact ih _
-  | env _ _ ih => exact ih _
-
-/-- A single program step as an execution path. -/
-theorem ExecutionPath.single {d : Deployment} {s s' : State} {tx : TxEnv} {ix : Instruction}
+/-- A single program step as a `CodeRun`. -/
+theorem CodeRun.single {d : Deployment} {s s' : State} {tx : TxEnv} {ix : Instruction}
     {em : List CommitmentData} (h : step d s tx ix = .ok (s', em)) (hr : tx.RentPositive) :
-    ExecutionPath d s [.program tx ix em] [s'] s' := .program h hr (.nil _)
+    CodeRun d s [⟨s, .program tx ix em, s'⟩] s' := .program h hr (.nil _)
 
-/-- A single outside action as an execution path. -/
-theorem ExecutionPath.singleEnv {d : Deployment} {s s' : State} (h : EnvStep d.programId s s') :
-    ExecutionPath d s [.env] [s'] s' := .env h (.nil _)
+/-- A single outside action as a `CodeRun`. -/
+theorem CodeRun.singleEnv {d : Deployment} {s s' : State} (h : EnvStep d.programId s s') :
+    CodeRun d s [⟨s, .env, s'⟩] s' := .env h (.nil _)
 
 section
 variable [Spec.PoseidonHashes] [Spec.Sha]
@@ -903,32 +892,32 @@ theorem admin_chain {d : Deployment} {rent : Nat → U64} {s₀ : State}
     (hr : Spec.ReachableByAdminChanges chs c₁ c₂) :
     ∀ {s : State} {pre : List Event}, Genesis d.programId s₀ → Run d s₀ pre s → Tidy d s →
       Initialized d s → (toWorld d rent s).state.config = c₁ →
-      ∃ evs states s', ExecutionPath d s evs states s' ∧ Tidy d s' ∧ Initialized d s' ∧
+      ∃ steps s', CodeRun d s steps s' ∧ Tidy d s' ∧ Initialized d s' ∧
         toWorld d rent s' = (toWorld d rent s).withUpdatedValues ⟨(toWorld d rent s).balances, c₂, []⟩ ∧
-        runTxs evs = [] ∧
-        ∀ v, ExecutionView.afterEvents d rent v s evs states = { v with openGap := v.openGap ++ chs } := by
+        runTxs (eventsOf steps) = [] ∧
+        ∀ v, RunView.afterSteps d rent v steps = { v with openGap := v.openGap ++ chs } := by
   induction hr with
   | noChange c =>
     intro s pre _ _ tidy hi hc
-    refine ⟨[], [], s, .nil _, tidy, hi, ?_, rfl, fun v => by cases v; simp [ExecutionView.afterEvents]⟩
+    refine ⟨[], s, .nil _, tidy, hi, ?_, rfl, fun v => by cases v; simp [RunView.afterSteps]⟩
     rw [← hc]; rfl
   | @extend chs c₁ c₂ c₃ ch hr' ha ih =>
     intro s pre hgen hrun tidy hi hc
-    obtain ⟨evs, states, s₂, hp, tidy₂, hi₂, hw₂, hrt, hv⟩ := ih hgen hrun tidy hi hc
-    have hrun₂ : Run d s₀ (pre ++ evs) s₂ := hrun.append hp.toRun
+    obtain ⟨steps, s₂, hp, tidy₂, hi₂, hw₂, hrt, hv⟩ := ih hgen hrun tidy hi hc
+    have hrun₂ : Run d s₀ (pre ++ eventsOf steps) s₂ := hrun.append hp.toRun
     have wf₂ := wf_reachable hgen hrun₂ hpid hashes
     have hc₂ : (toWorld d rent s₂).state.config = c₂ := by rw [hw₂]; rfl
     rw [← hc₂] at ha
     obtain ⟨s₃, hstep, hrec, hw₃, tidy₃, hi₃⟩ := admin_complete (rent := rent) wf₂ tidy₂ hi₂ ch c₃ ha
-    have hp₃ := ExecutionPath.single hstep (txWith_rentPositive hpos _)
-    refine ⟨evs ++ _, states ++ _, s₃, hp.append hp₃, tidy₃, hi₃, ?_, ?_, fun v => ?_⟩
+    have hp₃ := CodeRun.single hstep (txWith_rentPositive hpos _)
+    refine ⟨steps ++ _, s₃, hp.append hp₃, tidy₃, hi₃, ?_, ?_, fun v => ?_⟩
     · rw [hw₃, hw₂]; rfl
-    · rw [runTxs_append, hrt]
+    · rw [eventsOf_append, runTxs_append, hrt]
       cases ch with
       | mk sg act => cases act <;> rfl
-    · rw [afterEvents_append hp, hv]
+    · rw [afterSteps_append, hv]
       have hix : ∀ ix, (∀ a, ix ≠ .initialize a) → (∀ a p e f o1 o2, ix ≠ .transact a p e f o1 o2) →
-          ∀ (w : ExecutionView) tx em, w.afterEvent d rent s₂ (.program tx ix em) s₃ =
+          ∀ (w : RunView) tx em, w.afterEvent d rent s₂ (.program tx ix em) s₃ =
             { w with openGap := w.openGap ++ (toAdminChange d s₂ tx ix).toList } := by
         intro ix h1 h2 w tx em
         cases ix with
@@ -936,7 +925,7 @@ theorem admin_chain {d : Deployment} {rent : Nat → U64} {s₀ : State}
         | transact a p e f o1 o2 => exact absurd rfl (h2 a p e f o1 o2)
         | updateDepositLimit => rfl
         | updateGlobalConfig => rfl
-      simp only [ExecutionView.afterEvents]
+      simp only [RunView.afterSteps, List.foldl_cons, List.foldl_nil]
       rw [hix _ (by cases ch with | mk sg act => cases act <;> simp [adminIx])
         (by cases ch with | mk sg act => cases act <;> simp [adminIx]), hrec]
       simp
@@ -951,9 +940,9 @@ variable [Spec.PoseidonHashes] [Spec.Sha] [Spec.Groups] [AddCommGroup Spec.G1]
   [Module Spec.F Spec.G1]
   [CommGroup Spec.GT] [Spec.Pairing] [Spec.Deployment]
 
-/-- What the spec sees of the code execution built for the first `k` transactions of run `r`. -/
+/-- What the spec sees of the code run built for the first `k` transactions of run `r`. -/
 def viewAt (params : Spec.InitParams) (r : Spec.Run (Spec.initWorld params)) (k : ℕ)
-    (pool : Spec.Pubkey) : ExecutionView where
+    (pool : Spec.Pubkey) : RunView where
   init := some ⟨params.initializer, params.signers, Spec.initWorld params⟩
   closedGaps := (List.range k).map fun j => (r.updatedValues j).adminChanges
   openGap := []
@@ -1009,7 +998,7 @@ theorem stepTxs_fromSpec {d : Deployment} {rent : Nat → U64} {s : State}
     hpre.encOutLength hpre.solMint]
 
 /-- **Completeness over runs (proof).** Every spec run of this deployment, without transactions of
-    findings L1 and A0 and without address collisions, is what a code execution from genesis went
+    findings L1 and A0 and without address collisions, is what a code run from genesis went
     through (`IsRunOf`). -/
 theorem run_complete_pf {d : Deployment} {rent : Nat → U64}
     (hpid : d.programId ≠ systemProgram)
@@ -1027,34 +1016,35 @@ theorem run_complete_pf {d : Deployment} {rent : Nat → U64}
     (nocol : withSyscallSpec C in
       ∀ j (h : j < r.txs.length), ¬ AddressCollision d {fromSpecProof r.txs[j]}) :
     withSyscallSpec C in
-    ∃ sGenesis evs states s, Genesis d.programId sGenesis ∧ ExecutionPath d sGenesis evs states s ∧
-      IsRunOf d rent sGenesis evs states s params r := by
+    ∃ sGenesis steps s, Genesis d.programId sGenesis ∧ CodeRun d sGenesis steps s ∧
+      IsRunOf d rent steps s params r := by
   withSyscallSpec C
   set s₀ := genesisFor d rent params.balances with hs₀
   set pool := toPubkey d.poolAddress with hpool
   obtain ⟨hgen, s₁, hinit, hw₁, tidy₁, hi₁⟩ := init_complete hpid hashes runtime.rentPositive hdist dep
-  have hp₁ := ExecutionPath.single hinit (txWith_rentPositive runtime.rentPositive _)
+  have hp₁ := CodeRun.single hinit (txWith_rentPositive runtime.rentPositive _)
   -- the invariant, for the first `k` transactions
-  have key : ∀ k, k ≤ r.txs.length → ∃ evs states s, ExecutionPath d s₀ evs states s ∧ Tidy d s ∧
+  have key : ∀ k, k ≤ r.txs.length → ∃ steps s, CodeRun d s₀ steps s ∧ Tidy d s ∧
       Initialized d s ∧ toWorld d rent s = r.ws k ∧
-      executionView d rent s₀ evs states = viewAt params r k pool ∧ runTxs evs = r.txs.take k := by
+      runView d rent steps = viewAt params r k pool ∧ runTxs (eventsOf steps) = r.txs.take k := by
     intro k
     induction k with
     | zero =>
       intro _
-      refine ⟨_, _, s₁, hp₁, tidy₁, hi₁, by rw [hw₁, r.start], ?_, rfl⟩
-      simp only [executionView, ExecutionView.afterEvents, ExecutionView.afterEvent, viewAt,
-        List.range_zero, List.map_nil, initAccounts, txWith, signers_roundtrip, toPubkey_fromPubkey, hw₁]
+      refine ⟨_, s₁, hp₁, tidy₁, hi₁, by rw [hw₁, r.start], ?_, rfl⟩
+      simp only [runView, RunView.afterSteps, List.foldl_cons, List.foldl_nil, RunView.afterEvent,
+        viewAt, List.range_zero, List.map_nil, initAccounts, txWith, signers_roundtrip,
+        toPubkey_fromPubkey, hw₁]
     | succ k ih =>
       intro hk
       have hk' : k < r.txs.length := by omega
-      obtain ⟨evs, states, s, hp, tidy, hi, hw, hv, hrt⟩ := ih (by omega)
-      have hrun : Run d s₀ evs s := hp.toRun
+      obtain ⟨steps, s, hp, tidy, hi, hw, hv, hrt⟩ := ih (by omega)
+      have hrun : Run d s₀ (eventsOf steps) s := hp.toRun
       -- the admin changes
       have hc : (toWorld d rent s).state.config = (r.ws k).state.config := by rw [hw]
-      obtain ⟨eA, stA, sA, hpA, tidyA, hiA, hwA, hrtA, hvA⟩ :=
+      obtain ⟨stA, sA, hpA, tidyA, hiA, hwA, hrtA, hvA⟩ :=
         admin_chain (rent := rent) hpid hashes runtime.rentPositive (r.allowed k hk').config hgen hrun tidy hi hc
-      have hrunA : Run d s₀ (evs ++ eA) sA := hrun.append hpA.toRun
+      have hrunA : Run d s₀ (eventsOf steps ++ eventsOf stA) sA := hrun.append hpA.toRun
       have wfA := wf_reachable hgen hrunA hpid hashes
       -- the balances
       set b : Spec.UpdatedValuesBetweenTransacts :=
@@ -1067,8 +1057,9 @@ theorem run_complete_pf {d : Deployment} {rent : Nat → U64}
           exact (r.allowed k hk').programAccountsGain x hx
         · rw [hwA']; exact .noChange _
       obtain ⟨sE, henv, hwE, tidyE⟩ := env_complete (rent := rent) wfA tidyA b hbA (by rw [hwA']; rfl)
-      have hpE := ExecutionPath.singleEnv henv
-      have hrunE : Run d s₀ (evs ++ eA ++ [.env]) sE := hrunA.append (.env henv (.nil _))
+      have hpE := CodeRun.singleEnv henv
+      have hrunE : Run d s₀ (eventsOf steps ++ eventsOf stA ++ [.env]) sE :=
+        hrunA.append (.env henv (.nil _))
       have hiE : Initialized d sE := env_initialized henv hiA
       have hwE' : toWorld d rent sE = (r.ws k).withUpdatedValues (r.updatedValues k) := by
         rw [hwE, hwA']; rfl
@@ -1077,17 +1068,16 @@ theorem run_complete_pf {d : Deployment} {rent : Nat → U64}
       rw [← hwE'] at hpre
       obtain ⟨s', em, hstep, hw', tidy'⟩ := transact_run_step hpid C laws hashes crypto runtime hgen
         hrunE tidyE hiE r.txs[k] hpre (notL1 k hk') (notA0 k hk') (nocol k hk')
-      have hp' := ExecutionPath.single hstep (txWith_rentPositive runtime.rentPositive _)
+      have hp' := CodeRun.single hstep (txWith_rentPositive runtime.rentPositive _)
       have hws : toWorld d rent s' = r.ws (k+1) := by
         rw [hw', hwE']; exact (agrees_eq (r.step k hk').2).symm
-      refine ⟨evs ++ eA ++ [.env] ++ _, states ++ stA ++ [sE] ++ _, s',
+      refine ⟨steps ++ stA ++ [⟨sA, .env, sE⟩] ++ _, s',
         ((hp.append hpA).append hpE).append hp', tidy', ?_, hws, ?_, ?_⟩
       · exact transact_initialized (wf_reachable hgen hrunE hpid hashes) hiE hstep
       · -- the view
-        unfold executionView
-        rw [afterEvents_append ((hp.append hpA).append hpE), afterEvents_append (hp.append hpA),
-          afterEvents_append hp]
-        unfold executionView at hv
+        unfold runView
+        rw [afterSteps_append, afterSteps_append, afterSteps_append]
+        unfold runView at hv
         rw [hv, hvA]
         have hpE' : sE.lamports d.poolAddress = (r.updatedValues k).balances pool := by
           have := congrArg (fun w => w.balances pool) hwE'
@@ -1097,19 +1087,20 @@ theorem run_complete_pf {d : Deployment} {rent : Nat → U64}
         have hp's : s'.lamports d.poolAddress = (r.ws (k+1)).poolBalance := by
           rw [← hws]; show _ = s'.lamports (fromPubkey (toPubkey d.poolAddress))
           rw [fromPubkey_toPubkey]
-        simp only [ExecutionView.afterEvents, ExecutionView.afterEvent, fromSpecTransact, viewAt,
-          List.range_succ, List.map_append, List.map_cons, List.map_nil, List.nil_append, hpE',
-          hp's, hws]
+        simp only [RunView.afterSteps, List.foldl_cons, List.foldl_nil, RunView.afterEvent,
+          fromSpecTransact, viewAt, List.range_succ, List.map_append, List.map_cons, List.map_nil,
+          List.nil_append, hpE', hp's, hws]
       · -- the transactions
-        rw [runTxs_append, runTxs_append, runTxs_append, hrt, hrtA]
-        simp only [runTxs, List.append_nil]
+        rw [eventsOf_append, eventsOf_append, eventsOf_append, runTxs_append, runTxs_append,
+          runTxs_append, hrt, hrtA]
+        simp only [eventsOf, List.map_cons, List.map_nil, runTxs, List.append_nil]
         rw [stepTxs_fromSpec (s := sE) C runtime.usize64 r.txs[k] hpre]
         rw [List.take_add_one, List.getElem?_eq_getElem hk']
         rfl
     -- the end
-  obtain ⟨evs, states, s, hp, -, -, hw, hv, hrt⟩ := key r.txs.length le_rfl
-  refine ⟨s₀, evs, states, s, hgen, hp, ?_⟩
-  apply isRunOf_of_view hp.length_eq
+  obtain ⟨steps, s, hp, -, -, hw, hv, hrt⟩ := key r.txs.length le_rfl
+  refine ⟨s₀, steps, s, hgen, hp, ?_⟩
+  apply isRunOf_of_view hpid hp
   unfold IsRunOfView
   rw [hv, hrt, List.take_length]
   exact runMatchesView_of_viewAt dep hw
@@ -1124,8 +1115,8 @@ theorem run_complete_of {d : Deployment} {rent : Nat → U64} {params : Spec.Ini
     (notL1 : ∀ tx ∈ r.txs, tx.extAmt ≠ 0) (notA0 : ∀ tx ∈ r.txs, tx.π.A ≠ List.replicate 64 0)
     (hc : ¬ AddressCollision d (fromSpecProof '' {tx | tx ∈ r.txs})) :
     withSyscallSpec C in
-    ∃ sGenesis evs states s, Genesis d.programId sGenesis ∧ ExecutionPath d sGenesis evs states s ∧
-      IsRunOf d rent sGenesis evs states s params r :=
+    ∃ sGenesis steps s, Genesis d.programId sGenesis ∧ CodeRun d sGenesis steps s ∧
+      IsRunOf d rent steps s params r :=
   run_complete_pf hpid C laws hashes crypto runtime
     (singleton_pdas_distinct_of _ _ _ (distinct_of_noCollision (fun h => hc (Or.inl h))))
     params r dep (fun _ hj => notL1 _ (List.getElem_mem hj)) (fun _ hj => notA0 _ (List.getElem_mem hj))

@@ -4,15 +4,15 @@ open Aeneas Aeneas.Std Result PrivacyCash.Model
 /-! # The invariant `WellFormed`
 
 `WellFormed`: facts about the program's own accounts (where they are, their shape, canonical
-stored values) that hold in every state an execution reaches from genesis.
+stored values) that hold in every state a code run reaches from genesis.
 
 It is defined here and proved in `Proofs/WellFormed.lean` (`wf_reachable`). The connection
-theorems do not assume it: their proofs derive it from the execution. Not for review. -/
+theorems do not assume it: their proofs derive it from the code run. Not for review. -/
 
 namespace Connection
 
 /-- `WellFormed d s` (invariant, proved): facts about the program's own accounts. They hold in
-    every state an execution reaches from genesis (proved in `Proofs/WellFormed.lean`). -/
+    every state a code run reaches from genesis (proved in `Proofs/WellFormed.lean`). -/
 structure WellFormed (d : Deployment) (s : State) : Prop where
   /-- The program is not the System Program (`ProgramNotSystem`, carried along
       so the invariant is self-contained). -/

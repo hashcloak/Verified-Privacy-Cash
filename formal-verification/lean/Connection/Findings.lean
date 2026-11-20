@@ -5,8 +5,9 @@ open Aeneas Aeneas.Std Result
 
 REVIEW SURFACE. The differences between the code and the spec. Each is stated as what the code
 never accepts, and as a counterexample to completeness (the spec allows it, the code rejects
-it). That these are the only differences for `transact` is `transact_complete_except_L1_A0`
-(`ConnectionTheorems.lean`). Details and recommendations: `FINDINGS.md`.
+it). That these are the only differences for the `transact` instruction is
+`transact_complete_except_L1_A0` (`ConnectionTheorems.lean`). Details and recommendations:
+`FINDINGS.md`.
 
 - **L1**: the code rejects a zero external amount (an internal transfer), which the docs and
   the spec allow.
@@ -28,7 +29,7 @@ theorem checkPublicAmount_L1_counterexample :
 
 /-! ## L1 and A0 at the level of `step`
 
-The code never accepts these, in any deployment and state; the counterexamples show that
+The code never accepts these, in any deployment and chain state; the counterexamples show that
 `transact_complete_except_L1_A0` fails without each exclusion. -/
 
 section
@@ -69,10 +70,10 @@ theorem transact_complete_fails_for_internal_transfer
     noCollision_of_free (Toy.toy_collisionFree _ _), rfl, Toy.depA_listed _ _, hs,
     ⟨_, _, Toy.toyGenesis, hrun⟩, hi⟩, Toy.alpha_ne_zeros, pre, code_rejects_internal_transfer rfl⟩
 
-/-- **FINDING A0, counterexample: the spec allows a zero `proof_a` the code rejects.** Excluding
-    L1 is not enough. In the same state, a deposit of 2 lamports (not L1) with a `proof_a` of 64
-    zero bytes meets every hypothesis except "not A0", and no address collision occurs. The
-    spec allows it (reading the identity point); the code rejects it. -/
+/-- **FINDING A0, counterexample: the spec allows a zero `proof_a` the code rejects.** Excluding L1
+    is not enough. In the same chain state, a deposit of 2 lamports (not L1) with a `proof_a` of 64
+    zero bytes meets every hypothesis except "not A0", and no address collision occurs. The spec
+    allows it (reading the identity point); the code rejects it. -/
 theorem transact_complete_fails_for_zero_proof_a
     (h64 : Usize.max = 2 ^ 64 - 1) :                      -- `usize` is 64 bits, as on Solana
     ∃ s : CodeModel.State,

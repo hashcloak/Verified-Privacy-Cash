@@ -6,7 +6,7 @@ open Aeneas Aeneas.Std Result PrivacyCash.Model
 
 NOT FOR REVIEW: the statements are restated in `Connection/ConnectionTheorems.lean`
 (`transact_complete_nonvacuous`) and `Connection/Findings.lean` (the counterexamples for L1 and
-A0). In the state after `initialize`, the spec allows the deposit of the example execution, the
+A0). In the state after `initialize`, the spec allows the deposit of the example code run, the
 same deposit with `proof_a` the 64 zero bytes (A0), and an internal transfer (L1). -/
 
 namespace Connection.Toy
@@ -46,8 +46,9 @@ def ProgramOrPlain (d : Deployment) (s : State) : Prop :=
 /-- An accepted `transact` keeps `ProgramOrPlain`: it only creates two nullifier accounts and
     rewrites the tree. -/
 theorem programOrPlain_transact {d : Deployment} {s s' : State} {tx : TxEnv} {a : TransactAccounts}
-    {proof : transact.Proof} {ext : I64} {fee : U64} {out1 out2 : Slice U8} {evs : List CommitmentData}
-    (h : ProgramOrPlain d s) (hx : execTransact d s tx a proof ext fee out1 out2 = .ok (s', evs)) :
+    {proof : transact.Proof} {ext : I64} {fee : U64} {out1 out2 : Slice U8}
+    {events : List CommitmentData} (h : ProgramOrPlain d s)
+    (hx : execTransact d s tx a proof ext fee out1 out2 = .ok (s', events)) :
     ProgramOrPlain d s' := by
   obtain ⟨tree, tt, config, mb, s₁, env', tree', ap, hvalid, hmb, hs₁, hhandler, hs', -⟩ := execTransact_ok hx
   obtain ⟨sA, hA1, hA2⟩ := Option.bind_eq_some_iff.mp hs₁
@@ -111,7 +112,7 @@ theorem toy_complete_examples :
       SpecAllows (d := toyD) toyC toyRent s₁ l1Tx := by
   withSyscallSpec toyC
   obtain ⟨s₁, tree, token, config, hinit, hT, hK, hC, hP, hO, -⟩ := toy_init_ok
-  obtain ⟨s₁', s₂, e₂, h1, -, hpid, h2, -, solana, depCrypto, depRent⟩ := toy_execution
+  obtain ⟨s₁', s₂, e₂, h1, -, hpid, h2, -, depAssumptions, depAddressesDiffer, depRent⟩ := toy_run
   have hinitStep : step toyD toyS0 toyTx (.initialize toyInitA) = .ok (s₁, []) := by
     show (do let s' ← execInitialize toyD toyS0 toyTx toyInitA; pure (s', [])) = _
     rw [hinit]; rfl
@@ -121,7 +122,7 @@ theorem toy_complete_examples :
     .program hinitStep toyTx_rentPositive (.nil _)
   have pre₀ : SpecAllows (d := toyD) toyC toyRent s₁ depTx :=
     (transact_connection_pf ⟨_, _, toyGenesis, hrun⟩ hpid (.program h2 toyTx_rentPositive (.nil _)) toyC toyLaws
-      toyHashesAgree solana depCrypto.1 depCrypto.2 depRent).1
+      toyHashesAgree depAssumptions depAddressesDiffer depRent).1
   refine ⟨s₁, hrun, ?_, ?_, ?_, pre₀, ?_, ?_⟩
   · exact ⟨⟨tree, by unfold HoldsTree; rw [show toyD.treeAddress = treeA from rfl, hT]; exact ⟨rfl, rfl⟩⟩,
      ⟨token, by unfold HoldsTreeToken; rw [show toyD.poolAddress = tokenA from rfl, hK]; exact ⟨rfl, rfl⟩⟩,

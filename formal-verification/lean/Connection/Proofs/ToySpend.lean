@@ -1,13 +1,13 @@
 import Connection.Proofs.ToyRun
-import Connection.Proofs.Execution
+import Connection.Proofs.Run
 open Aeneas Aeneas.Std Result PrivacyCash.Model
 
-/-! # A toy execution with a real spend (not for review)
+/-! # An example code run with a real spend (not for review)
 
-The toy execution of `Connection/Proofs/ToyRun.lean` (genesis, `initialize`, a deposit of 2
+The example code run of `Connection/Proofs/ToyRun.lean` (genesis, `initialize`, a deposit of 2
 lamports), followed by a withdrawal that spends the note the deposit created: 1 lamport with a fee
 of 1, or 2 lamports with no fee (`ToySplit`).
-Every hypothesis of `run_connection` holds for the three-step execution, and every spec run of
+Every hypothesis of `run_connection` holds for the three-step code run, and every spec run of
 it has circuit witnesses in which the withdrawal's first input is the deposit's note, with a
 non-zero amount (`toy_spend_nonvacuous`). The deposit and the withdrawal each satisfy every
 hypothesis of `transact_connection` (`toy_transact_nonvacuous`).
@@ -399,16 +399,18 @@ theorem toy_spend_ok (s₂ : State) (tree₂ t1 : merkle_tree.MerkleTreeAccount)
     (by rw [hA, Option.bind_some, hB]) hh hTL
   exact ⟨_, events, hex⟩
 
-/-! ## The whole toy execution -/
+/-! ## The whole example code run -/
 
 /-- The three steps (`initialize`, the deposit, the withdrawal, with either split) are accepted, and the withdrawal
-    satisfies every hypothesis of `transact_connection` that is not about the execution. -/
-theorem toy_spend_execution {ext : I64} {fee : U64} (hsplit : ToySplit ext fee) :
+    satisfies every hypothesis of `transact_connection` that is not about the code run. -/
+theorem toy_spend_run {ext : I64} {fee : U64} (hsplit : ToySplit ext fee) :
     ∃ (s₁ s₂ s₃ : State) (e₂ e₃ : List CommitmentData),
       step toyD toyS0 toyTx (.initialize toyInitA) = .ok (s₁, []) ∧
       step toyD s₁ toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) = .ok (s₂, e₂) ∧
       step toyD s₂ toyTx (.transact spendA spendProof ext fee emptySlice emptySlice) = .ok (s₃, e₃) ∧
-      Initialized toyD s₁ ∧ (NewNullifierAddressesDiffer toyD spendProof ∧ CircuitFacts toyD {spendProof}) ∧
+      Initialized toyD s₁ ∧
+      (NewNullifierAddressesDiffer toyD spendProof ∧
+        Groth16Sound toyD.crypto NullifiersDiffer {spendProof}) ∧
       SameRent toyRent toyTx.minimumBalance ∧
       (s₂ (pk 1#u8)).owner = systemProgram ∧ (s₂ (pk 1#u8)).data.isEmpty := by
   obtain ⟨s₁, tree, token, config, hinit, hT, hK, hC, hP, hO, hshape, hroots, hsubs, hT0, hTn, hTb, hTm,
@@ -444,7 +446,7 @@ theorem toy_spend_execution {ext : I64} {fee : U64} (hsplit : ToySplit ext fee) 
     ⟨⟨tree, by unfold HoldsTree; rw [show toyD.treeAddress = treeA from rfl, hT]; exact ⟨rfl, rfl⟩⟩,
      ⟨token, by unfold HoldsTreeToken; rw [show toyD.poolAddress = tokenA from rfl, hK]; exact ⟨rfl, rfl⟩⟩,
      ⟨config, by unfold HoldsGlobalConfig; rw [show toyD.configAddress = configA from rfl, hC]; exact ⟨rfl, rfl⟩⟩⟩,
-    ⟨?_, CircuitFacts.of_distinct ?_⟩, rfl, by rw [hP2], by rw [hP2]; rfl⟩
+    ⟨?_, distinctNullifiers_of_ne ?_⟩, rfl, by rw [hP2], by rw [hP2]; rfl⟩
   · intro x hx y hy hxy
     simp only [Set.mem_insert_iff, Set.mem_singleton_iff] at hx hy
     rcases hx with rfl | rfl <;> rcases hy with rfl | rfl
@@ -481,59 +483,61 @@ theorem toy_transact_nonvacuous :
       (∃ (s s' : State) (tx : TransactTx) (sysvarRent : Option (Nat → U64))
           (events : List CommitmentData),
         Reachable d s ∧ Run d s [.program (tx.env sysvarRent) tx.instruction events] s' ∧
-        tx.args.extAmount.val > 0 ∧ PdasDoNotSign d tx.ctx ∧ ¬ AddressCollision d {tx.args.proof} ∧
-        CircuitFacts d {tx.args.proof} ∧ SameRent rent sysvarRent) ∧
+        tx.args.extAmount.val > 0 ∧ TransactAssumptions d tx.ctx tx.args.proof ∧
+        ¬ AddressCollision d {tx.args.proof} ∧ SameRent rent sysvarRent) ∧
       (∃ (s s' : State) (tx : TransactTx) (sysvarRent : Option (Nat → U64))
           (events : List CommitmentData),
         Reachable d s ∧ Run d s [.program (tx.env sysvarRent) tx.instruction events] s' ∧
-        tx.args.extAmount.val < 0 ∧ PdasDoNotSign d tx.ctx ∧ ¬ AddressCollision d {tx.args.proof} ∧
-        CircuitFacts d {tx.args.proof} ∧ SameRent rent sysvarRent) := by
-  obtain ⟨s₁, s₂, s₃, e₂, e₃, h1, h2, h3, -, crypto, outside, -⟩ := toy_spend_execution toySplit_one
-  obtain ⟨s₁', s₂', e₂', h1', -, hpid, h2', -, solana, depCrypto, depOutside⟩ := toy_execution
+        tx.args.extAmount.val < 0 ∧ TransactAssumptions d tx.ctx tx.args.proof ∧
+        ¬ AddressCollision d {tx.args.proof} ∧ SameRent rent sysvarRent) := by
+  obtain ⟨s₁, s₂, s₃, e₂, e₃, h1, h2, h3, -, ⟨spendAddressesDiffer, spendDistinctNullifiers⟩, outside, -⟩ := toy_spend_run toySplit_one
+  obtain ⟨s₁', s₂', e₂', h1', -, hpid, h2', -, depAssumptions, depAddressesDiffer, depOutside⟩ := toy_run
   exact ⟨toyD, toyRent, toyC, toyLaws, toyProgramNotSystem, toyHashesAgree,
     ⟨s₁', s₂', ⟨toyTx.toTxContext, depA, ⟨depProof, 2#i64, 0#u64, emptySlice, emptySlice⟩⟩,
       toyTx.minimumBalance, e₂',
-      ⟨_, _, toyGenesis, .program h1' toyTx_rentPositive (.nil _)⟩, .program h2' toyTx_rentPositive (.nil _), by simp, solana, noCollision_of_free (toy_collisionFree _ _), depCrypto.2, depOutside⟩,
+      ⟨_, _, toyGenesis, .program h1' toyTx_rentPositive (.nil _)⟩, .program h2' toyTx_rentPositive (.nil _), by simp, depAssumptions, noCollision_of_free (toy_collisionFree _ _), depOutside⟩,
     ⟨s₂, s₃, ⟨toyTx.toTxContext, spendA, ⟨spendProof, wdExt, 1#u64, emptySlice, emptySlice⟩⟩,
       toyTx.minimumBalance, e₃,
-      ⟨_, _, toyGenesis, .program h1 toyTx_rentPositive (.program h2 toyTx_rentPositive (.nil _))⟩, .program h3 toyTx_rentPositive (.nil _), by rw [wdExt_val]; decide, solana, noCollision_of_free toy_collisionFree_spend, crypto.2, outside⟩⟩
+      ⟨_, _, toyGenesis, .program h1 toyTx_rentPositive (.program h2 toyTx_rentPositive (.nil _))⟩, .program h3 toyTx_rentPositive (.nil _), by rw [wdExt_val]; decide, ⟨depAssumptions.pdasDoNotSign, spendDistinctNullifiers⟩, noCollision_of_free toy_collisionFree_spend, outside⟩⟩
 
 /-- The deposit's seeds are collision-free. -/
 theorem toy_collisionFree_dep : TransactAddressesDistinct toyD depProof :=
   toy_collisionFree _ _
 
-/-- No address collision in an example execution whose transactions use the deposit's or the
+/-- No address collision in an example code run whose transactions use the deposit's or the
     withdrawal's proof. -/
-theorem toy_noCollision (evs : List Event)
+theorem toy_noCollision (events : List Event)
     (h : ∀ tx a proof ext fee out1 out2 em,
-      Event.program tx (.transact a proof ext fee out1 out2) em ∈ evs →
+      Event.program tx (.transact a proof ext fee out1 out2) em ∈ events →
       proof = depProof ∨ proof = spendProof) :
-    ¬ AddressCollision toyD (proofsIn evs) :=
-  noExecutionCollision toy_fixed_addresses fun tx a proof ext fee out1 out2 em hm => by
+    ¬ AddressCollision toyD (proofsIn events) :=
+  noRunCollision toy_fixed_addresses fun tx a proof ext fee out1 out2 em hm => by
     rcases h tx a proof ext fee out1 out2 em hm with rfl | rfl
     · exact toy_collisionFree_dep
     · exact toy_collisionFree_spend
 
 /-- **The hypotheses of `run_connection` and of the goals about runs hold together, with a real
-    spend.** The execution `initialize`, deposit, withdrawal satisfies every hypothesis of
+    spend.** The code run `initialize`, deposit, withdrawal satisfies every hypothesis of
     `run_connection`, initializes the pool, and has two transactions. `wit` are circuit
-    witnesses for both (so for every spec run of the execution, whose transactions `IsRunOf`
-    fixes to `runTxs evs`), and in them the withdrawal (transaction 1) spends a non-zero note:
+    witnesses for both (so for every spec run of the code run, whose transactions `IsRunOf`
+    fixes to `runTxs events`), and in them the withdrawal (transaction 1) spends a non-zero note:
     the one at leaf 0, which the deposit created. -/
 theorem toy_spend_nonvacuous :
-    ∃ (d : Deployment) (s₀ s : State) (evs : List Event) (states : List State)
+    ∃ (d : Deployment) (s₀ s : State) (steps : List RunStep)
       (C : AltBn128Contracts d.crypto.altBn128 Unit Unit Unit),
-      PairingLaws C.e ∧ Genesis d.programId s₀ ∧ ExecutionPath d s₀ evs states s ∧
+      PairingLaws C.e ∧ Genesis d.programId s₀ ∧ CodeRun d s₀ steps s ∧
       ProgramNotSystem d ∧
-      HashesAgree d ∧ ExecutionAssumptions d evs ∧ ¬ AddressCollision d (proofsIn evs) ∧
-      (∀ tx ix em, .program tx ix em ∈ evs → SameRent toyRent tx.minimumBalance) ∧ Initialized d s ∧
-      (runTxs evs).length = 2 ∧
+      HashesAgree d ∧
+      TransactAssumptionsInRun d (eventsOf steps) ∧
+      ¬ AddressCollision d (proofsIn (eventsOf steps)) ∧
+      (∀ tx ix em, .program tx ix em ∈ eventsOf steps → SameRent toyRent tx.minimumBalance) ∧ Initialized d s ∧
+      (runTxs (eventsOf steps)).length = 2 ∧
       ∃ wit : ℕ → Spec.Witness,
-        (∀ j (h : j < (runTxs evs).length), Spec.RelationS (runTxs evs)[j].pubInputs (wit j)) ∧
+        (∀ j (h : j < (runTxs (eventsOf steps)).length), Spec.RelationS (runTxs (eventsOf steps))[j].pubInputs (wit j)) ∧
         (wit 1).inAmt 0 ≠ 0 ∧ Spec.openedPos wit 1 0 = 0 ∧
         (wit 1).inNote 0 = Spec.leafNote wit 0 := by
-  obtain ⟨s₁, s₂, s₃, e₂, e₃, h1, h2, h3, hi₁, crypto, -⟩ := toy_spend_execution toySplit_one
-  obtain ⟨-, -, -, -, -, -, -, -, solana, depCrypto, -⟩ := toy_execution
+  obtain ⟨s₁, s₂, s₃, e₂, e₃, h1, h2, h3, hi₁, ⟨spendAddressesDiffer, spendDistinctNullifiers⟩, -⟩ := toy_spend_run toySplit_one
+  obtain ⟨-, -, -, -, -, -, -, -, depAssumptions, depAddressesDiffer, -⟩ := toy_run
   have hpid : toyD.programId ≠ systemProgram := by unfold toyD; decide +kernel
   have wf₁ := wf_reachable toyGenesis (.program h1 toyTx_rentPositive (.nil _)) hpid toyHashesAgree
   have wf₂ := wf_reachable toyGenesis (.program h1 toyTx_rentPositive (.program h2 toyTx_rentPositive (.nil _))) hpid toyHashesAgree
@@ -544,23 +548,25 @@ theorem toy_spend_nonvacuous :
       [toInputs ⟨⟨toyTx.signers⟩, depA, ⟨depProof, 2#i64, 0#u64, emptySlice, emptySlice⟩⟩,
         toInputs ⟨⟨toyTx.signers⟩, spendA, ⟨spendProof, wdExt, 1#u64, emptySlice, emptySlice⟩⟩] := by
     simp [runTxs, stepTxs]
-  refine ⟨toyD, toyS0, s₃, _, _, toyC, toyLaws, toyGenesis, .program h1 toyTx_rentPositive (.program h2 toyTx_rentPositive (.program h3 toyTx_rentPositive (.nil _))),
-    toyProgramNotSystem, toyHashesAgree, ExecutionFacts.toAssumptions ⟨toy_fixed_addresses, ?_⟩,
+  refine ⟨toyD, toyS0, s₃, _, toyC, toyLaws, toyGenesis, .program h1 toyTx_rentPositive (.program h2 toyTx_rentPositive (.program h3 toyTx_rentPositive (.nil _))),
+    toyProgramNotSystem, toyHashesAgree, RunFacts.toAssumptions ⟨toy_fixed_addresses, ?_⟩,
     toy_noCollision _ (by
       intro tx a proof ext fee out1 out2 em hm
-      simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
-      rcases hm with h | h | h <;> cases h <;> simp), ?_, hi₃, by rw [htxs]; rfl,
+      simp only [eventsOf, List.map_cons, List.map_nil, List.mem_cons, List.not_mem_nil, or_false] at hm
+      rcases hm with h | h | h <;> cases h <;> simp), ?_, hi₃,
+    by simp only [eventsOf, List.map_cons, List.map_nil]; rw [htxs]; rfl,
     fun j => if j = 0 then depWit else spendWit, ?_, ?_, rfl, rfl⟩
   · intro tx ix em hm
-    simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
+    simp only [eventsOf, List.map_cons, List.map_nil, List.mem_cons, List.not_mem_nil, or_false] at hm
     rcases hm with hev | hev | hev <;> cases hev
     · trivial
-    · exact ⟨solana, depCrypto⟩
-    · exact ⟨solana, crypto⟩
+    · exact ⟨depAssumptions, depAddressesDiffer⟩
+    · exact ⟨⟨depAssumptions.pdasDoNotSign, spendDistinctNullifiers⟩, spendAddressesDiffer⟩
   · intro tx ix em hm
-    simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
+    simp only [eventsOf, List.map_cons, List.map_nil, List.mem_cons, List.not_mem_nil, or_false] at hm
     rcases hm with h | h | h <;> cases h <;> rfl
   · intro j hj
+    simp only [eventsOf, List.map_cons, List.map_nil] at hj ⊢
     rw [List.getElem_of_eq htxs hj]
     have hj2 : j < 2 := by rw [htxs] at hj; simpa using hj
     rcases (show j = 0 ∨ j = 1 by omega) with rfl | rfl

@@ -16,8 +16,9 @@ A sanity check, not a new result: each goal is a property of the spec (`Spec/Sta
 ## Contents
 
 1. **The security goals hold for the code**, grouped by hypotheses (G1, G5 | G2, G4 | G3):
-   - goals about histories (G1a–G1d, G5a, G5b) hold of the execution's run;
-   - goals about one transaction (G2a, G4a, G4b) hold of every transaction the code accepts;
+   - goals about histories (G1a–G1d, G5a, G5b) hold of the code run's spec run;
+   - goals about one spec transaction (G2a, G4a, G4b) hold of every `transact` instruction the
+     code accepts;
    - G3a and G3b use completeness;
    - G2b has no code version: it is about circuit witnesses only.
 2. **Non-vacuity** of what `NonVacuityStatements.lean` does not cover.
@@ -31,97 +32,99 @@ namespace Connection
 
 ### G1 and G5: goals about histories
 
-For an execution from genesis to `s` that initialized the pool, under the hypotheses of
-`run_connection`: the execution's run (`IsRunOf`) satisfies the goal, for any witnesses of its
+For a code run from genesis to `s` that initialized the program, under the hypotheses of
+`run_connection`: the code run's spec run (`IsRunOf`) satisfies the goal, for any witnesses of its
 proofs where the goal needs them. -/
 
 section
 variable {G1 G2 GT : Type} [AddCommGroup G1] [Module Spec.F G1] [Inhabited G2]
   [CommGroup GT] [Spec.PoseidonHashes] [Spec.Sha]
-variable {d : CodeModel.Deployment} {rent : Nat → U64} {sGenesis s : CodeModel.State}
-  {evs : List CodeModel.Event} {states : List CodeModel.State}
-  (notSystem : ProgramNotSystem d)                             -- [assumption] see the definition
+variable {d : CodeModel.Deployment} {rent : Nat → U64} {s₀ sₙ : CodeModel.State}
+  {steps : List RunStep}
+  (notSystem : ProgramNotSystem d)                         -- [assumption] see the definition
   (C : CodeModel.AltBn128Contracts d.crypto.altBn128 G1 G2 GT)
                                                            -- [assumption] the syscall contracts
   (laws : PairingLaws C.e)                                 -- [assumption] the pairing laws
-  (hashes : HashesAgree d)                          -- [assumption] the hashes are the spec's
-  (assume : ExecutionAssumptions d evs)      -- [assumption] as in `run_connection`
-  (sameRent : ∀ txEnv ix em, .program txEnv ix em ∈ evs → SameRent rent txEnv.minimumBalance) -- [assumption] same rent as the spec
-  (hgen : CodeModel.Genesis d.programId sGenesis)          -- [premise] an execution from genesis
-  (hrun : ExecutionPath d sGenesis evs states s)           --   ...that reached `s` through `states`
-  (hi : Initialized d s)                                   -- [premise] the pool is initialized
-include notSystem C laws hashes assume sameRent hgen hrun hi
+  (hashes : HashesAgree d)                                 -- [assumption] the hashes are the spec's
+  (everyTxAssumptions : TransactAssumptionsInRun d (eventsOf steps))
+                                                           -- [assumption] as in `run_connection`
+  (sameRent : ∀ txEnv ix em, .program txEnv ix em ∈ eventsOf steps →
+    SameRent rent txEnv.minimumBalance)                    -- [assumption] same rent as the spec
+  (hgen : CodeModel.Genesis d.programId s₀)                -- [premise] a code run from genesis
+  (hrun : CodeRun d s₀ steps sₙ)                           --   ...through `steps` to `sₙ`
+  (hi : Initialized d sₙ)                                  -- [premise] the program is initialized
+include notSystem C laws hashes everyTxAssumptions sameRent hgen hrun hi
 
 /-! #### G1. Balance -/
 
-/-- **G1a for the code**: every spend in the execution is of a real note
+/-- **G1a for the code**: every spend in the code run is of a real note
     (`SpendsAreGenuine`). -/
 theorem spendsAreGenuine_code :
     withSyscallSpec C in
-    (∃ params r, IsRunOf d rent sGenesis evs states s params r ∧
+    (∃ params r, IsRunOf d rent steps sₙ params r ∧
       ∀ wit, r.WitnessesFor wit → Spec.Goals.SpendsAreGenuine r wit)
-      ∨ AddressCollision d (proofsIn evs) :=
+      ∨ AddressCollision d (proofsIn (eventsOf steps)) :=
   or_collision fun hc => spends_are_genuine_pf hgen hrun notSystem C laws hashes
-    (ExecutionFacts.of_assumptions assume hc) sameRent hi
+    (RunFacts.of_assumptions everyTxAssumptions hc) sameRent hi
 
-/-- **G1b for the code**: no note is spent twice in the execution (`NoDoubleSpend`). -/
+/-- **G1b for the code**: no note is spent twice in the code run (`NoDoubleSpend`). -/
 theorem noDoubleSpend_code :
     withSyscallSpec C in
-    (∃ params r, IsRunOf d rent sGenesis evs states s params r ∧
+    (∃ params r, IsRunOf d rent steps sₙ params r ∧
       ∀ wit, r.WitnessesFor wit → Spec.Goals.NoDoubleSpend r wit)
-      ∨ AddressCollision d (proofsIn evs) :=
+      ∨ AddressCollision d (proofsIn (eventsOf steps)) :=
   or_collision fun hc => no_double_spend_pf hgen hrun notSystem C laws hashes
-    (ExecutionFacts.of_assumptions assume hc) sameRent hi
+    (RunFacts.of_assumptions everyTxAssumptions hc) sameRent hi
 
-/-- **G1c for the code**: at the end of the execution, the pool's SOL exactly backs the
+/-- **G1c for the code**: at the end of the code run, the pool's SOL exactly backs the
     unspent notes (`PoolBacksNotes`). -/
 theorem poolBacksNotes_code :
     withSyscallSpec C in
-    (∃ params r, IsRunOf d rent sGenesis evs states s params r ∧
+    (∃ params r, IsRunOf d rent steps sₙ params r ∧
       ∀ wit, r.WitnessesFor wit → Spec.Goals.PoolBacksNotes params r wit)
-      ∨ AddressCollision d (proofsIn evs) :=
+      ∨ AddressCollision d (proofsIn (eventsOf steps)) :=
   or_collision fun hc => pool_backs_notes_pf hgen hrun notSystem C laws hashes
-    (ExecutionFacts.of_assumptions assume hc) sameRent hi
+    (RunFacts.of_assumptions everyTxAssumptions hc) sameRent hi
 
-/-- **G1d for the code**: every spend in the execution uses the owner's secret key
+/-- **G1d for the code**: every spend in the code run uses the owner's secret key
     (`OnlyOwnerSpends`). -/
 theorem onlyOwnerSpends_code :
     withSyscallSpec C in
-    (∃ params r, IsRunOf d rent sGenesis evs states s params r ∧
+    (∃ params r, IsRunOf d rent steps sₙ params r ∧
       ∀ wit, r.WitnessesFor wit → Spec.Goals.OnlyOwnerSpends r wit)
-      ∨ AddressCollision d (proofsIn evs) :=
+      ∨ AddressCollision d (proofsIn (eventsOf steps)) :=
   or_collision fun hc => only_owner_spends_pf hgen hrun notSystem C laws hashes
-    (ExecutionFacts.of_assumptions assume hc) sameRent hi
+    (RunFacts.of_assumptions everyTxAssumptions hc) sameRent hi
 
 /-! #### G5. Admin control -/
 
-/-- **G5a for the code**: only the execution's admin changes, each signed by the initializer,
+/-- **G5a for the code**: only the code run's admin changes, each signed by the initializer,
     change the config (`OnlyAuthoritiesChangeConfig`). By `IsRunOf`, the initializer is the
     deployment's admin key, when it has one. -/
 theorem onlyAuthoritiesChangeConfig_code :
     withSyscallSpec C in
-    (∃ params r, IsRunOf d rent sGenesis evs states s params r ∧
+    (∃ params r, IsRunOf d rent steps sₙ params r ∧
       Spec.Goals.OnlyAuthoritiesChangeConfig params r)
-      ∨ AddressCollision d (proofsIn evs) :=
+      ∨ AddressCollision d (proofsIn (eventsOf steps)) :=
   or_collision fun hc => only_authorities_change_config_pf hgen hrun notSystem C laws hashes
-    (ExecutionFacts.of_assumptions assume hc) sameRent hi
+    (RunFacts.of_assumptions everyTxAssumptions hc) sameRent hi
 
 /-- **G5b for the code**: the authorities never change, and the fee rates and fee error margin
     stay at most 100% (`AdminPowersLimited`). -/
 theorem adminPowersLimited_code :
     withSyscallSpec C in
-    (∃ params r, IsRunOf d rent sGenesis evs states s params r ∧
+    (∃ params r, IsRunOf d rent steps sₙ params r ∧
       Spec.Goals.AdminPowersLimited params r)
-      ∨ AddressCollision d (proofsIn evs) :=
+      ∨ AddressCollision d (proofsIn (eventsOf steps)) :=
   or_collision fun hc => admin_powers_limited_pf hgen hrun notSystem C laws hashes
-    (ExecutionFacts.of_assumptions assume hc) sameRent hi
+    (RunFacts.of_assumptions everyTxAssumptions hc) sameRent hi
 
 end
 
-/-! ### G2 and G4: goals about one transaction
+/-! ### G2 and G4: goals about one spec transaction
 
-For a `transact` that `step` accepts after an execution from genesis, under the hypotheses of
-`transact_connection`, between the mapped worlds before and after. -/
+For a `transact` instruction that `step` accepts after a code run from genesis, under the hypotheses
+of `transact_connection`, between the mapped worlds before and after. -/
 
 section
 variable {G1 G2 GT : Type} [AddCommGroup G1] [Module Spec.F G1] [Inhabited G2]
@@ -132,69 +135,70 @@ variable {d : CodeModel.Deployment} {rent : Nat → U64} {s s' : CodeModel.State
   (C : CodeModel.AltBn128Contracts d.crypto.altBn128 G1 G2 GT)
                                                            -- [assumption] the syscall contracts
   (laws : PairingLaws C.e)                                 -- [assumption] the pairing laws
-  (hashes : HashesAgree d)                          -- [assumption] the hashes are the spec's
-  (pdasDoNotSign : PdasDoNotSign d tx.ctx)                 -- [assumption] no PDA signs
-  (circuit : CircuitFacts d {tx.args.proof})               -- [assumption] the circuit keeps the nullifiers distinct (I1)
+  (hashes : HashesAgree d)                                 -- [assumption] the hashes are the spec's
+  (txAssumptions : TransactAssumptions d tx.ctx tx.args.proof)
+                                                           -- [assumption] as in `transact_connection`
   (sameRent : SameRent rent sysvarRent)                    -- [assumption] same rent as the spec
-  (reachable : CodeModel.Reachable d s)                    -- [premise] an execution from genesis reached `s`
+  (reachable : CodeModel.Reachable d s)                    -- [premise] a code run from genesis reached `s`
   (hstep : CodeModel.Run d s [.program (tx.env sysvarRent) tx.instruction events] s')
-                                                           -- [premise] ...then accepted a transact (one more step)
-include notSystem C laws hashes pdasDoNotSign circuit sameRent reachable hstep
+                                                           -- [premise] ...then accepted a `transact` instruction
+include notSystem C laws hashes txAssumptions sameRent reachable hstep
 
 /-! #### G2. Non-malleability
 
 G2b (`shared_nullifier_requires_owner_key`) has no code version: it is about circuit witnesses
 only. -/
 
-/-- **G2a for the code**: if the accepted transaction has the public inputs of a
-    well-formed honest transaction `T`, the two pay out the same (`SamePayout`). -/
+/-- **G2a for the code**: if the accepted `transact` instruction has the public inputs of a
+    well-formed honest spec transaction `T`, the two pay out the same (`SamePayout`). -/
 theorem samePayout_code :
     withSyscallSpec C in
     let inputs := toInputs tx
-    (∀ (T : Spec.TxInputs)                              -- [premise] an honest transaction, seen
+    (∀ (T : Spec.TxInputs)                              -- [premise] an honest spec transaction, seen
                                                            --   but not yet accepted
       (_hT : Spec.Goals.ExtDataWellFormed T)           -- [premise] ...well formed
-      (_hSame : T.pubInputs = inputs.pubInputs),           -- [attacker] the accepted transaction
+      (_hSame : T.pubInputs = inputs.pubInputs),           -- [attacker] the accepted instruction
                                                            --   has its public inputs
       Spec.Goals.SamePayout T inputs)
       ∨ AddressCollision d {tx.args.proof} :=
-  or_collision fun hc => same_payout_pf reachable notSystem hstep C laws hashes pdasDoNotSign
-    (newDiffer_of_noCollision (Set.mem_singleton _) hc) circuit sameRent
+  or_collision fun hc => same_payout_pf reachable notSystem hstep C laws hashes
+    txAssumptions (newDiffer_of_noCollision (Set.mem_singleton _) hc) sameRent
 
 /-! #### G4. Correct public payouts -/
 
-/-- **G4a for the code**: in the accepted transaction, only accounts that signed pay, and at most
-    what they agreed to (`OnlySignersPay`). -/
+/-- **G4a for the code**: in the accepted `transact` instruction, only accounts that signed pay, and
+    at most what they agreed to (`OnlySignersPay`). -/
 theorem onlySignersPay_code :
     withSyscallSpec C in
     let inputs := toInputs tx
     Spec.Goals.OnlySignersPay inputs (toWorld d rent s) (toWorld d rent s')
       ∨ AddressCollision d {tx.args.proof} :=
-  or_collision fun hc => only_signers_pay_pf reachable notSystem hstep C laws hashes pdasDoNotSign
-    (newDiffer_of_noCollision (Set.mem_singleton _) hc) circuit sameRent
+  or_collision fun hc => only_signers_pay_pf reachable notSystem hstep C laws hashes
+    txAssumptions (newDiffer_of_noCollision (Set.mem_singleton _) hc) sameRent
 
-/-- **G4b for the code**: in the accepted transaction, every account changes by exactly what
-    it should receive minus what it should pay (`ExactPayouts`). -/
+/-- **G4b for the code**: in the accepted `transact` instruction, every account changes by exactly
+    what it should receive minus what it should pay (`ExactPayouts`). -/
 theorem exactPayouts_code :
     withSyscallSpec C in
     let inputs := toInputs tx
     Spec.Goals.ExactPayouts inputs (toWorld d rent s) (toWorld d rent s')
       ∨ AddressCollision d {tx.args.proof} :=
-  or_collision fun hc => exact_payouts_pf reachable notSystem hstep C laws hashes pdasDoNotSign
-    (newDiffer_of_noCollision (Set.mem_singleton _) hc) circuit sameRent
+  or_collision fun hc => exact_payouts_pf reachable notSystem hstep C laws hashes
+    txAssumptions (newDiffer_of_noCollision (Set.mem_singleton _) hc) sameRent
 
 end
 
 /-! ### G3. Liveness: G3a and G3b
 
 From the spec's G3a and G3b and completeness (`transact_complete_except_L1_A0`), so for the
-whole `step`. `ReachesProgram`: what they take about the transaction as the owner submits it.
-- **No gap:** nothing changed since the run's last transaction (`toWorld … = r.final`); a
+whole `step`. `ReachesProgram`: what they take about the `transact` instruction as the owner
+submits it.
+- **No gap:** nothing changed since the spec run's last spec transaction (`toWorld … = r.final`); a
   transfer or admin change in that gap is not covered.
 - **"Accepted"** means by core-model's `step`, which leaves out some of Solana's rejections
   (writable flags, rent exemption, compute and size limits; `core-model/README.md`).
 
-`r`: any spec run ending at the code's world, the execution's own (`IsRunOf`) among them. -/
+`r`: any spec run ending at the code's world, the code run's own (`IsRunOf`) among them. -/
 
 section
 variable {G1 G2 GT : Type} [AddCommGroup G1] [Module Spec.F G1] [Inhabited G2]
@@ -204,20 +208,20 @@ variable {d : CodeModel.Deployment} {rent : Nat → U64} {s : CodeModel.State}
   (C : CodeModel.AltBn128Contracts d.crypto.altBn128 G1 G2 GT)
                                                            -- [assumption] the syscall contracts
   (laws : PairingLaws C.e)                                 -- [assumption] the pairing laws
-  (hashes : HashesAgree d)                          -- [assumption] the hashes are the spec's
+  (hashes : HashesAgree d)                                 -- [assumption] the hashes are the spec's
   (crypto : CryptoSucceeds d.crypto C)                     -- [assumption] the hash and syscalls return values
   (runtime : RuntimeFacts rent)                            -- [assumption] 64-bit `usize`, positive rent
   (pdas : PdasOnlyByProgram d s)                           -- [assumption] only the program creates
                                                            --   accounts at its addresses
-  (reachable : CodeModel.Reachable d s)                    -- [premise] an execution from genesis reached `s`
-  (initialized : Initialized d s)                          -- [premise] the pool is initialized
+  (reachable : CodeModel.Reachable d s)                    -- [premise] a code run from genesis reached `s`
+  (initialized : Initialized d s)                          -- [premise] the program is initialized
 include notSystem C laws hashes crypto runtime pdas reachable initialized
 
 /-- **G3a for the code.** An honest spend with no limit hit is accepted by `step`, or a hash break
     occurs. Excluded, as the code rejects them: L1 and A0 (`Findings.lean`). -/
 theorem honestSpendIsAccepted_code
     {tx : TransactTx} {sysvarRent : Option (Nat → U64)}
-    (reach : ReachesProgram d s tx.accounts tx.args.proof) -- [owner] the transaction as submitted
+    (reach : ReachesProgram d s tx.accounts tx.args.proof) -- [owner] the instruction as submitted
     (sameRent : SameRent rent sysvarRent)                  -- [assumption] same rent as the spec
     (notL1 : tx.args.extAmount.val ≠ 0)                    -- [finding L1] excluded
     (notA0 : tx.args.proof.proof_a.val ≠ List.replicate 64 0#u8) : -- [finding A0] excluded
@@ -226,7 +230,7 @@ theorem honestSpendIsAccepted_code
     ∀ (params : Spec.InitParams) (r : Spec.Run (Spec.initWorld params))
       (wit : ℕ → Spec.Witness) (witness : Spec.Witness) (k : ℕ),
       toWorld d rent s = r.final →          -- [premise] nothing changed since the
-                                                           --   run's last transaction
+                                                           --   spec run's last spec transaction
       r.WitnessesFor wit →                                 -- [assumption T1]
       Spec.HonestSpend r wit inputs witness k →        -- [owner]
       Spec.LimitsNotHit r.final inputs →               -- [limit]
@@ -236,23 +240,23 @@ theorem honestSpendIsAccepted_code
   honest_spend_is_accepted_pf reachable notSystem C laws hashes crypto runtime pdas initialized reach sameRent notL1 notA0
 
 /-- **G3b for the code.** A way to withdraw notes worth `spentAmt` lamports exists, at least half
-    reaches the recipient, and an honest transaction using that way is accepted by `step`, or a
-    hash break occurs. A0 is excluded (`Findings.lean`); L1 cannot arise, as a withdrawal's
-    amount is not zero. -/
+    reaches the recipient, and an honest `transact` instruction using that way is accepted by
+    `step`, or a hash break occurs. A0 is excluded (`Findings.lean`); L1 cannot arise, as a
+    withdrawal's amount is not zero. -/
 theorem adminsCannotLockWithdrawals_code :
     withSyscallSpec C in
     ∀ (params : Spec.InitParams) (r : Spec.Run (Spec.initWorld params))
       (wit : ℕ → Spec.Witness) (spentAmt : ℕ),
       toWorld d rent s = r.final →          -- [premise] nothing changed since the
-                                                           --   run's last transaction
+                                                           --   spec run's last spec transaction
       r.WitnessesFor wit →                                 -- [assumption T1]
       2 ≤ spentAmt →                                       -- [premise] the total of the notes the owner spends
       ∃ payout feeAmount : ℕ,
         Spec.Goals.WithdrawalWay r.final.state.config spentAmt payout feeAmount
         ∧ spentAmt / 2 ≤ payout
-        -- an honest transaction using that way:
+        -- an honest `transact` instruction using that way:
         ∧ ∀ (tx : TransactTx) (sysvarRent : Option (Nat → U64)) (witness : Spec.Witness) (k : ℕ),
-          ReachesProgram d s tx.accounts tx.args.proof →   -- [owner] the transaction as submitted
+          ReachesProgram d s tx.accounts tx.args.proof →   -- [owner] the instruction as submitted
           SameRent rent sysvarRent →                       -- [assumption] same rent as the spec
           tx.args.proof.proof_a.val ≠ List.replicate 64 0#u8 → -- [finding A0] excluded
           let inputs := toInputs tx
@@ -286,20 +290,22 @@ attribute [local instance] Toy.toyPoseidon Toy.toySpecSha Toy.toySpecGroups Toy.
   Toy.toySpecG1Module Toy.toySpecGTGroup Toy.toySpecPairing
   Toy.toySpecDeployment
 
-/-- **G5a and G5b for the code are not vacuous on an admin change**: the execution `initialize`,
+/-- **G5a and G5b for the code are not vacuous on an admin change**: the code run `initialize`,
     `update_deposit_limit` signed by the authority, then a deposit of 2 lamports, meets every
     hypothesis of `run_connection`, and every run of it (`IsRunOf`) records an admin change. -/
 theorem admin_change_nonvacuous :
-    ∃ (sGenesis s : CodeModel.State) (evs : List CodeModel.Event) (states : List CodeModel.State),
+    ∃ (s₀ sₙ : CodeModel.State) (steps : List RunStep),
       -- every hypothesis of `run_connection`, for the example deployment
-      CodeModel.Genesis Toy.toyD.programId sGenesis ∧ ExecutionPath Toy.toyD sGenesis evs states s
+      CodeModel.Genesis Toy.toyD.programId s₀ ∧ CodeRun Toy.toyD s₀ steps sₙ
       ∧ ProgramNotSystem Toy.toyD ∧ PairingLaws Toy.toyC.e ∧ HashesAgree Toy.toyD
-      ∧ ExecutionAssumptions Toy.toyD evs ∧ ¬ AddressCollision Toy.toyD (proofsIn evs)
-      ∧ (∀ txEnv ix em, .program txEnv ix em ∈ evs → SameRent Toy.toyRent txEnv.minimumBalance)
-      -- the pool is initialized
-      ∧ Initialized Toy.toyD s
-      -- every run of the execution records an admin change
-      ∧ ∀ params r, IsRunOf Toy.toyD Toy.toyRent sGenesis evs states s params r →
+      ∧ TransactAssumptionsInRun Toy.toyD (eventsOf steps)
+      ∧ ¬ AddressCollision Toy.toyD (proofsIn (eventsOf steps))
+      ∧ (∀ txEnv ix em, .program txEnv ix em ∈ eventsOf steps →
+          SameRent Toy.toyRent txEnv.minimumBalance)
+      -- the program is initialized
+      ∧ Initialized Toy.toyD sₙ
+      -- every spec run of the code run records an admin change
+      ∧ ∀ params r, IsRunOf Toy.toyD Toy.toyRent steps sₙ params r →
           r.adminChangesUpTo r.txs.length ≠ [] :=
   Toy.toy_admin_change_nonvacuous
 
@@ -326,7 +332,7 @@ theorem liveness_code_nonvacuous
         Spec.Goals.WithdrawalWay r.final.state.config 2 payout feeAmount →
         ∃ (tx : TransactTx) (sysvarRent : Option (Nat → U64)) (witness : Spec.Witness) (k : ℕ),
           let inputs := toInputs tx
-          -- the hypotheses of G3a for the code about the transaction
+          -- the hypotheses of G3a for the code about the `transact` instruction
           ReachesProgram Toy.toyD s tx.accounts tx.args.proof ∧ SameRent Toy.toyRent sysvarRent
           ∧ tx.args.extAmount.val ≠ 0 ∧ tx.args.proof.proof_a.val ≠ List.replicate 64 0#u8
           ∧ Spec.HonestSpend r wit inputs witness k

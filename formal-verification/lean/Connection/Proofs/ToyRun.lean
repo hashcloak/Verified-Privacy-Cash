@@ -1,11 +1,11 @@
 import Connection.Proofs.Toy
 open Aeneas Aeneas.Std Result PrivacyCash.Model
 
-/-! # A toy execution (not for review)
+/-! # An example code run (not for review)
 
 Genesis, `initialize`, one deposit of 2 lamports, in the toy deployment of `Connection/Proofs/Toy.lean`, with
 a toy PDA derivation (`toyCPA`) that separates the addresses the run uses. Every hypothesis of
-`transact_connection` holds for the deposit (`toy_execution`). `toy_deposit_ok` also describes
+`transact_connection` holds for the deposit (`toy_run`). `toy_deposit_ok` also describes
 the state after the deposit, from which `Proofs/ToySpend.lean` continues with a withdrawal. -/
 
 namespace Connection.Toy
@@ -664,7 +664,7 @@ theorem toy_deposit_ok (s₁ : State) (tree : merkle_tree.MerkleTreeAccount)
     hsubs hT0 hTn hTb hTm hkb hcb hdr hwr hmr
 
 
-/-! ## The whole toy execution: every hypothesis of `transact_connection` holds -/
+/-! ## The whole example code run: every hypothesis of `transact_connection` holds -/
 
 def toyRent : Nat → U64 := fun _ => 1#u64
 
@@ -673,18 +673,20 @@ def toyRent : Nat → U64 := fun _ => 1#u64
 theorem toyRuntime (h64 : Usize.max = 2 ^ 64 - 1) : RuntimeFacts toyRent :=
   ⟨h64, fun _ => by show 0 < (1#u64 : U64).val; decide⟩
 
-/-- `CircuitFacts` for one proof whose two input nullifiers differ (whether or not it verifies). -/
-theorem CircuitFacts.of_distinct {d : Deployment} {proof : zkcash_core.transact.Proof}
-    (h : proof.input_nullifiers.val[0]! ≠ proof.input_nullifiers.val[1]!) : CircuitFacts d {proof} :=
-  ⟨fun p hp _ => by rw [Set.mem_singleton_iff] at hp; subst hp; exact h⟩
+/-- `TransactAssumptions.distinctNullifiers` for one proof whose two input nullifiers differ
+    (whether or not it verifies). -/
+theorem distinctNullifiers_of_ne {d : Deployment} {proof : zkcash_core.transact.Proof}
+    (h : proof.input_nullifiers.val[0]! ≠ proof.input_nullifiers.val[1]!) :
+    Groth16Sound d.crypto NullifiersDiffer {proof} :=
+  fun p hp _ => by rw [Set.mem_singleton_iff] at hp; subst hp; exact h
 
-theorem toy_execution :
+theorem toy_run :
     ∃ (s : State) (s' : State) (events : List CommitmentData),
       step toyD toyS0 toyTx (.initialize toyInitA) = .ok (s, []) ∧
       Genesis toyD.programId toyS0 ∧ toyD.programId ≠ systemProgram ∧
       step toyD s toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) = .ok (s', events) ∧
-      HashesAgree toyD ∧ PdasDoNotSign toyD toyTx.toTxContext ∧ (NewNullifierAddressesDiffer toyD depProof ∧ CircuitFacts toyD {depProof}) ∧
-      SameRent toyRent toyTx.minimumBalance := by
+      HashesAgree toyD ∧ TransactAssumptions toyD toyTx.toTxContext depProof ∧
+      NewNullifierAddressesDiffer toyD depProof ∧ SameRent toyRent toyTx.minimumBalance := by
   obtain ⟨s₁, tree, token, config, hinit, hT, hK, hC, hP, hO, hshape, hroots, hsubs, hT0, hTn, hTb, hTm,
     hkb, hcb, hdr, hwr, hmr⟩ := toy_init_ok
   obtain ⟨s', events, -, hstep, -⟩ := toy_deposit_ok s₁ tree token config hT hK hC hP hO hshape hroots hsubs hT0
@@ -695,12 +697,13 @@ theorem toy_execution :
     show (do let s' ← execInitialize toyD toyS0 toyTx toyInitA; pure (s', [])) = _
     rw [hinit]; rfl
   refine ⟨s₁, s', events, hinitStep, toyGenesis, by unfold toyD; decide +kernel, hstep, toyHashesAgree,
-    ?_, ⟨?_, CircuitFacts.of_distinct ?_⟩, rfl⟩
+    ⟨?_, distinctNullifiers_of_ne ?_⟩, ?_, rfl⟩
   · intro seeds h
     have e : toyD.pda seeds = pk 1#u8 := List.mem_singleton.mp h
     have := congrArg (fun p : Pubkey => p.val[0]!) e
     simp only [Addresses.pda, toyD] at this
     simp [toyCPA, pk] at this
+  · show zeros32 ≠ one32; decide +kernel
   · intro x hx y hy hxy
     simp only [Set.mem_insert_iff, Set.mem_singleton_iff] at hx hy
     rcases hx with rfl | rfl <;> rcases hy with rfl | rfl
@@ -708,7 +711,6 @@ theorem toy_execution :
     · exact absurd hxy a0n1
     · exact absurd hxy.symm a0n1
     · rfl
-  · show zeros32 ≠ one32; decide +kernel
 
 /-- The toy's three fixed addresses differ (the toy derivation tells their seeds apart by
     length). -/

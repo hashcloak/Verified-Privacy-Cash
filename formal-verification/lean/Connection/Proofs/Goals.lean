@@ -1,4 +1,4 @@
-import Connection.Proofs.Execution
+import Connection.Proofs.Run
 import Connection.Proofs.StepComplete
 open Aeneas Aeneas.Std Result PrivacyCash.Model
 
@@ -15,60 +15,62 @@ namespace Connection
 section
 variable {G1 G2 GT : Type} [AddCommGroup G1] [Module Spec.F G1] [Inhabited G2]
   [CommGroup GT] [Spec.PoseidonHashes] [Spec.Sha]
-variable {d : Deployment} {rent : Nat → U64} {s₀ s : State} {evs : List Event} {states : List State}
-  (hgen : Genesis d.programId s₀) (hrun : ExecutionPath d s₀ evs states s)
+variable {d : Deployment} {rent : Nat → U64} {s₀ s : State} {steps : List RunStep}
+  (hgen : Genesis d.programId s₀) (hrun : CodeRun d s₀ steps s)
   (hpid : d.programId ≠ systemProgram) (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT)
   (laws : PairingLaws C.e) (hashes : HashesAgree d)
-  (assume : ExecutionFacts d evs) (sameRent : ∀ tx ix em, .program tx ix em ∈ evs → SameRent rent tx.minimumBalance)
+  (runFacts : RunFacts d (eventsOf steps))
+  (sameRent : ∀ tx ix em, .program tx ix em ∈ eventsOf steps →
+    SameRent rent tx.minimumBalance)
   (hi : Initialized d s)
-include hgen hrun hpid C laws hashes assume sameRent hi
+include hgen hrun hpid C laws hashes runFacts sameRent hi
 
 theorem spends_are_genuine_pf :
     withSyscallSpec C in
-    ∃ params r, IsRunOf d rent s₀ evs states s params r ∧
+    ∃ params r, IsRunOf d rent steps s params r ∧
       ∀ wit, r.WitnessesFor wit → Spec.Goals.SpendsAreGenuine r wit :=
   withSyscallSpec C in
-  run_satisfies hgen hrun hpid C laws hashes assume sameRent hi _
+  run_satisfies hgen hrun hpid C laws hashes runFacts sameRent hi _
     fun params r => Spec.Goals.spends_are_genuine params r
 
 theorem no_double_spend_pf :
     withSyscallSpec C in
-    ∃ params r, IsRunOf d rent s₀ evs states s params r ∧
+    ∃ params r, IsRunOf d rent steps s params r ∧
       ∀ wit, r.WitnessesFor wit → Spec.Goals.NoDoubleSpend r wit :=
   withSyscallSpec C in
-  run_satisfies hgen hrun hpid C laws hashes assume sameRent hi _
+  run_satisfies hgen hrun hpid C laws hashes runFacts sameRent hi _
     fun params r => Spec.Goals.no_double_spend params r
 
 theorem pool_backs_notes_pf :
     withSyscallSpec C in
-    ∃ params r, IsRunOf d rent s₀ evs states s params r ∧
+    ∃ params r, IsRunOf d rent steps s params r ∧
       ∀ wit, r.WitnessesFor wit → Spec.Goals.PoolBacksNotes params r wit :=
   withSyscallSpec C in
-  run_satisfies hgen hrun hpid C laws hashes assume sameRent hi _
+  run_satisfies hgen hrun hpid C laws hashes runFacts sameRent hi _
     fun params r => Spec.Goals.balance params r
 
 theorem only_owner_spends_pf :
     withSyscallSpec C in
-    ∃ params r, IsRunOf d rent s₀ evs states s params r ∧
+    ∃ params r, IsRunOf d rent steps s params r ∧
       ∀ wit, r.WitnessesFor wit → Spec.Goals.OnlyOwnerSpends r wit :=
   withSyscallSpec C in
-  run_satisfies hgen hrun hpid C laws hashes assume sameRent hi _
+  run_satisfies hgen hrun hpid C laws hashes runFacts sameRent hi _
     fun params r => Spec.Goals.honest_note_spent_only_with_owner_key params r
 
 theorem only_authorities_change_config_pf :
     withSyscallSpec C in
-    ∃ params r, IsRunOf d rent s₀ evs states s params r ∧
+    ∃ params r, IsRunOf d rent steps s params r ∧
       Spec.Goals.OnlyAuthoritiesChangeConfig params r :=
   withSyscallSpec C in
-  run_satisfies hgen hrun hpid C laws hashes assume sameRent hi _
+  run_satisfies hgen hrun hpid C laws hashes runFacts sameRent hi _
     fun params r => Spec.Goals.only_authorities_change_config params r
 
 theorem admin_powers_limited_pf :
     withSyscallSpec C in
-    ∃ params r, IsRunOf d rent s₀ evs states s params r ∧
+    ∃ params r, IsRunOf d rent steps s params r ∧
       Spec.Goals.AdminPowersLimited params r :=
   withSyscallSpec C in
-  run_satisfies hgen hrun hpid C laws hashes assume sameRent hi _
+  run_satisfies hgen hrun hpid C laws hashes runFacts sameRent hi _
     fun params r => Spec.Goals.admin_powers_limited params r
 
 end
@@ -84,9 +86,10 @@ variable {d : Deployment} {rent : Nat → U64} {s s' : State} {tx : TxEnv}
   (reachable : Reachable d s) (hpid : d.programId ≠ systemProgram)
   (hstep : Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s')
   (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
-  (hashes : HashesAgree d) (solana : PdasDoNotSign d tx.toTxContext)
-  (crypto : NewNullifierAddressesDiffer d proof) (circuit : CircuitFacts d {proof}) (sameRent : SameRent rent tx.minimumBalance)
-include reachable hpid hstep C laws hashes solana crypto circuit sameRent
+  (hashes : HashesAgree d) (txAssumptions : TransactAssumptions d tx.toTxContext proof)
+  (newAddressesDiffer : NewNullifierAddressesDiffer d proof)
+  (sameRent : SameRent rent tx.minimumBalance)
+include reachable hpid hstep C laws hashes txAssumptions newAddressesDiffer sameRent
 
 theorem same_payout_pf :
     withSyscallSpec C in
@@ -95,7 +98,8 @@ theorem same_payout_pf :
       Spec.Goals.SamePayout T inputs :=
   withSyscallSpec C in
   fun T hT hSame => Spec.Goals.same_public_inputs_same_external_data T hT _ _ _ hSame
-    (transact_connection_pf reachable hpid hstep C laws hashes solana crypto circuit sameRent)
+    (transact_connection_pf reachable hpid hstep C laws hashes txAssumptions newAddressesDiffer
+      sameRent)
 
 theorem only_signers_pay_pf :
     withSyscallSpec C in
@@ -104,7 +108,8 @@ theorem only_signers_pay_pf :
       (toWorld d rent s') :=
   withSyscallSpec C in
   Spec.Goals.only_signers_pay _ _ _
-    (transact_connection_pf reachable hpid hstep C laws hashes solana crypto circuit sameRent)
+    (transact_connection_pf reachable hpid hstep C laws hashes txAssumptions newAddressesDiffer
+      sameRent)
 
 theorem exact_payouts_pf :
     withSyscallSpec C in
@@ -113,7 +118,8 @@ theorem exact_payouts_pf :
       (toWorld d rent s') :=
   withSyscallSpec C in
   Spec.Goals.exact_payouts _ _ _
-    (transact_connection_pf reachable hpid hstep C laws hashes solana crypto circuit sameRent)
+    (transact_connection_pf reachable hpid hstep C laws hashes txAssumptions newAddressesDiffer
+      sameRent)
 
 end
 

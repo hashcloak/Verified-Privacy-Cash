@@ -1,11 +1,11 @@
 import Connection.Proofs.ToySpend
 open Aeneas Aeneas.Std Result PrivacyCash.Model
 
-/-! # A toy execution with an admin change inside the run (not for review)
+/-! # An example code run with an admin change inside the run (not for review)
 
 Genesis, `initialize`, `update_deposit_limit` (the authority sets the limit to 7 lamports), then
 the deposit of 2 lamports of `Connection/Proofs/ToyRun.lean`. Because a transaction follows the
-admin instruction, the change is in the spec run (`IsRunOf`): every spec run of the execution
+admin instruction, the change is in the spec run (`IsRunOf`): every spec run of the code run
 records it. So G5a and G5b for the code are not vacuous on an admin change
 (`toy_admin_change_nonvacuous`). -/
 
@@ -54,15 +54,17 @@ theorem toy_init_authority {s₁ : State} {tree : merkle_tree.MerkleTreeAccount}
   simpa [fromPubkey_toPubkey] using congrArg fromPubkey h2
 
 /-- **The hypotheses of `run_connection` and of the goals about runs hold with an admin change
-    inside the run.** The execution `initialize`, `update_deposit_limit`, deposit satisfies every
+    inside the run.** The code run `initialize`, `update_deposit_limit`, deposit satisfies every
     hypothesis of `run_connection` and initializes the pool, and every spec run of it
     (`IsRunOf`) records an admin change before its last transaction. -/
 theorem toy_admin_change_nonvacuous :
-    ∃ (s₀ s : State) (evs : List Event) (states : List State),
-      Genesis toyD.programId s₀ ∧ ExecutionPath toyD s₀ evs states s ∧ ProgramNotSystem toyD ∧
-      PairingLaws toyC.e ∧ HashesAgree toyD ∧ ExecutionAssumptions toyD evs ∧ ¬ AddressCollision toyD (proofsIn evs) ∧
-      (∀ tx ix em, .program tx ix em ∈ evs → SameRent toyRent tx.minimumBalance) ∧ Initialized toyD s ∧
-      ∀ params r, IsRunOf toyD toyRent s₀ evs states s params r → r.adminChangesUpTo r.txs.length ≠ [] := by
+    ∃ (s₀ s : State) (steps : List RunStep),
+      Genesis toyD.programId s₀ ∧ CodeRun toyD s₀ steps s ∧ ProgramNotSystem toyD ∧
+      PairingLaws toyC.e ∧ HashesAgree toyD ∧
+      TransactAssumptionsInRun toyD (eventsOf steps) ∧
+      ¬ AddressCollision toyD (proofsIn (eventsOf steps)) ∧
+      (∀ tx ix em, .program tx ix em ∈ eventsOf steps → SameRent toyRent tx.minimumBalance) ∧ Initialized toyD s ∧
+      ∀ params r, IsRunOf toyD toyRent steps s params r → r.adminChangesUpTo r.txs.length ≠ [] := by
   obtain ⟨s₁, tree, token, config, hinit, hT, hK, hC, hP, hO, hshape, hroots, hsubs, hT0, hTn, hTb, -,
     hkb, hcb, hdr, hwr, hmr⟩ := toy_init_ok
   have hpid : toyD.programId ≠ systemProgram := by unfold toyD; decide +kernel
@@ -84,7 +86,7 @@ theorem toy_admin_change_nonvacuous :
     (by rw [hs₂, State.set_other _ _ (Ne.symm g1)]; exact hP) hO₂
     hshape hroots hsubs hT0 hTn hTb (by show 2 ≤ (7#u64 : U64).val; decide) hkb hcb hdr hwr hmr
   -- the facts the deposit needs, from the toy deposit after `initialize`
-  obtain ⟨-, -, -, -, -, -, -, -, solana, depCrypto, -⟩ := toy_execution
+  obtain ⟨-, -, -, -, -, -, -, -, depAssumptions, depAddressesDiffer, -⟩ := toy_run
   -- the pool stays initialized
   have wf₁ := wf_reachable toyGenesis (.program h1 toyTx_rentPositive (.nil _)) hpid toyHashesAgree
   have wf₂ := wf_reachable toyGenesis (.program h1 toyTx_rentPositive (.program h2 toyTx_rentPositive (.nil _))) hpid toyHashesAgree
@@ -94,27 +96,27 @@ theorem toy_admin_change_nonvacuous :
   cases h2e
   obtain ⟨hi₂, -, -⟩ := udl_between (rent := toyRent) wf₁ hi₁ h2'
   have hi₃ := transact_initialized wf₂ hi₂ h3
-  refine ⟨toyS0, s₃, _, _, toyGenesis,
+  refine ⟨toyS0, s₃, _, toyGenesis,
     .program h1 toyTx_rentPositive (.program h2 toyTx_rentPositive (.program h3 toyTx_rentPositive (.nil _))), toyProgramNotSystem, toyLaws, toyHashesAgree,
-    ExecutionFacts.toAssumptions ⟨toy_fixed_addresses, ?_⟩,
+    RunFacts.toAssumptions ⟨toy_fixed_addresses, ?_⟩,
     toy_noCollision _ (by
       intro tx a proof ext fee out1 out2 em hm
-      simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
+      simp only [eventsOf, List.map_cons, List.map_nil, List.mem_cons, List.not_mem_nil, or_false] at hm
       rcases hm with h | h | h <;> cases h; simp), ?_, hi₃, ?_⟩
   · intro tx ix em hm
-    simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
+    simp only [eventsOf, List.map_cons, List.map_nil, List.mem_cons, List.not_mem_nil, or_false] at hm
     rcases hm with hev | hev | hev <;> cases hev
     · trivial
     · trivial
-    · exact ⟨solana, depCrypto⟩
+    · exact ⟨depAssumptions, depAddressesDiffer⟩
   · intro tx ix em hm
-    simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
+    simp only [eventsOf, List.map_cons, List.map_nil, List.mem_cons, List.not_mem_nil, or_false] at hm
     rcases hm with h | h | h <;> cases h <;> rfl
   · intro params r hr
     have htxs := hr.txs
     have hlen : r.txs.length = 1 := by rw [htxs]; rfl
-    -- the deposit is event 2, after the admin instruction (event 1)
-    rw [hlen, (hr.record (j := 0) (i := 2) rfl).2]
-    simp [adminChangesBefore, List.range_succ, toAdminChange]
+    -- the deposit is step 2, after the admin instruction (step 1)
+    rw [hlen, (hr.record (j := 0) rfl).2]
+    simp [adminChanges, toAdminChange]
 
 end Connection.Toy

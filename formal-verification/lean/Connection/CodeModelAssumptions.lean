@@ -23,24 +23,35 @@ namespace Connection
     runs once). -/
 def ProgramNotSystem (d : CodeModel.Deployment) : Prop := d.programId ≠ CodeModel.systemProgram
 
-/-- `PdasDoNotSign d ctx` (assumption, about Solana, for this transaction): no program-derived
-    address is among the transaction's signers (`ctx.signers`). True on Solana: a PDA is off the ed25519
-    curve, so it has no private key.
-    Needed so that the signer is neither the pool nor a new nullifier account. -/
-def PdasDoNotSign (d : CodeModel.Deployment) (ctx : CodeModel.TxContext) : Prop :=
-  ∀ seeds, d.pda seeds ∉ ctx.signers
-
 /-- `NullifiersDiffer xs`: public inputs 3 and 4 of a proof (its two input nullifiers) differ. -/
 def NullifiersDiffer (xs : List (Std.Array U8 32#usize)) : Prop := xs[3]! ≠ xs[4]!
 
-/-- `CircuitFacts d proofs` (assumption, about `circuits/transaction2.circom`, for these proofs):
-    what the connection needs from the circuit. Stated with core-model's `Groth16Sound`, which
-    leaves the circuit's statement open. -/
-structure CircuitFacts (d : CodeModel.Deployment) (proofs : Set CodeModel.Proof) :
-    Prop where
-  /-- An accepted proof has two different input nullifiers. Only the circuit enforces this, not
-      the program or Anchor (finding I1). Spec: `RelationS.noDuplicateNullifiers` (by T0). -/
-  distinctNullifiers : CodeModel.Groth16Sound d.crypto NullifiersDiffer proofs
+/-- `TransactAssumptions d ctx proof` (assumption, for one `transact` instruction): what we assume
+    of one `transact` instruction, given its Solana transaction's context `ctx` and its proof
+    `proof`. It has two parts:
+    - no program-derived address signs the Solana transaction (a Solana fact);
+    - the circuit gives the proof two distinct input nullifiers (an assumption about the circuit).
+    `transact_connection` assumes it for its instruction, and `run_connection` for every
+    `transact` instruction of the code run (`TransactAssumptionsInRun`). -/
+structure TransactAssumptions (d : CodeModel.Deployment) (ctx : CodeModel.TxContext)
+    (proof : CodeModel.Proof) : Prop where
+  /-- No program-derived address is among the Solana transaction's signers (about Solana).
+      True on Solana: a PDA is off the ed25519 curve, so it has no private key. Needed so that
+      the signer is neither the pool nor a new nullifier account. -/
+  pdasDoNotSign : ∀ seeds, d.pda seeds ∉ ctx.signers
+  /-- If the proof verifies, its two input nullifiers differ (about
+      `circuits/transaction2.circom`). Only the circuit enforces this, not the program or Anchor
+      (finding I1). Spec: `RelationS.noDuplicateNullifiers` (by T0). -/
+  distinctNullifiers : CodeModel.Groth16Sound d.crypto NullifiersDiffer {proof}
+
+/-- `TransactAssumptionsInRun d events` (assumption, for a code run): `TransactAssumptions` holds
+    for every `transact` instruction that the code run `events` accepted. -/
+def TransactAssumptionsInRun (d : CodeModel.Deployment) (events : List CodeModel.Event) : Prop :=
+  ∀ event ∈ events,                                       -- for every event of the code run,
+    ∀ txEnv accounts proof extAmount fee out1 out2 emitted,
+      event = .program txEnv (.transact accounts proof extAmount fee out1 out2) emitted →
+                                                          -- if it is a `transact` instruction:
+        TransactAssumptions d txEnv.toTxContext proof     -- these assumptions hold
 
 section
 variable {G1 G2 GT : Type} [AddCommGroup G1] [Module Spec.F G1] [Inhabited G2]
@@ -54,29 +65,24 @@ structure PairingLaws (e : G1 → G2 → GT) : Prop where
 
 end
 
-/-- `TransactIn evs txEnv proof`: the execution `evs` accepted a `transact` with proof `proof`, in
-    transaction environment `txEnv`. -/
-def TransactIn (evs : List CodeModel.Event) (txEnv : CodeModel.TxEnv)
-    (proof : CodeModel.Proof) : Prop :=
-  ∃ a ext fee out1 out2 em,
-    CodeModel.Event.program txEnv (.transact a proof ext fee out1 out2) em ∈ evs
-
-/-- `proofsIn evs`: the proofs of the `transact`s the execution `evs` accepted. -/
-def proofsIn (evs : List CodeModel.Event) : Set CodeModel.Proof :=
-  {proof | ∃ txEnv, TransactIn evs txEnv proof}
-
-/-- `ExecutionAssumptions d evs` (assumption, for `run_connection`): `PdasDoNotSign` and
-    `CircuitFacts` for every `transact` of the execution `evs`. -/
-structure ExecutionAssumptions (d : CodeModel.Deployment) (evs : List CodeModel.Event) : Prop where
-  /-- No derived address signs a `transact`'s transaction. -/
-  pdasDoNotSign : ∀ txEnv proof, TransactIn evs txEnv proof → PdasDoNotSign d txEnv.toTxContext
-  /-- The circuit facts, for the proofs of all `transact`s. -/
-  circuit : CircuitFacts d (proofsIn evs)
+/-- `RuntimeFacts rent` (assumption, about Solana's runtime): `usize` is 64 bits, and every rent
+    amount is positive. Both are fixed by the runtime, not by a Solana transaction or a chain
+    state. -/
+structure RuntimeFacts (rent : Nat → U64) : Prop where
+  /-- `usize` is 64 bits. SOLANA FACT: the program runs on 64-bit SBF. Not provable: Aeneas's
+      `Usize.max` depends on the platform running Lean. -/
+  usize64 : Usize.max = 2^64 - 1
+  /-- Every rent amount is positive. `rent n` is the minimum balance an account with `n` bytes of
+      data must hold (Solana's rent-exempt minimum, `Rent::minimum_balance`).
+      SOLANA FACT: even an account with no data must hold a positive balance (Solana counts 128
+      bytes of account metadata, at a positive price). With `SameRent`, this gives core-model's
+      `TxEnv.RentPositive`. -/
+  rentPositive : ∀ n, 0 < (rent n).val
 
 /-! ## For completeness only
 
-Completeness must show that the code reaches `ok`: the cryptography returns a value, the runtime
-is Solana's, and Anchor's checks on derived addresses pass. -/
+Completeness must show that the code reaches `ok`: the cryptography returns a value, and Anchor's
+checks on derived addresses pass. It also uses `RuntimeFacts` (above). -/
 
 /-- `PoseidonSucceeds c` (assumption): Poseidon returns a value on canonical inputs.
     True of `light-poseidon`, which fails only on inputs ≥ p. Enough for the program: where it
@@ -164,21 +170,8 @@ structure CryptoSucceeds (c : CodeModel.Crypto)
 
 end
 
-/-- `RuntimeFacts rent` (assumption, about Solana's runtime): `usize` is 64 bits, and every rent
-    amount is positive. Both are fixed by the runtime, not by a transaction or a state. -/
-structure RuntimeFacts (rent : Nat → U64) : Prop where
-  /-- `usize` is 64 bits. SOLANA FACT: the program runs on 64-bit SBF. Not provable: Aeneas's
-      `Usize.max` depends on the platform running Lean. -/
-  usize64 : Usize.max = 2^64 - 1
-  /-- Every rent amount is positive. `rent n` is the minimum balance an account with `n` bytes of
-      data must hold (Solana's rent-exempt minimum, `Rent::minimum_balance`).
-      SOLANA FACT: even an account with no data must hold a positive balance (Solana counts 128
-      bytes of account metadata, at a positive price). With `SameRent`, this gives core-model's
-      `TxEnv.RentPositive`. -/
-  rentPositive : ∀ n, 0 < (rent n).val
-
-/-- `PdasOnlyByProgram d s` (assumption, about Solana, for this state): only the program creates
-    accounts at its derived addresses. In state `s`, each derived address holds either
+/-- `PdasOnlyByProgram d s` (assumption, about Solana, for this chain state): only the program
+    creates accounts at its derived addresses. In chain state `s`, each derived address holds either
     - an account the program created (owned by the program, with program data), or
     - no account yet (owned by the System Program, no data; it may hold lamports sent to it).
 

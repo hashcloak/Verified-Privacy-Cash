@@ -98,14 +98,14 @@ theorem transact_refines_verified [Spec.PoseidonHashes] [Spec.Sha]
     (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
     (hashes : HashesAgree d)
     (wf : WellFormed d s)
-    (solana : PdasDoNotSign d tx.toTxContext) (hrentPos : tx.RentPositive)
-    (crypto : NewNullifierAddressesDiffer d proof) (circuit : CircuitFacts d {proof})
+    (txAssumptions : TransactAssumptions d tx.toTxContext proof) (hrentPos : tx.RentPositive)
+    (newAddressesDiffer : NewNullifierAddressesDiffer d proof)
     (rentFixed : SameRent rent tx.minimumBalance) :
     withSyscallSpec C in
     let inputs := toInputs ⟨⟨tx.signers⟩, a, ⟨proof, extAmount, fee, out1, out2⟩⟩
     Spec.transact inputs (toWorld d rent s) (toWorld d rent s') := by
   withSyscallSpec C
-  exact transact_refines hstep hashes wf solana hrentPos crypto circuit rentFixed
+  exact transact_refines hstep hashes wf txAssumptions hrentPos newAddressesDiffer rentFixed
     (fun hv => verifier_bridge d.crypto C laws proof hv a extAmount fee out1 out2) rfl
 
 /-- `transact_refines_between` with the verifier bridge in place of `hProofValid`. -/
@@ -117,8 +117,8 @@ theorem transact_refines_between_verified [Spec.PoseidonHashes] [Spec.Sha]
     (hstep : step d s tx (.transact a proof extAmount fee out1 out2) = .ok (s', events))
     (hashes : HashesAgree d)
     (wf : WellFormed d s)
-    (solana : PdasDoNotSign d tx.toTxContext) (hrentPos : tx.RentPositive)
-    (crypto : NewNullifierAddressesDiffer d proof) (circuit : CircuitFacts d {proof})
+    (txAssumptions : TransactAssumptions d tx.toTxContext proof) (hrentPos : tx.RentPositive)
+    (newAddressesDiffer : NewNullifierAddressesDiffer d proof)
     (rentFixed : tx.minimumBalance = some rent) :
     withSyscallSpec C in
     let inputs := toInputs ⟨⟨tx.signers⟩, a, ⟨proof, extAmount, fee, out1, out2⟩⟩
@@ -133,7 +133,7 @@ theorem transact_refines_between_verified [Spec.PoseidonHashes] [Spec.Sha]
       b₂.config = (toWorld d rent s').state.config ∧
       b₂.balances (toPubkey d.poolAddress) = s'.lamports d.poolAddress := by
   withSyscallSpec C
-  exact transact_refines_between hstep hashes wf solana hrentPos crypto circuit rentFixed
+  exact transact_refines_between hstep hashes wf txAssumptions hrentPos newAddressesDiffer rentFixed
     (fun hv => verifier_bridge d.crypto C laws proof hv a extAmount fee out1 out2) rfl
 
 end

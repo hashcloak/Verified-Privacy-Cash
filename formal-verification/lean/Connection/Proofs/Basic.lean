@@ -88,4 +88,19 @@ instance (T : Spec.Tree) (R : Spec.F) : Decidable (Spec.rootKnown T R) :=
 instance (T : Spec.Tree) (bs : Spec.Bytes) : Decidable (Spec.rootBytesKnown T bs) := by
   unfold Spec.rootBytesKnown; infer_instance
 
+/-! ## Code runs, one event at a time -/
+
+/-- A `CodeRun` step by an accepted program instruction (as `Run.program`). -/
+theorem CodeRun.program {d : Deployment} {s s' s'' : State} {tx : TxEnv} {ix : Instruction}
+    {em : List CommitmentData} {steps : List RunStep}
+    (h : step d s tx ix = .ok (s', em)) (hr : tx.RentPositive) (rest : CodeRun d s' steps s'') :
+    CodeRun d s (⟨s, .program tx ix em, s'⟩ :: steps) s'' :=
+  .cons ⟨h, hr⟩ rest
+
+/-- A `CodeRun` step by an outside action (as `Run.env`). -/
+theorem CodeRun.env {d : Deployment} {s s' s'' : State} {steps : List RunStep}
+    (h : EnvStep d.programId s s') (rest : CodeRun d s' steps s'') :
+    CodeRun d s (⟨s, .env, s'⟩ :: steps) s'' :=
+  .cons h rest
+
 end Connection

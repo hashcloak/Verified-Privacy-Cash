@@ -48,20 +48,22 @@ structure HashesAgree (d : CodeModel.Deployment) : Prop where
 
 /-- `SameRent rent sysvarRent` (assumption): the code and the spec use the same rent. The spec
     takes its rent amounts as given (`toWorld` reads them from `rent`); the code reads Solana's
-    `Rent` sysvar (`sysvarRent`, the runtime's, not the sender's). Ruled out: a transaction that
-    sees a different rent, or none. `transact_connection` takes it for its transaction,
+    `Rent` sysvar (`sysvarRent`, the runtime's, not the sender's). Ruled out: a Solana transaction
+    that sees a different rent, or none. `transact_connection` takes it for its `transact`
+    instruction,
     `run_connection` for every program instruction. -/
 def SameRent (rent : Nat → U64) (sysvarRent : Option (Nat → U64)) : Prop := sysvarRent = some rent
 
-/-! ## For completeness, and G3a and G3b for the code: the transaction as submitted
+/-! ## For completeness, and G3a and G3b for the code: the `transact` instruction as submitted
 
-These describe only the transaction as submitted.
+These describe only the `transact` instruction as submitted.
 That Anchor's account checks then pass is proved, not assumed. -/
 
-/-- `AccountsListed d a proof` (premise): the transaction lists the right accounts: the tree, the
-    pool, the config, the four nullifier addresses of the proof's nullifiers, and the System
-    Program. Why a premise: the spec's transaction has no account list, so the spec cannot require the
-    right one. Nothing is lost: Anchor rejects a transaction that lists any other account. -/
+/-- `AccountsListed d a proof` (premise): the `transact` instruction lists the right accounts:
+    the tree, the pool, the config, the four nullifier addresses of the proof's nullifiers, and
+    the System Program. Why a premise: a spec transaction has no account list, so the spec cannot
+    require the right one. Nothing is lost: Anchor rejects a `transact` instruction that lists
+    any other account. -/
 structure AccountsListed (d : CodeModel.Deployment) (a : CodeModel.TransactAccounts)
     (proof : CodeModel.Proof) : Prop where
   /-- The tree's account (the program's `tree_account`, seed `"merkle_tree"`). -/
@@ -88,17 +90,18 @@ structure AccountsListed (d : CodeModel.Deployment) (a : CodeModel.TransactAccou
     The signer pays (deposit, nullifier rent) by System Program transfer, which requires exactly
     this (`systemTransferBalances`). This premise is not needed when the signer pays nothing (a
     withdrawal whose nullifier addresses already hold the rent). The code accepts those
-    transactions anyway, so excluding them hides no difference. -/
+    `transact` instructions anyway, so excluding them hides no difference. -/
 def SignerIsPlain (s : CodeModel.State) (a : CodeModel.TransactAccounts) : Prop :=
   -- plain: owned by the System Program (only the owner may debit) and holding no data
   (s a.signer).owner = CodeModel.systemProgram ∧ (s a.signer).data.isEmpty
 
-/-- `ReachesProgram d s a proof`: what G3a and G3b for the code take about the transaction as the
-    honest owner submits it. With these, `SameRent` and the spec's preconditions, Anchor's account
-    checks pass (proved in `transact_complete_except_L1_A0`, which takes the same conditions). -/
+/-- `ReachesProgram d s a proof`: what G3a and G3b for the code take about the `transact`
+    instruction as the honest owner submits it. With these, `SameRent` and the spec's preconditions,
+    Anchor's account checks pass (proved in `transact_complete_except_L1_A0`, which takes the same
+    conditions). -/
 structure ReachesProgram (d : CodeModel.Deployment) (s : CodeModel.State)
     (a : CodeModel.TransactAccounts) (proof : CodeModel.Proof) : Prop where
-  /-- The transaction lists the right accounts. -/
+  /-- The `transact` instruction lists the right accounts. -/
   accounts : AccountsListed d a proof
   /-- The signer is a plain system account. -/
   signerPlain : SignerIsPlain s a

@@ -90,49 +90,48 @@ theorem newDiffer_of_noCollision {d : Deployment} {proofs : Set zkcash_core.tran
     NewNullifierAddressesDiffer d proof :=
   newDiffer_of_distinct (transactDistinct_of_noCollision hp h)
 
-/-- What one step of an execution needs, distinct addresses included. -/
+/-- What one step of a code run needs, distinct addresses included. -/
 def StepFacts (d : Deployment) (tx : TxEnv) : Instruction → Prop
   | .transact _ proof _ _ _ _ =>
-    PdasDoNotSign d tx.toTxContext ∧ NewNullifierAddressesDiffer d proof ∧ CircuitFacts d {proof}
+    TransactAssumptions d tx.toTxContext proof ∧ NewNullifierAddressesDiffer d proof
   | _ => True
 
-/-- What an execution needs, distinct addresses included. -/
-structure ExecutionFacts (d : Deployment) (evs : List Event) : Prop where
+/-- What a code run needs, distinct addresses included. -/
+structure RunFacts (d : Deployment) (events : List Event) : Prop where
   fixedAddressesDiffer : DistinctAddresses d.toAddresses
     {d.pdaInput merkleTreeSeeds, d.pdaInput treeTokenSeeds, d.pdaInput globalConfigSeeds}
-  eachStep : ∀ tx ix em, .program tx ix em ∈ evs → StepFacts d tx ix
+  eachStep : ∀ tx ix em, .program tx ix em ∈ events → StepFacts d tx ix
 
-/-- Without an address collision, the execution's assumptions give its facts. -/
-theorem ExecutionFacts.of_assumptions {d : Deployment} {evs : List Event}
-    (assume : ExecutionAssumptions d evs) (h : ¬ AddressCollision d (proofsIn evs)) :
-    ExecutionFacts d evs where
+/-- Without an address collision, the code run's assumptions give its facts. -/
+theorem RunFacts.of_assumptions {d : Deployment} {events : List Event}
+    (everyTxAssumptions : TransactAssumptionsInRun d events)
+    (h : ¬ AddressCollision d (proofsIn events)) :
+    RunFacts d events where
   fixedAddressesDiffer := fixedDistinct_of_noCollision h
   eachStep := by
     intro tx ix em hm
     cases ix with
     | transact a proof ext fee out1 out2 =>
-      have hin : TransactIn evs tx proof := ⟨a, ext, fee, out1, out2, em, hm⟩
-      refine ⟨assume.pdasDoNotSign tx proof hin, newDiffer_of_noCollision (show proof ∈ proofsIn evs from ⟨tx, hin⟩) h, ?_⟩
-      exact ⟨fun p hp => assume.circuit.distinctNullifiers p (by rw [hp]; exact ⟨tx, hin⟩)⟩
+      exact ⟨everyTxAssumptions _ hm tx a proof ext fee out1 out2 em rfl,
+        newDiffer_of_noCollision
+          (show proof ∈ proofsIn events from ⟨tx, a, ext, fee, out1, out2, em, hm⟩) h⟩
     | _ => trivial
 
 /-- The facts give the assumptions (they only drop distinct addresses). -/
-theorem ExecutionFacts.toAssumptions {d : Deployment} {evs : List Event}
-    (h : ExecutionFacts d evs) : ExecutionAssumptions d evs where
-  pdasDoNotSign := fun tx _ ⟨a, ext, fee, out1, out2, em, hm⟩ =>
-    (h.eachStep tx (.transact a _ ext fee out1 out2) em hm).1
-  circuit := ⟨fun p ⟨tx, a, ext, fee, out1, out2, em, hm⟩ =>
-    (h.eachStep tx (.transact a p ext fee out1 out2) em hm).2.2.distinctNullifiers p rfl⟩
+theorem RunFacts.toAssumptions {d : Deployment} {events : List Event} (h : RunFacts d events) :
+    TransactAssumptionsInRun d events := by
+  rintro _ hm tx a _ ext fee out1 out2 em rfl
+  exact (h.eachStep tx (.transact a _ ext fee out1 out2) em hm).1
 
-/-- No collision in an execution whose fixed seeds and transactions' seeds derive distinct
+/-- No collision in a code run whose fixed seeds and transactions' seeds derive distinct
     addresses. -/
-theorem noExecutionCollision {d : Deployment} {evs : List Event}
+theorem noRunCollision {d : Deployment} {events : List Event}
     (hf : DistinctAddresses d.toAddresses
       {d.pdaInput merkleTreeSeeds, d.pdaInput treeTokenSeeds, d.pdaInput globalConfigSeeds})
     (h : ∀ tx a proof ext fee out1 out2 em,
-      Event.program tx (.transact a proof ext fee out1 out2) em ∈ evs →
+      Event.program tx (.transact a proof ext fee out1 out2) em ∈ events →
       TransactAddressesDistinct d proof) :
-    ¬ AddressCollision d (proofsIn evs) := by
+    ¬ AddressCollision d (proofsIn events) := by
   rintro (hc | ⟨proof, ⟨tx, a, ext, fee, out1, out2, em, hm⟩, hc⟩)
   · exact noCollision_of_distinct hf hc
   · exact noCollision_of_distinct (h _ _ _ _ _ _ _ _ hm) hc

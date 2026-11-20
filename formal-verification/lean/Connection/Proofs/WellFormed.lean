@@ -200,10 +200,10 @@ omit [Spec.PoseidonHashes] [Spec.Sha] in
     the results as roots and subtrees. -/
 theorem wf_transact {d : Deployment} {s s' : State} {tx : TxEnv}
     {a : TransactAccounts} {proof : zkcash_core.transact.Proof} {ext : I64} {fee : U64}
-    {out1 out2 : Slice U8} {evs : List CommitmentData}
+    {out1 out2 : Slice U8} {events : List CommitmentData}
     (hpc : ∀ a b h, Canonical a → Canonical b → d.crypto.hasher.hash_pair a b = ok h → Canonical h)
     (hzc : ∃ z, d.crypto.hasher.zero_bytes = ok z ∧ ∀ i, i ≤ 26 → Canonical (z.val[i]!))
-    (wf : WellFormed d s) (hx : execTransact d s tx a proof ext fee out1 out2 = .ok (s', evs)) :
+    (wf : WellFormed d s) (hx : execTransact d s tx a proof ext fee out1 out2 = .ok (s', events)) :
     WellFormed d s' := by
   obtain ⟨tree, tt, config, mb, s₁, env', tree', ap, hvalid, hmb, hs₁, hhandler, hs', -⟩ := execTransact_ok hx
   obtain ⟨sA, hA1, hA2⟩ := Option.bind_eq_some_iff.mp hs₁
@@ -605,10 +605,10 @@ theorem wf_initialize {d : Deployment} {s s' : State} {tx : TxEnv}
 
 omit [Spec.PoseidonHashes] [Spec.Sha] in
 theorem wf_step {d : Deployment} {s s' : State} {tx : TxEnv}
-    {ix : Instruction} {evs : List CommitmentData}
+    {ix : Instruction} {events : List CommitmentData}
     (hpc : ∀ a b h, Canonical a → Canonical b → d.crypto.hasher.hash_pair a b = ok h → Canonical h)
     (hzc : ∃ z, d.crypto.hasher.zero_bytes = ok z ∧ ∀ i, i ≤ 26 → Canonical (z.val[i]!))
-    (wf : WellFormed d s) (h : step d s tx ix = .ok (s', evs)) :
+    (wf : WellFormed d s) (h : step d s tx ix = .ok (s', events)) :
     WellFormed d s' := by
   cases ix with
   | «initialize» a =>
@@ -624,10 +624,10 @@ theorem wf_step {d : Deployment} {s s' : State} {tx : TxEnv}
     exact wf_transact hpc hzc wf h
 
 omit [Spec.PoseidonHashes] [Spec.Sha] in
-theorem wf_run {d : Deployment} {s s' : State} {evs : List Event}
+theorem wf_run {d : Deployment} {s s' : State} {events : List Event}
     (hpc : ∀ a b h, Canonical a → Canonical b → d.crypto.hasher.hash_pair a b = ok h → Canonical h)
     (hzc : ∃ z, d.crypto.hasher.zero_bytes = ok z ∧ ∀ i, i ≤ 26 → Canonical (z.val[i]!))
-    (hrun : Run d s evs s') (wf : WellFormed d s) : WellFormed d s' := by
+    (hrun : Run d s events s') (wf : WellFormed d s) : WellFormed d s' := by
   induction hrun with
   | nil => exact wf
   | program hstep _ _ ih =>
@@ -644,18 +644,18 @@ theorem wf_genesis {d : Deployment} {s : State} (hgen : Genesis d.programId s)
    fun k _ h => absurd h.1 (hgen k), fun k _ h => absurd h.1 (hgen k),
    fun k _ h => absurd h.1 (hgen k)⟩
 
-/-- **Every state an execution reaches from genesis is `WellFormed`**.
+/-- **Every state a code run reaches from genesis is `WellFormed`**.
     Uses only the canonicity parts of `HashesAgree`. -/
-theorem wf_reachable {d : Deployment} {s₀ s : State} {evs : List Event}
-    (hgen : Genesis d.programId s₀) (hrun : Run d s₀ evs s) (hpid : d.programId ≠ systemProgram)
-    (hashes : HashesAgree d) :
+theorem wf_reachable {d : Deployment} {s₀ s : State} {events : List Event}
+    (hgen : Genesis d.programId s₀) (hrun : Run d s₀ events s)
+    (hpid : d.programId ≠ systemProgram) (hashes : HashesAgree d) :
     WellFormed d s := by
   exact wf_run hashes.poseidon_canonical hashes.zeroBytes_canonical hrun (wf_genesis hgen hpid)
 
 /-- **The program's trees hold canonical roots in every reachable state.** -/
-theorem storedRoots_reachable {d : Deployment} {s₀ s : State} {evs : List Event}
-    (hgen : Genesis d.programId s₀) (hrun : Run d s₀ evs s) (hpid : d.programId ≠ systemProgram)
-    (hashes : HashesAgree d) :
+theorem storedRoots_reachable {d : Deployment} {s₀ s : State} {events : List Event}
+    (hgen : Genesis d.programId s₀) (hrun : Run d s₀ events s)
+    (hpid : d.programId ≠ systemProgram) (hashes : HashesAgree d) :
     ∀ k t, HoldsTree d.programId s k t → ∀ j : Fin 100, Canonical t.root_history.val[j.val]! :=
   (wf_reachable hgen hrun hpid hashes).storedRoots
 

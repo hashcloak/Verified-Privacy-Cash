@@ -2,7 +2,7 @@ import Connection.Proofs.StepComplete
 import Connection.Proofs.ToyComplete
 open Aeneas Aeneas.Std Result PrivacyCash.Model
 
-/-! # Toy execution for G3a and G3b for the code
+/-! # Example code run for G3a and G3b for the code
 
 NOT FOR REVIEW: the statement is restated in `Connection/CodeModelStatements.lean`. -/
 
@@ -98,19 +98,19 @@ theorem toy_G3_code_nonvacuous (h64 : Usize.max = 2 ^ 64 - 1) :
           ∧ witness.inAmt 0 + witness.inAmt 1 = ((2 : ℕ) : Spec.F)
           ∧ inputs.extAmt = -(payout : ℤ) ∧ inputs.f = feeAmount
           ∧ Accepts toyD s (tx.env sysvarRent) tx.instruction := by
-  obtain ⟨s₁', s₂', e₂', h1', -, hpid, h2', -, solana, depCrypto, depOutside⟩ := toy_execution
+  obtain ⟨s₁', s₂', e₂', h1', -, hpid, h2', -, depAssumptions, depAddressesDiffer, depOutside⟩ := toy_run
   have hi₁ : Initialized toyD s₁' := by
-    obtain ⟨s₁, -, -, -, -, h1, -, -, hi, -, -⟩ := toy_spend_execution toySplit_one
+    obtain ⟨s₁, -, -, -, -, h1, -, -, hi, -, -⟩ := toy_spend_run toySplit_one
     rwa [(Prod.mk.inj (Except.ok.inj (h1.symm.trans h1'))).1] at hi
   have hrun₁ : Run toyD toyS0 [.program toyTx (.initialize toyInitA) []] s₁' := .program h1' toyTx_rentPositive (.nil _)
-  have hpath₁ : ExecutionPath toyD toyS0 [.program toyTx (.initialize toyInitA) []] [s₁'] s₁' :=
+  have hpath₁ : CodeRun toyD toyS0 [⟨toyS0, .program toyTx (.initialize toyInitA) [], s₁'⟩] s₁' :=
     .program h1' toyTx_rentPositive (.nil _)
   have hrun₂ : Run toyD toyS0 [.program toyTx (.initialize toyInitA) [],
       .program toyTx (.transact depA depProof 2#i64 0#u64 emptySlice emptySlice) e₂'] s₂' :=
     .program h1' toyTx_rentPositive (.program h2' toyTx_rentPositive (.nil _))
   have wf₂ := wf_reachable toyGenesis hrun₂ hpid toyHashesAgree
   -- the run after `initialize`
-  have assume₁ : ExecutionFacts toyD [.program toyTx (.initialize toyInitA) []] := by
+  have runFacts₁ : RunFacts toyD [.program toyTx (.initialize toyInitA) []] := by
     refine ⟨toy_fixed_addresses, ?_⟩
     intro tx ix em hm
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
@@ -122,7 +122,7 @@ theorem toy_G3_code_nonvacuous (h64 : Usize.max = 2 ^ 64 - 1) :
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hm
     cases hm
     rfl
-  have hspec := execution_is_spec_run_pf toyGenesis hpath₁ hpid toyC toyLaws toyHashesAgree assume₁
+  have hspec := code_run_is_spec_run_pf toyGenesis hpath₁ hpid toyC toyLaws toyHashesAgree runFacts₁
     outside₁
   rcases hspec with ⟨hno, -⟩ | ⟨params, r₀, hr₀⟩
   · obtain ⟨⟨t, ht⟩, -⟩ := hi₁
@@ -132,10 +132,11 @@ theorem toy_G3_code_nonvacuous (h64 : Usize.max = 2 ^ 64 - 1) :
   -- the deposit extends it
   have hdep : Spec.transact (toInputs ⟨⟨toyTx.signers⟩, depA, ⟨depProof, 2#i64, 0#u64, emptySlice, emptySlice⟩⟩)
       (toWorld toyD toyRent s₁') (toWorld toyD toyRent s₂') :=
-    transact_connection_pf ⟨_, _, toyGenesis, hrun₁⟩ hpid (.program h2' toyTx_rentPositive (.nil _)) toyC toyLaws toyHashesAgree solana depCrypto.1 depCrypto.2 depOutside
+    transact_connection_pf ⟨_, _, toyGenesis, hrun₁⟩ hpid (.program h2' toyTx_rentPositive (.nil _)) toyC toyLaws toyHashesAgree
+      depAssumptions depAddressesDiffer depOutside
   rw [hw₀] at hdep
   obtain ⟨r, hrtx, hrf, -⟩ := r₀.snoc b₀ hb₀ _ _ hdep
-  have htx₀' : r₀.txs = [] := by rw [htx₀]; simp [runTxs, stepTxs]
+  have htx₀' : r₀.txs = [] := by rw [htx₀]; simp [eventsOf, runTxs, stepTxs]
   have hrtx' : r.txs = [toInputs ⟨⟨toyTx.signers⟩, depA, ⟨depProof, 2#i64, 0#u64, emptySlice, emptySlice⟩⟩] := by
     rw [hrtx, htx₀']; rfl
   have hfinal : toWorld toyD toyRent s₂' = r.final := hrf.symm
@@ -143,7 +144,7 @@ theorem toy_G3_code_nonvacuous (h64 : Usize.max = 2 ^ 64 - 1) :
     toyHashesAgree, toyCryptoSucceeds, toyRuntime h64,
     fun _ => programOrPlain_transact (toy_init_programOrPlain h1') h2' _, ?_, hfinal, ?_,
     fun payout feeAmount hway => ?_⟩
-  · obtain ⟨s₁, s₂, s₃, e₂, e₃, h1, h2, h3, -⟩ := toy_spend_execution toySplit_one
+  · obtain ⟨s₁, s₂, s₃, e₂, e₃, h1, h2, h3, -⟩ := toy_spend_run toySplit_one
     have es₁ : s₁' = s₁ := (Prod.mk.inj (Except.ok.inj (h1'.symm.trans h1))).1
     subst es₁
     have es₂ : (s₂', e₂') = (s₂, e₂) := Except.ok.inj (h2'.symm.trans h2)
@@ -165,7 +166,7 @@ theorem toy_G3_code_nonvacuous (h64 : Usize.max = 2 ^ 64 - 1) :
     · exact ⟨_, _, toySplit_one, wdExt_val, by simp⟩
     · exact ⟨_, _, toySplit_two, by simp, by simp⟩
   -- the withdrawal with that split, after the same `initialize` and deposit
-  obtain ⟨s₁, s₂, s₃, e₂, e₃, h1, h2, h3, -, crypto, outside, hsysS⟩ := toy_spend_execution hsplit
+  obtain ⟨s₁, s₂, s₃, e₂, e₃, h1, h2, h3, -, ⟨spendAddressesDiffer, spendDistinctNullifiers⟩, outside, hsysS⟩ := toy_spend_run hsplit
   have es₁ : s₁' = s₁ := (Prod.mk.inj (Except.ok.inj (h1'.symm.trans h1))).1
   subst es₁
   have es₂ : (s₂', e₂') = (s₂, e₂) := Except.ok.inj (h2'.symm.trans h2)
@@ -173,7 +174,8 @@ theorem toy_G3_code_nonvacuous (h64 : Usize.max = 2 ^ 64 - 1) :
   -- the withdrawal's preconditions
   have hpre0 : Spec.transactPreconditions (toInputs ⟨⟨toyTx.signers⟩, spendA, ⟨spendProof, ext, fee, emptySlice, emptySlice⟩⟩)
       (toWorld toyD toyRent s₂') :=
-    (transact_connection_pf ⟨_, _, toyGenesis, hrun₂⟩ hpid (.program h3 toyTx_rentPositive (.nil _)) toyC toyLaws toyHashesAgree solana crypto.1 crypto.2 outside).1
+    (transact_connection_pf ⟨_, _, toyGenesis, hrun₂⟩ hpid (.program h3 toyTx_rentPositive (.nil _)) toyC toyLaws toyHashesAgree
+      ⟨depAssumptions.pdasDoNotSign, spendDistinctNullifiers⟩ spendAddressesDiffer outside).1
   have hpre : Spec.transactPreconditions (toInputs ⟨⟨toyTx.signers⟩, spendA, ⟨spendProof, ext, fee, emptySlice, emptySlice⟩⟩) r.final := by
     rw [← hfinal]; exact hpre0
   have reach : ReachesProgram toyD s₂' spendA spendProof :=

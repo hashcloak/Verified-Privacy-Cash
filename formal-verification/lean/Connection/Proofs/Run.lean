@@ -1,12 +1,12 @@
 import Connection.Proofs.WellFormed
-import Connection.Proofs.ExecutionView
+import Connection.Proofs.RunView
 import Connection.Proofs.Bridge
 open Aeneas Aeneas.Std Result PrivacyCash.Model
 
-/-! # Proofs: every execution of the code model is a run of the spec
+/-! # Proofs: every code run is a spec run
 
 NOT FOR REVIEW: the statements are in `Connection/ConnectionTheorems.lean`. The bridge walks over an
-execution from genesis one event at a time, keeping a spec run that matches it so far. Before
+code run from genesis one event at a time, keeping a spec run that matches it so far. Before
 `initialize` no program step can succeed. `initialize` starts the spec run at `initWorld`.
 Each `transact` extends it by one transaction (the main per-step theorem). Admin instructions
 and outside actions are changes allowed between transactions
@@ -289,9 +289,10 @@ theorem udl_between {d : Deployment} {rent : Nat → U64} {s s' : State}
     two nullifier accounts elsewhere). -/
 theorem transact_initialized {d : Deployment} {s s' : State} {tx : TxEnv}
     {a : TransactAccounts} {proof : zkcash_core.transact.Proof} {ext : I64} {fee : U64}
-    {out1 out2 : Slice U8} {evs : List CommitmentData}
+    {out1 out2 : Slice U8} {events : List CommitmentData}
     (wf : WellFormed d s) (hi : Initialized d s)
-    (h : step d s tx (.transact a proof ext fee out1 out2) = .ok (s', evs)) : Initialized d s' := by
+    (h : step d s tx (.transact a proof ext fee out1 out2) = .ok (s', events)) :
+    Initialized d s' := by
   obtain ⟨tree, tt, config, mb, s₁, env', tree', ap, hvalid, -, hs₁, -, hs', -⟩ := execTransact_ok h
   obtain ⟨⟨t, ht⟩, ⟨p, hp⟩, ⟨c, hc⟩⟩ := hi
   obtain ⟨sA, hA1, hA2⟩ := Option.bind_eq_some_iff.mp hs₁
@@ -828,9 +829,9 @@ section
 variable [Spec.PoseidonHashes] [Spec.Sha] {G1 G2 GT : Type} [AddCommGroup G1] [Inhabited G2]
   [Module Spec.F G1] [CommGroup GT]
 
-/-- What the bridge keeps along an execution. -/
+/-- What the bridge keeps along a code run. -/
 def BridgeInv (d : Deployment) (rent : Nat → U64) (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT)
-    (v : ExecutionView)
+    (v : RunView)
     (txs : List Spec.TxInputs) (s : State) : Prop :=
   WellFormed d s ∧
     ((NoProgramAccounts d s ∧ txs = [] ∧ v = {}) ∨
@@ -843,7 +844,7 @@ def BridgeInv (d : Deployment) (rent : Nat → U64) (C : AltBn128Contracts d.cry
     admin changes `chs`. -/
 theorem RunMatchesView.between {d : Deployment} {rent : Nat → U64}
     {C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT}
-    {v v' : ExecutionView} {txs : List Spec.TxInputs} {s s' : State}
+    {v v' : RunView} {txs : List Spec.TxInputs} {s s' : State}
     {chs : List Spec.AdminChange}
     (hv : v' = { v with openGap := v.openGap ++ chs })
     (h : withSyscallSpec C in
@@ -869,7 +870,7 @@ theorem RunMatchesView.between {d : Deployment} {rent : Nat → U64}
 /-- **Outside actions keep the invariant.** -/
 theorem bridge_env {d : Deployment} {rent : Nat → U64}
     {C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT}
-    {v : ExecutionView} {txs : List Spec.TxInputs} {s s' : State}
+    {v : RunView} {txs : List Spec.TxInputs} {s s' : State}
     (hinv : BridgeInv d rent C v txs s) (h : EnvStep d.programId s s') :
     BridgeInv d rent C v txs s' := by
   obtain ⟨wf, hn | ⟨hi, hr⟩⟩ := hinv
@@ -879,18 +880,18 @@ theorem bridge_env {d : Deployment} {rent : Nat → U64}
     exact RunMatchesView.between (chs := []) (by cases v; simp) hr hw ha
 
 omit [Spec.PoseidonHashes] [Spec.Sha] in
-/-- The program's three fixed accounts differ (from `ExecutionFacts.fixedAddressesDiffer`). -/
-theorem fixed_addresses_differ {d : Deployment} {evs : List Event}
-    (assume : ExecutionFacts d evs) :
+/-- The program's three fixed accounts differ (from `RunFacts.fixedAddressesDiffer`). -/
+theorem fixed_addresses_differ {d : Deployment} {events : List Event}
+    (runFacts : RunFacts d events) :
     d.treeAddress ≠ d.poolAddress ∧ d.treeAddress ≠ d.configAddress ∧ d.poolAddress ≠ d.configAddress :=
-  singleton_pdas_distinct_of _ _ _ assume.fixedAddressesDiffer
+  singleton_pdas_distinct_of _ _ _ runFacts.fixedAddressesDiffer
 
 /-- **Each instruction keeps the invariant.** `initialize` starts the spec run; `transact`
     extends it by its transaction (the main per-step theorem); the admin instructions are
     allowed changes between transactions, recorded with their signers. -/
 theorem bridge_step {d : Deployment} {rent : Nat → U64}
     {C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT} {laws : PairingLaws C.e}
-    {v : ExecutionView} {txs : List Spec.TxInputs} {s s' : State}
+    {v : RunView} {txs : List Spec.TxInputs} {s s' : State}
     {tx : TxEnv} {ix : Instruction} {em : List CommitmentData}
     (hinv : BridgeInv d rent C v txs s)
     (hpid : d.programId ≠ systemProgram) (hashes : HashesAgree d)
@@ -933,11 +934,12 @@ theorem bridge_step {d : Deployment} {rent : Nat → U64}
       simp only [stepTxs, List.append_nil]
       exact ⟨wf', Or.inr ⟨hi', RunMatchesView.between rfl hr hw ha⟩⟩
     | transact a proof ext fee out1 out2 =>
-      obtain ⟨solana, crypto, circuit⟩ := hstepA
+      obtain ⟨txAssumptions, newAddressesDiffer⟩ := hstepA
       have hrent : tx.minimumBalance = some rent := hrentA
       have wf' := wf_step hashes.poseidon_canonical hashes.zeroBytes_canonical wf h
       obtain ⟨b₁, hb₁, b₂, htx, hb₂, hb₁nil, hb₁pool, hb₂cfg, hb₂pool⟩ :=
-        transact_refines_between_verified C laws h hashes wf solana hrentPos crypto circuit hrent
+        transact_refines_between_verified C laws h hashes wf txAssumptions hrentPos
+          newAddressesDiffer hrent
       have hi' := transact_initialized wf hi h
       obtain ⟨params, r, hdep, hinit, htxs, hpl, hpb, hal, hafter, hgl, hgaps, b, hb, hgap, heq⟩ := hr
       rw [heq] at htx hb₁
@@ -950,10 +952,10 @@ theorem bridge_step {d : Deployment} {rent : Nat → U64}
         Spec.UpdatedValuesBetweenTransacts.unchanged
         (toWorld d rent s'), ?_, rfl, ?_⟩⟩
       · rw [hr'tx, htxs]; rfl
-      · simp only [ExecutionView.afterEvent, List.length_append, List.length_singleton]
+      · simp only [RunView.afterEvent, List.length_append, List.length_singleton]
         omega
       · intro j hj
-        simp only [ExecutionView.afterEvent]
+        simp only [RunView.afterEvent]
         rcases Nat.lt_or_ge j r.txs.length with hlt | hge
         · rw [List.getElem?_append_left (by omega), hpb j hlt, hup j hlt]
         · have hj' : j = r.txs.length := by omega
@@ -961,10 +963,10 @@ theorem bridge_step {d : Deployment} {rent : Nat → U64}
           rw [List.getElem?_append_right (by omega), hpl, Nat.sub_self, hlast]
           simp only [List.getElem?_cons_zero, Option.some.injEq]
           exact hb₁pool.symm
-      · simp only [ExecutionView.afterEvent, List.length_append, List.length_singleton]
+      · simp only [RunView.afterEvent, List.length_append, List.length_singleton]
         omega
       · intro j hj
-        simp only [ExecutionView.afterEvent]
+        simp only [RunView.afterEvent]
         rcases Nat.lt_or_ge j r.txs.length with hlt | hge
         · rw [List.getElem?_append_left (by omega), hafter j hlt, hws (j+1) (by omega)]
         · have hj' : j = r.txs.length := by omega
@@ -976,10 +978,10 @@ theorem bridge_step {d : Deployment} {rent : Nat → U64}
               config := b₂.config }
             rw [hb₂cfg]
           · exact hb₂pool.symm
-      · simp only [ExecutionView.afterEvent, List.length_append, List.length_singleton]
+      · simp only [RunView.afterEvent, List.length_append, List.length_singleton]
         omega
       · intro j hj
-        simp only [ExecutionView.afterEvent]
+        simp only [RunView.afterEvent]
         rcases Nat.lt_or_ge j r.txs.length with hlt | hge
         · rw [List.getElem?_append_left (by omega), hgaps j hlt, hup j hlt]
         · have hj' : j = r.txs.length := by omega
@@ -993,16 +995,18 @@ theorem bridge_step {d : Deployment} {rent : Nat → U64}
         exact (Spec.World.withUpdatedValues_self _).symm
 
 omit [Spec.PoseidonHashes] [Spec.Sha] in
-/-- An execution path is an execution. -/
-theorem ExecutionPath.toRun {d : Deployment} {s s' : State} {evs : List Event} {states : List State}
-    (h : ExecutionPath d s evs states s') : Run d s evs s' := by
+/-- A `CodeRun` is a `Run` over its events. -/
+theorem CodeRun.toRun {d : Deployment} {s s' : State} {steps : List RunStep}
+    (h : CodeRun d s steps s') : Run d s (eventsOf steps) s' := by
   induction h with
   | nil => exact .nil _
-  | program hs hr _ ih => exact .program hs hr ih
-  | env he _ ih => exact .env he ih
+  | @cons _ _ _ e _ he _ ih =>
+    cases e with
+    | program => exact .program he.1 he.2 ih
+    | env => exact .env he ih
 
 omit [Spec.PoseidonHashes] [Spec.Sha] in
-/-- A one-step execution is an accepted step with positive rent. -/
+/-- A one-step code run is an accepted step with positive rent. -/
 theorem Run.single_inv {d : Deployment} {s s' : State} {tx : TxEnv} {ix : Instruction}
     {em : List CommitmentData} (h : Run d s [.program tx ix em] s') :
     step d s tx ix = .ok (s', em) ∧ tx.RentPositive := by
@@ -1010,117 +1014,127 @@ theorem Run.single_inv {d : Deployment} {s s' : State} {tx : TxEnv} {ix : Instru
   | program hs hr hnil => cases hnil; exact ⟨hs, hr⟩
 
 omit [Spec.PoseidonHashes] [Spec.Sha] in
-/-- An execution is an execution path, through some states. -/
-theorem Run.toExecutionPath {d : Deployment} {s s' : State} {evs : List Event}
-    (h : Run d s evs s') : ∃ states, ExecutionPath d s evs states s' := by
+/-- A `Run` is a `CodeRun`, through some steps with its events. -/
+theorem Run.toCodeRun {d : Deployment} {s s' : State} {events : List Event}
+    (h : Run d s events s') : ∃ steps, CodeRun d s steps s' ∧ eventsOf steps = events := by
   induction h with
-  | nil s => exact ⟨[], .nil s⟩
-  | program hs hr _ ih => obtain ⟨st, h⟩ := ih; exact ⟨_, .program hs hr h⟩
-  | env he _ ih => obtain ⟨st, h⟩ := ih; exact ⟨_, .env he h⟩
+  | nil s => exact ⟨[], .nil s, rfl⟩
+  | program hs hr _ ih =>
+    obtain ⟨st, h, he⟩ := ih; exact ⟨_, .program hs hr h, by rw [← he]; rfl⟩
+  | env he _ ih => obtain ⟨st, h, he'⟩ := ih; exact ⟨_, .env he h, by rw [← he']; rfl⟩
 
-/-- **The invariant holds along any execution path**, from any state where it holds. -/
+/-- **The invariant holds along any `CodeRun`**, from any state where it holds. -/
 theorem bridge_run {d : Deployment} {rent : Nat → U64}
     {C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT} {laws : PairingLaws C.e} {s₀ : State}
     {all : List Event} (hpid : d.programId ≠ systemProgram)
-    (hashes : HashesAgree d) (assume : ExecutionFacts d all)
+    (hashes : HashesAgree d) (runFacts : RunFacts d all)
     (sameRent : ∀ tx ix em, .program tx ix em ∈ all → SameRent rent tx.minimumBalance) :
-    ∀ {s s' : State} {evs pre : List Event} {states : List State} {v : ExecutionView}
+    ∀ {s s' : State} {steps : List RunStep} {pre : List Event} {v : RunView}
       {txs : List Spec.TxInputs},
-      all = pre ++ evs → Run d s₀ pre s → BridgeInv d rent C v txs s →
-      ExecutionPath d s evs states s' →
-      BridgeInv d rent C (ExecutionView.afterEvents d rent v s evs states) (txs ++ runTxs evs) s' := by
-  intro s s' evs pre states v txs hall hpre hinv hrun
+      all = pre ++ eventsOf steps → Run d s₀ pre s → BridgeInv d rent C v txs s →
+      CodeRun d s steps s' →
+      BridgeInv d rent C (RunView.afterSteps d rent v steps) (txs ++ runTxs (eventsOf steps))
+        s' := by
+  intro s s' steps pre v txs hall hpre hinv hrun
   induction hrun generalizing pre v txs with
-  | nil => simpa [runTxs, ExecutionView.afterEvents] using hinv
-  | @program s₁ s₂ s₃ tx ix emitted events states hstep hrentPos hrest ih =>
-    have hA := assume.eachStep tx ix emitted (by rw [hall]; simp)
-    have hR := sameRent tx ix emitted (by rw [hall]; simp)
-    have hinv' := bridge_step (laws := laws) hinv hpid hashes (fixed_addresses_differ assume) hA hR hstep hrentPos
-    have := ih (pre := pre ++ [.program tx ix emitted]) (by rw [hall]; simp)
-      (hpre.append (.program hstep hrentPos (.nil _))) hinv'
-    simpa [runTxs, ExecutionView.afterEvents, List.append_assoc] using this
-  | @env s₁ s₂ s₃ events states henv hrest ih =>
-    have := ih (pre := pre ++ [.env]) (by rw [hall]; simp) (hpre.append (.env henv (.nil _)))
-      (bridge_env hinv henv)
-    simpa [runTxs, ExecutionView.afterEvents, ExecutionView.afterEvent] using this
+  | nil => simpa [runTxs, eventsOf, RunView.afterSteps] using hinv
+  | @cons s₁ s₂ s₃ e steps hev hrest ih =>
+    cases e with
+    | program tx ix emitted =>
+      obtain ⟨hstep, hrentPos⟩ := hev
+      have hA := runFacts.eachStep tx ix emitted (by rw [hall]; simp [eventsOf])
+      have hR := sameRent tx ix emitted (by rw [hall]; simp [eventsOf])
+      have hinv' := bridge_step (laws := laws) hinv hpid hashes (fixed_addresses_differ runFacts)
+        hA hR hstep hrentPos
+      have := ih (pre := pre ++ [.program tx ix emitted]) (by rw [hall]; simp [eventsOf])
+        (hpre.append (.program hstep hrentPos (.nil _))) hinv'
+      simpa [runTxs, eventsOf, RunView.afterSteps, List.append_assoc] using this
+    | env =>
+      have := ih (pre := pre ++ [.env]) (by rw [hall]; simp [eventsOf])
+        (hpre.append (.env hev (.nil _))) (bridge_env hinv hev)
+      simpa [runTxs, eventsOf, RunView.afterSteps, RunView.afterEvent] using this
 
-/-- **The bridge.** Every execution of the code model from genesis either has not initialized
-    the pool, or is (read through `toWorld`, `runTxs` and `executionView`) a run of the spec from
+/-- **The bridge.** Every code run from genesis either has not initialized
+    the pool, or is (read through `toWorld`, `runTxs` and `runView`) a run of the spec from
     the start world `initialize` set, up to what happened after its last transaction. -/
-theorem execution_is_spec_run_pf {d : Deployment} {rent : Nat → U64} {s₀ s : State} {evs : List Event}
-    {states : List State}
-    (hgen : Genesis d.programId s₀) (hrun : ExecutionPath d s₀ evs states s)
+theorem code_run_is_spec_run_pf {d : Deployment} {rent : Nat → U64} {s₀ s : State}
+    {steps : List RunStep}
+    (hgen : Genesis d.programId s₀) (hrun : CodeRun d s₀ steps s)
     (hpid : d.programId ≠ systemProgram)
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
-    (hashes : HashesAgree d) (assume : ExecutionFacts d evs)
-    (sameRent : ∀ tx ix em, .program tx ix em ∈ evs → SameRent rent tx.minimumBalance) :
-    (NoProgramAccounts d s ∧ runTxs evs = []) ∨
+    (hashes : HashesAgree d) (runFacts : RunFacts d (eventsOf steps))
+    (sameRent : ∀ tx ix em, .program tx ix em ∈ eventsOf steps →
+      SameRent rent tx.minimumBalance) :
+    (NoProgramAccounts d s ∧ runTxs (eventsOf steps) = []) ∨
       (withSyscallSpec C in
-       IsSpecRun d rent s₀ evs states s) := by
+       IsSpecRun d rent steps s) := by
   have h0 : BridgeInv d rent C {} [] s₀ :=
     ⟨wf_genesis hgen hpid, Or.inl ⟨genesis_noProgramAccounts hgen, rfl, rfl⟩⟩
-  have := bridge_run (C := C) (laws := laws) hpid hashes assume sameRent (pre := []) (by simp) (.nil _) h0 hrun
+  have := bridge_run (C := C) (laws := laws) hpid hashes runFacts sameRent (pre := []) (by simp) (.nil _) h0 hrun
   simp only [List.nil_append] at this
   rcases this.2 with ⟨hn, ht, -⟩ | ⟨-, params, r, hr⟩
   · exact Or.inl ⟨hn, ht⟩
   · withSyscallSpec C
-    exact Or.inr ⟨params, r, isRunOf_of_view hrun.length_eq hr⟩
+    exact Or.inr ⟨params, r, isRunOf_of_view hpid hrun hr⟩
 
 omit [Spec.PoseidonHashes] [Spec.Sha] in
-/-- Assumptions for an execution hold for any prefix of it. -/
-theorem ExecutionFacts.prefix {d : Deployment}
-    {evs more : List Event} (h : ExecutionFacts d (evs ++ more)) :
-    ExecutionFacts d evs :=
+/-- Assumptions for a code run hold for any prefix of it. -/
+theorem RunFacts.prefix {d : Deployment}
+    {events more : List Event} (h : RunFacts d (events ++ more)) :
+    RunFacts d events :=
   ⟨h.fixedAddressesDiffer, fun tx ix em hm => h.eachStep tx ix em (List.mem_append_left _ hm)⟩
 
-/-- An initialized execution is a spec run (the bridge, without its "not initialized" case). -/
-theorem code_spec_run {d : Deployment} {rent : Nat → U64} {s₀ s : State} {evs : List Event}
-    {states : List State}
-    (hgen : Genesis d.programId s₀) (hrun : ExecutionPath d s₀ evs states s)
+/-- An initialized code run is a spec run (the bridge, without its "not initialized" case). -/
+theorem code_spec_run {d : Deployment} {rent : Nat → U64} {s₀ s : State}
+    {steps : List RunStep}
+    (hgen : Genesis d.programId s₀) (hrun : CodeRun d s₀ steps s)
     (hpid : d.programId ≠ systemProgram)
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
-    (hashes : HashesAgree d) (assume : ExecutionFacts d evs)
-    (sameRent : ∀ tx ix em, .program tx ix em ∈ evs → SameRent rent tx.minimumBalance) (hi : Initialized d s) :
+    (hashes : HashesAgree d) (runFacts : RunFacts d (eventsOf steps))
+    (sameRent : ∀ tx ix em, .program tx ix em ∈ eventsOf steps →
+      SameRent rent tx.minimumBalance) (hi : Initialized d s) :
     withSyscallSpec C in
-    IsSpecRun d rent s₀ evs states s := by
-  rcases execution_is_spec_run_pf hgen hrun hpid C laws hashes assume sameRent with ⟨hn, -⟩ | hr
+    IsSpecRun d rent steps s := by
+  rcases code_run_is_spec_run_pf hgen hrun hpid C laws hashes runFacts sameRent with ⟨hn, -⟩ | hr
   · obtain ⟨⟨t, ht⟩, -, -⟩ := hi; exact (hn.1 _ _ ht).elim
   · exact hr
 
-/-- **What the spec proves of all its runs holds of an initialized execution's run.** -/
-theorem run_satisfies {d : Deployment} {rent : Nat → U64} {s₀ s : State} {evs : List Event}
-    {states : List State}
-    (hgen : Genesis d.programId s₀) (hrun : ExecutionPath d s₀ evs states s)
+/-- **What the spec proves of all its runs holds of an initialized code run's spec run.** -/
+theorem run_satisfies {d : Deployment} {rent : Nat → U64} {s₀ s : State}
+    {steps : List RunStep}
+    (hgen : Genesis d.programId s₀) (hrun : CodeRun d s₀ steps s)
     (hpid : d.programId ≠ systemProgram)
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
-    (hashes : HashesAgree d) (assume : ExecutionFacts d evs)
-    (sameRent : ∀ tx ix em, .program tx ix em ∈ evs → SameRent rent tx.minimumBalance) (hi : Initialized d s) :
+    (hashes : HashesAgree d) (runFacts : RunFacts d (eventsOf steps))
+    (sameRent : ∀ tx ix em, .program tx ix em ∈ eventsOf steps →
+      SameRent rent tx.minimumBalance) (hi : Initialized d s) :
     withSyscallSpec C in
     ∀ (P : ∀ params : Spec.InitParams, Spec.Run (Spec.initWorld params) → Prop),
       (∀ params r, P params r) →
       ∃ (params : Spec.InitParams) (r : Spec.Run (Spec.initWorld params)),
-        IsRunOf d rent s₀ evs states s params r ∧ P params r := by
+        IsRunOf d rent steps s params r ∧ P params r := by
   withSyscallSpec C
   intro P hP
-  obtain ⟨params, r, h⟩ := code_spec_run hgen hrun hpid C laws hashes assume sameRent hi
+  obtain ⟨params, r, h⟩ := code_spec_run hgen hrun hpid C laws hashes runFacts sameRent hi
   exact ⟨params, r, h, hP params r⟩
 
-/-- The per-transaction connection, for a `transact` in an execution from genesis. -/
+/-- The per-transaction connection, for a `transact` in a code run from genesis. -/
 theorem transact_connection_pf {d : Deployment} {rent : Nat → U64} {s s' : State}
     {tx : TxEnv} {a : TransactAccounts} {proof : zkcash_core.transact.Proof}
     {extAmount : I64} {fee : U64} {out1 out2 : Slice U8} {events : List CommitmentData}
     (reachable : Reachable d s) (hpid : d.programId ≠ systemProgram)
     (hstep : Run d s [.program tx (.transact a proof extAmount fee out1 out2) events] s')
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
-    (hashes : HashesAgree d) (solana : PdasDoNotSign d tx.toTxContext)
-    (crypto : NewNullifierAddressesDiffer d proof) (circuit : CircuitFacts d {proof}) (sameRent : SameRent rent tx.minimumBalance) :
+    (hashes : HashesAgree d) (txAssumptions : TransactAssumptions d tx.toTxContext proof)
+    (newAddressesDiffer : NewNullifierAddressesDiffer d proof)
+    (sameRent : SameRent rent tx.minimumBalance) :
     withSyscallSpec C in
     let inputs := toInputs ⟨⟨tx.signers⟩, a, ⟨proof, extAmount, fee, out1, out2⟩⟩
     Spec.transact inputs (toWorld d rent s) (toWorld d rent s') :=
   have ⟨hs, hrentPos⟩ := Run.single_inv hstep
   have ⟨_, _, hgen, hrun⟩ := reachable
-  (transact_refines_verified C laws hs hashes (wf_reachable hgen hrun hpid hashes) solana hrentPos crypto circuit
-    sameRent)
+  (transact_refines_verified C laws hs hashes (wf_reachable hgen hrun hpid hashes) txAssumptions
+    hrentPos newAddressesDiffer sameRent)
 
 /-- `transact_connection_pf` for `step` directly: if `step` accepts, the spec's `transact` holds. -/
 theorem transact_connection_step_pf {d : Deployment} {rent : Nat → U64} {s : State}
@@ -1128,8 +1142,8 @@ theorem transact_connection_step_pf {d : Deployment} {rent : Nat → U64} {s : S
     {extAmount : I64} {fee : U64} {out1 out2 : Slice U8}
     (reachable : Reachable d s) (hpid : d.programId ≠ systemProgram) (rentPos : tx.RentPositive)
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
-    (hashes : HashesAgree d) (solana : PdasDoNotSign d tx.toTxContext)
-    (crypto : NewNullifierAddressesDiffer d proof) (circuit : CircuitFacts d {proof})
+    (hashes : HashesAgree d) (txAssumptions : TransactAssumptions d tx.toTxContext proof)
+    (newAddressesDiffer : NewNullifierAddressesDiffer d proof)
     (sameRent : SameRent rent tx.minimumBalance) :
     withSyscallSpec C in
     match step d s tx (.transact a proof extAmount fee out1 out2) with
@@ -1139,15 +1153,16 @@ theorem transact_connection_step_pf {d : Deployment} {rent : Nat → U64} {s : S
       | .error _ => True :=
   match hs : step d s tx (.transact a proof extAmount fee out1 out2) with
   | .ok (_, _) => transact_connection_pf reachable hpid (.program hs rentPos (.nil _)) C laws hashes
-      solana crypto circuit sameRent
+      txAssumptions newAddressesDiffer sameRent
   | .error _ => trivial
 
 /-- `transact_connection_step_pf` as `transact_connection` states it, arguments in its order. -/
 theorem transact_connection_of {d : Deployment} {rent : Nat → U64} {tx : TransactTx}
     {sysvarRent : Option (Nat → U64)} {s : State} (hpid : d.programId ≠ systemProgram)
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
-    (hashes : HashesAgree d) (runtime : RuntimeFacts rent) (solana : PdasDoNotSign d tx.ctx)
-    (circuit : CircuitFacts d {tx.args.proof}) (sameRent : SameRent rent sysvarRent)
+    (hashes : HashesAgree d) (runtime : RuntimeFacts rent)
+    (txAssumptions : TransactAssumptions d tx.ctx tx.args.proof)
+    (sameRent : SameRent rent sysvarRent)
     (reachable : Reachable d s) :
     withSyscallSpec C in
     (match step d s (tx.env sysvarRent) tx.instruction with
@@ -1155,21 +1170,24 @@ theorem transact_connection_of {d : Deployment} {rent : Nat → U64} {tx : Trans
       | .error _ => True)
       ∨ AddressCollision d {tx.args.proof} :=
   or_collision fun hc => transact_connection_step_pf reachable hpid
-    (rentPositive_of_sameRent runtime sameRent) C laws hashes solana
-    (newDiffer_of_noCollision (Set.mem_singleton _) hc) circuit sameRent
+    (rentPositive_of_sameRent runtime sameRent) C laws hashes txAssumptions
+    (newDiffer_of_noCollision (Set.mem_singleton _) hc) sameRent
 
-/-- `execution_is_spec_run_pf` as `run_connection` states it, arguments in its order. -/
-theorem run_connection_of {d : Deployment} {rent : Nat → U64} {s₀ s : State} {evs : List Event}
-    {states : List State} (hpid : d.programId ≠ systemProgram)
+/-- `code_run_is_spec_run_pf` as `run_connection` states it, arguments in its order. -/
+theorem run_connection_of {d : Deployment} {rent : Nat → U64} {s₀ s : State}
+    {steps : List RunStep}
+    (hpid : d.programId ≠ systemProgram)
     (C : AltBn128Contracts d.crypto.altBn128 G1 G2 GT) (laws : PairingLaws C.e)
-    (hashes : HashesAgree d) (assume : ExecutionAssumptions d evs)
-    (sameRent : ∀ tx ix em, .program tx ix em ∈ evs → SameRent rent tx.minimumBalance)
-    (hgen : Genesis d.programId s₀) (hrun : ExecutionPath d s₀ evs states s) :
-    ((NoProgramAccounts d s ∧ runTxs evs = []) ∨
-      (withSyscallSpec C in IsSpecRun d rent s₀ evs states s))
-      ∨ AddressCollision d (proofsIn evs) :=
-  or_collision fun hc => execution_is_spec_run_pf hgen hrun hpid C laws hashes
-    (ExecutionFacts.of_assumptions assume hc) sameRent
+    (hashes : HashesAgree d)
+    (everyTxAssumptions : TransactAssumptionsInRun d (eventsOf steps))
+    (sameRent : ∀ tx ix em, .program tx ix em ∈ eventsOf steps →
+      SameRent rent tx.minimumBalance)
+    (hgen : Genesis d.programId s₀) (hrun : CodeRun d s₀ steps s) :
+    ((NoProgramAccounts d s ∧ runTxs (eventsOf steps) = []) ∨
+      (withSyscallSpec C in IsSpecRun d rent steps s))
+      ∨ AddressCollision d (proofsIn (eventsOf steps)) :=
+  or_collision fun hc => code_run_is_spec_run_pf hgen hrun hpid C laws hashes
+    (RunFacts.of_assumptions everyTxAssumptions hc) sameRent
 
 end
 
